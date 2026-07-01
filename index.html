@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#111111" />
+  <title>Pitch Trainer</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0; padding: 0; min-height: 100%;
+      background: #111; color: #eee;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    html { overflow-y: auto; }
+    body {
+      min-height: 100vh;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: calc(env(safe-area-inset-top) + 4.5rem) env(safe-area-inset-right) calc(env(safe-area-inset-bottom) + 3rem) env(safe-area-inset-left);
+      user-select: none; -webkit-user-select: none;
+    }
+
+    /* ---- Mode toggle ---- */
+    #mode-toggle {
+      position: fixed;
+      top: calc(env(safe-area-inset-top) + 0.8rem);
+      display: flex; gap: 0.5rem;
+      z-index: 10;
+    }
+    .mode-btn, .submode-btn {
+      padding: 0.45rem 1rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      border: 2px solid #444;
+      border-radius: 999px;
+      background: transparent;
+      color: #888;
+      cursor: pointer;
+      touch-action: manipulation;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .mode-btn.active, .submode-btn.active {
+      background: #eee; color: #111; border-color: #eee;
+    }
+
+    /* ---- Shared note display ---- */
+    #note {
+      font-size: 10rem;
+      font-weight: 700;
+      line-height: 1;
+      letter-spacing: -0.04em;
+      min-height: 1em;
+      text-align: center;
+      color: #fff;
+    }
+    #note.idle { color: #333; }
+    body.quiz-mode #note { font-size: 6.5rem; }
+
+    #debug {
+      margin-top: 1.2rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.85rem;
+      color: #666;
+      text-align: center;
+      line-height: 1.5;
+    }
+
+    /* ---- Passive ---- */
+    #start {
+      margin-top: 2rem;
+      padding: 1.25rem 2.5rem;
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: #111;
+      background: #eee;
+      border: none;
+      border-radius: 999px;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+    #start:disabled { opacity: 0.4; }
+    #start.hidden { display: none; }
+
+    /* ---- Quiz ---- */
+    #quiz {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.85rem;
+      margin-top: 0.3rem;
+      width: 100%;
+      max-width: 460px;
+      padding: 0 1rem;
+    }
+    #quiz.active { display: flex; }
+
+    #quiz-submodes {
+      display: flex; gap: 0.4rem; flex-wrap: wrap; justify-content: center;
+    }
+
+    #quiz-score {
+      font-size: 0.95rem;
+      color: #888;
+      min-height: 1.3em;
+    }
+    #quiz-result {
+      font-size: 0.95rem;
+      font-weight: 600;
+      min-height: 1.4em;
+      text-align: center;
+      line-height: 1.35;
+      color: #ddd;
+    }
+    #quiz-result.correct { color: #4caf50; }
+    #quiz-result.wrong   { color: #f44336; }
+
+    .answer-group {
+      display: none;
+      gap: 0.5rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .answer-group.active { display: flex; }
+
+    .answer-btn {
+      padding: 0.85rem 1.3rem;
+      font-size: 1rem;
+      font-weight: 600;
+      border: 2px solid #555;
+      border-radius: 999px;
+      background: transparent;
+      color: #eee;
+      cursor: pointer;
+      touch-action: manipulation;
+      transition: background 0.1s, border-color 0.1s;
+    }
+    .answer-btn:active   { background: #333; }
+    .answer-btn:disabled { opacity: 0.3; cursor: default; }
+    .answer-btn.small    {
+      padding: 0.55rem 0.55rem;
+      font-size: 0.9rem;
+      min-width: 0;
+    }
+    .amount-btn { min-width: 3.4rem; }
+
+    /* ---- Follow-up (Pitch mode) ---- */
+    #followup {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+      width: 100%;
+      padding-top: 0.6rem;
+      border-top: 1px solid #2a2a2a;
+    }
+    #followup.active { display: flex; }
+    .followup-label {
+      color: #aaa;
+      font-size: 0.9rem;
+    }
+    #followup-btns {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 0.35rem;
+      width: 100%;
+      max-width: 360px;
+    }
+
+    #quiz-actions { display: flex; gap: 1.4rem; margin-top: 0.2rem; }
+    .ghost {
+      font-size: 0.85rem;
+      color: #888;
+      background: none;
+      border: none;
+      cursor: pointer;
+      touch-action: manipulation;
+      text-decoration: underline;
+      padding: 0.4rem;
+    }
+    #quiz-next { visibility: hidden; }
+    #quiz-next.visible { visibility: visible; }
+
+    /* ---- Intervals ---- */
+    #intervals {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.75rem;
+      margin-top: 0.3rem;
+      width: 100%;
+      max-width: 460px;
+      padding: 0 1rem;
+    }
+    #intervals.active { display: flex; }
+    #intervals-controls .ctl-label {
+      display: flex; align-items: center; gap: 0.5rem;
+      color: #aaa; font-size: 0.9rem;
+    }
+    #interval-type {
+      background: #1a1a1a;
+      color: #eee;
+      border: 2px solid #555;
+      border-radius: 999px;
+      padding: 0.4rem 0.9rem;
+      font-size: 0.9rem;
+      font-family: inherit;
+      touch-action: manipulation;
+    }
+    #intervals-score {
+      font-size: 0.95rem; color: #888; min-height: 1.3em;
+    }
+    #intervals-result {
+      font-size: 0.95rem; font-weight: 600;
+      min-height: 1.4em; text-align: center; line-height: 1.35; color: #ddd;
+    }
+    #intervals-result.correct { color: #4caf50; }
+    #intervals-result.wrong   { color: #f44336; }
+    #intervals-roots {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 0.35rem;
+      width: 100%;
+      max-width: 360px;
+    }
+    #intervals-actions { display: flex; gap: 1.4rem; margin-top: 0.2rem; }
+    #intervals-next { visibility: hidden; }
+    #intervals-next.visible { visibility: visible; }
+
+    /* ---- Status ---- */
+    #status {
+      position: fixed;
+      bottom: calc(env(safe-area-inset-bottom) + 0.8rem);
+      left: 0; right: 0;
+      text-align: center;
+      font-size: 0.85rem;
+      color: #888;
+      padding: 0 1rem;
+    }
+    #status.error { color: #f66; }
+  </style>
+</head>
+<body>
+  <div id="mode-toggle">
+    <button class="mode-btn active" data-mode="passive"   type="button">🎤 Passive</button>
+    <button class="mode-btn"        data-mode="quiz"      type="button">🎯 Quiz</button>
+    <button class="mode-btn"        data-mode="intervals" type="button">🎼 Intervals</button>
+  </div>
+
+  <div id="note" class="idle">—</div>
+  <div id="debug">freq: — Hz &nbsp; clarity: — &nbsp; rms: —</div>
+
+  <!-- Passive mode -->
+  <button id="start" type="button">Start</button>
+
+  <!-- Quiz mode -->
+  <div id="quiz">
+    <div id="quiz-submodes">
+      <button class="submode-btn active" data-submode="sample" type="button">Sample</button>
+      <button class="submode-btn"        data-submode="pitch"  type="button">Pitch</button>
+      <button class="submode-btn"        data-submode="amount" type="button">Amount</button>
+    </div>
+
+    <div id="quiz-score">0 / 0</div>
+    <div id="quiz-result"></div>
+
+    <div id="ans-sample" class="answer-group active">
+      <button class="answer-btn" id="btn-sample-intune" type="button">In tune ✓</button>
+      <button class="answer-btn" id="btn-sample-off"    type="button">Off-pitch ✗</button>
+    </div>
+
+    <div id="ans-pitch" class="answer-group">
+      <button class="answer-btn" id="btn-pitch-match"   type="button">Matches label ✓</button>
+      <button class="answer-btn" id="btn-pitch-nomatch" type="button">Doesn't match ✗</button>
+    </div>
+
+    <div id="ans-amount" class="answer-group">
+      <button class="answer-btn amount-btn" data-cents="-100" type="button">½↓</button>
+      <button class="answer-btn amount-btn" data-cents="-50"  type="button">¼↓</button>
+      <button class="answer-btn amount-btn" data-cents="0"    type="button">OG</button>
+      <button class="answer-btn amount-btn" data-cents="50"   type="button">¼↑</button>
+      <button class="answer-btn amount-btn" data-cents="100"  type="button">½↑</button>
+    </div>
+
+    <div id="followup">
+      <div class="followup-label">What pitch did you hear?</div>
+      <div id="followup-btns"></div>
+      <button id="followup-skip" class="ghost" type="button">skip →</button>
+    </div>
+
+    <div id="quiz-actions">
+      <button id="quiz-replay" class="ghost" type="button">play again ↺</button>
+      <button id="quiz-next"   class="ghost" type="button">next →</button>
+    </div>
+  </div>
+
+  <!-- Intervals mode -->
+  <div id="intervals">
+    <div id="intervals-controls">
+      <label class="ctl-label">Interval
+        <select id="interval-type">
+          <option value="1">m2 — minor 2nd</option>
+          <option value="2">M2 — major 2nd</option>
+          <option value="3">m3 — minor 3rd</option>
+          <option value="4" selected>M3 — major 3rd</option>
+          <option value="5">P4 — perfect 4th</option>
+          <option value="6">TT — tritone</option>
+          <option value="7">P5 — perfect 5th</option>
+          <option value="8">m6 — minor 6th</option>
+          <option value="9">M6 — major 6th</option>
+          <option value="10">m7 — minor 7th</option>
+          <option value="11">M7 — major 7th</option>
+          <option value="12">P8 — octave</option>
+        </select>
+      </label>
+    </div>
+    <div id="intervals-score">0 / 0</div>
+    <div id="intervals-result">Which note is the root?</div>
+    <div id="intervals-roots"></div>
+    <div id="intervals-actions">
+      <button id="intervals-hint"   class="ghost" type="button">hint ♪</button>
+      <button id="intervals-replay" class="ghost" type="button">play again ↺</button>
+      <button id="intervals-next"   class="ghost" type="button">next →</button>
+    </div>
+  </div>
+
+  <div id="status">Tap Start to begin</div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

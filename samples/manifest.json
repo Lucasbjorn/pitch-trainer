@@ -1,0 +1,14 @@
+{
+  "C":  ["c.wav"],
+  "C#": ["cs.wav"],
+  "D":  ["d.wav"],
+  "D#": ["ds.wav"],
+  "E":  ["e.wav"],
+  "F":  ["f.wav"],
+  "F#": ["fs.wav"],
+  "G":  ["g.wav"],
+  "G#": ["gs.wav"],
+  "A":  ["a.wav"],
+  "A#": ["as.wav"],
+  "B":  ["b.wav"]
+}
