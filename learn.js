@@ -29,8 +29,11 @@ const PHASES = [
 ];
 
 const REPS_PER_NOTE   = 10;   // correct reps before the pitch pool grows
-const INTERVAL_SET    = 12;   // reps before a new voicing pair is drawn
+const INTERVAL_SET    = 12;   // reps before a new option set is drawn
 const PHASE_UNLOCK_AT = 20;   // correct reps to unlock the next phase (2-4)
+const DISCRIM_OPTIONS = 3;    // # of absolute options (A/B/C) to discriminate
+
+const LETTERS = ["A", "B", "C", "D", "E", "F"];
 
 // Faded scaffolding: the PP-MIDI crutch starts loud and fades a notch with
 // each first-try-correct, then jumps back up when you miss. "strength" is a
@@ -68,7 +71,7 @@ export function setupLearn(ctx) {
     PITCH_NAMES.forEach((n) => { notes[n] = 1; });
     // Spread saved-over-defaults so new fields backfill onto existing progress.
     return {
-      unlocked: p.unlocked ?? 1,                 // how many phases unlocked (>=1)
+      unlocked: PHASES.length,                    // dev: all phases unlocked
       notes:    { ...notes, ...(p.notes || {}) },
       pitches:  { pool: 3, correctInPool: 0, total: 0, ...(p.pitches   || {}) },
       intervals:{ semis: 4, reps: 0, correct: 0,        ...(p.intervals || {}) },
@@ -321,14 +324,18 @@ export function setupLearn(ctx) {
   // A and B are two fixed ROOT pitch classes (same interval on top). Each round
   // the octave is re-rolled from the two octaves around middle C, so the pair is
   // learned octave-independently and can't be anchored to a fixed register.
-  function drawIntervalPair(semis) {
-    let ra, rb, guard = 0;
-    do {
-      ra = Math.floor(Math.random() * 12);
-      rb = Math.floor(Math.random() * 12);
+  function pickDistinctRoots(n) {
+    const roots = [];
+    let guard = 0;
+    while (roots.length < n && guard < 300) {
+      const r = Math.floor(Math.random() * 12);
+      if (!roots.includes(r)) roots.push(r);
       guard++;
-    } while (guard < 40 && ra === rb);
-    return [ra, rb].map((rootPc) => ({
+    }
+    return roots;
+  }
+  function drawIntervalSet(semis) {
+    return pickDistinctRoots(DISCRIM_OPTIONS).map((rootPc) => ({
       rootPc,
       topPc: (rootPc + semis) % 12,
       label: `${PITCH_NAMES[rootPc]}–${PITCH_NAMES[(rootPc + semis) % 12]}`,
@@ -349,9 +356,9 @@ export function setupLearn(ctx) {
   function startIntervals() {
     const semis = prog.intervals.semis;
     if (!session || !session.pair || session.setReps >= INTERVAL_SET) {
-      session = { pair: drawIntervalPair(semis), setReps: 0 };
+      session = { pair: drawIntervalSet(semis), setReps: 0 };
     }
-    const which = Math.random() < 0.5 ? 0 : 1;
+    const which = Math.floor(Math.random() * session.pair.length);
     const oct = 3 + Math.floor(Math.random() * 2); // re-roll octave each round
     session.which = which;
     session.oct = oct;
@@ -362,15 +369,14 @@ export function setupLearn(ctx) {
 
     setScore(`${INTERVAL_LABELS[semis]} · ${Math.min(prog.intervals.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT}`);
     setBar(Math.min(prog.intervals.correct, PHASE_UNLOCK_AT) / PHASE_UNLOCK_AT);
-    setPrompt(`Which voicing did you hear?`);
+    setPrompt(`Which one did you hear?`);
     showHint(true);
 
-    const [A, B] = session.pair;
+    const btns = session.pair.map((v, i) =>
+      `<button class="voicing-btn" data-which="${i}"><b>${LETTERS[i]}</b><span>${v.label}</span></button>`
+    ).join("");
     setAnswers(`
-      <div class="voicing-choices">
-        <button class="voicing-btn" data-which="0"><b>A</b><span>${A.label}</span></button>
-        <button class="voicing-btn" data-which="1"><b>B</b><span>${B.label}</span></button>
-      </div>
+      <div class="voicing-choices">${btns}</div>
       <div class="interval-picker">
         <label>Interval
           <select id="learn-int-sel">
@@ -408,7 +414,7 @@ export function setupLearn(ctx) {
         if (prog.intervals.correct >= PHASE_UNLOCK_AT) unlockGate(2);
         saveProg();
       }
-      setPrompt(`✅ Voicing ${which === 0 ? "A" : "B"} — ${session.pair[which].label}`);
+      setPrompt(`✅ ${LETTERS[which]} — ${session.pair[which].label}`);
       setBar(Math.min(prog.intervals.correct, PHASE_UNLOCK_AT) / PHASE_UNLOCK_AT);
       setScore(`${INTERVAL_LABELS[prog.intervals.semis]} · ${Math.min(prog.intervals.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT}`);
       showNext(true);
@@ -416,7 +422,7 @@ export function setupLearn(ctx) {
     } else {
       heard.forEach((n) => bumpNote(n));
       saveProg();
-      setPrompt(`❌ That was the other one. Crutch back on…`);
+      setPrompt(`❌ Not that one. Crutch back on…`);
       setTimeout(() => playInterval(session.pair[session.which], session.oct), 350);
     }
   }
@@ -433,14 +439,8 @@ export function setupLearn(ctx) {
   }
   // Identity is the ROOT pitch class; octave re-rolls each round (same as
   // Intervals) so triads/voicings are learned octave-independently.
-  function drawChordPair(intervals) {
-    let ra, rb, guard = 0;
-    do {
-      ra = Math.floor(Math.random() * 12);
-      rb = Math.floor(Math.random() * 12);
-      guard++;
-    } while (guard < 40 && ra === rb);
-    return [ra, rb].map((rootPc) => ({
+  function drawChordSet(intervals) {
+    return pickDistinctRoots(DISCRIM_OPTIONS).map((rootPc) => ({
       rootPc,
       tones: intervals.map((iv) => (rootPc + iv) % 12),
       label: PITCH_NAMES[rootPc],
@@ -465,10 +465,10 @@ export function setupLearn(ctx) {
     const intervals = cfg.types[type];
 
     if (!session || !session.pair || session.type !== type || session.setReps >= INTERVAL_SET) {
-      session = { pair: drawChordPair(intervals), setReps: 0, type };
+      session = { pair: drawChordSet(intervals), setReps: 0, type };
     }
     session.intervals = intervals;
-    const which = Math.random() < 0.5 ? 0 : 1;
+    const which = Math.floor(Math.random() * session.pair.length);
     const oct = 3 + Math.floor(Math.random() * 2); // re-roll octave each round
     session.which = which;
     session.oct = oct;
@@ -480,17 +480,16 @@ export function setupLearn(ctx) {
     const scoreTxt = `${type} · ${Math.min(cfg.prog.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT}`;
     setScore(scoreTxt);
     setBar(Math.min(cfg.prog.correct, PHASE_UNLOCK_AT) / PHASE_UNLOCK_AT);
-    setPrompt(`Which voicing did you hear?`);
+    setPrompt(`Which one did you hear?`);
     showHint(true);
 
-    const [A, B] = session.pair;
     const typeOpts = Object.keys(cfg.types)
       .map((t) => `<option value="${t}" ${t === type ? "selected" : ""}>${t}</option>`).join("");
+    const btns = session.pair.map((v, i) =>
+      `<button class="voicing-btn" data-which="${i}"><b>${LETTERS[i]}</b><span>${v.label} ${type}</span></button>`
+    ).join("");
     setAnswers(`
-      <div class="voicing-choices">
-        <button class="voicing-btn" data-which="0"><b>A</b><span>${A.label} ${type}</span></button>
-        <button class="voicing-btn" data-which="1"><b>B</b><span>${B.label} ${type}</span></button>
-      </div>
+      <div class="voicing-choices">${btns}</div>
       <div class="interval-picker">
         <label>${cfg.name} type
           <select id="learn-chord-sel">${typeOpts}</select>
@@ -525,7 +524,7 @@ export function setupLearn(ctx) {
         saveProg();
       }
       const v = session.pair[which];
-      setPrompt(`✅ Voicing ${which === 0 ? "A" : "B"} — ${v.label} ${session.type}`);
+      setPrompt(`✅ ${LETTERS[which]} — ${v.label} ${session.type}`);
       setBar(Math.min(cfg.prog.correct, PHASE_UNLOCK_AT) / PHASE_UNLOCK_AT);
       setScore(`${session.type} · ${Math.min(cfg.prog.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT}`);
       showNext(true);
@@ -533,7 +532,7 @@ export function setupLearn(ctx) {
     } else {
       heard.forEach((n) => bumpNote(n));
       saveProg();
-      setPrompt(`❌ That was the other one. Crutch back on…`);
+      setPrompt(`❌ Not that one. Crutch back on…`);
       setTimeout(() => playChord(session.pair[session.which], session.oct), 350);
     }
   }
