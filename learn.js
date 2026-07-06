@@ -104,15 +104,14 @@ export function setupLearn(ctx) {
   function bumpNote(name, amt = CRUTCH_BUMP) { prog.notes[name] = Math.min(1, noteStrength(name) + amt); }
 
   // Overlay one or more pitch classes (by NAME) at each note's own crutch level.
-  // `oct` (optional) pitch-shifts the sample so the crutch sits in the same
-  // octave as the target note (samples are recorded at octave 4).
-  function overlayByMastery(names, full = false, oct = null) {
+  // Always the original-pitch sample — never pitch-shifted — so it aligns by
+  // pitch class with its own OG note regardless of the target's octave.
+  function overlayByMastery(names, full = false) {
     const bank = ctx.getBank();
     if (!bank) return;
-    const rate = oct == null ? 1 : Math.pow(2, oct - 4);
     names.forEach((name) => {
       const db = full ? -8 : crutchGainDb(noteStrength(name));
-      if (db !== null) bank.play(name, { volume: db, playbackRate: rate });
+      if (db !== null) bank.play(name, { volume: db });
     });
   }
 
@@ -241,7 +240,7 @@ export function setupLearn(ctx) {
   // `note` is a pitch-class NAME (e.g. "C", "Eb"→"D#"), matching POOL_ORDER.
   function playPitch(note, oct, full = false) {
     playPiano(`${note}${oct}`, "1n", 0.95);
-    overlayByMastery([note], full, oct);
+    overlayByMastery([note], full);
   }
   // Weighted pick: notes that still need the crutch come up more often, but
   // mastered notes still get occasional review (spaced-repetition style).
