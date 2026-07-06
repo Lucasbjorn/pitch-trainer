@@ -53,6 +53,8 @@ export function setupLearn(ctx) {
   let phaseKey = null;
   let session = null;      // per-trainer transient state
   let ready = false;
+  let autoNext = localStorage.getItem("pt.learn.autonext") === "1";
+  let autoNextTimer = null;
 
   // ---- persistence ----
   function loadProg() {
@@ -100,7 +102,6 @@ export function setupLearn(ctx) {
   function noteStrength(name) { return prog.notes[name] ?? 1; }
   function fadeNote(name, amt = CRUTCH_FADE) { prog.notes[name] = Math.max(0, noteStrength(name) - amt); }
   function bumpNote(name, amt = CRUTCH_BUMP) { prog.notes[name] = Math.min(1, noteStrength(name) + amt); }
-  function avgStrength(names) { return names.reduce((s, n) => s + noteStrength(n), 0) / names.length; }
 
   // Overlay one or more pitch classes (by NAME) at each note's own crutch level.
   function overlayByMastery(names, full = false) {
@@ -110,10 +111,6 @@ export function setupLearn(ctx) {
       const db = full ? -8 : crutchGainDb(noteStrength(name));
       if (db !== null) bank.play(name, { volume: db });
     });
-  }
-  function crutchTag(strength) {
-    if (crutchGainDb(strength) === null) return "<span class='tag clean'>no crutch</span>";
-    return `<span class='tag'>crutch ${Math.round(strength * 100)}%</span>`;
   }
 
   // =========================================================================
@@ -184,12 +181,19 @@ export function setupLearn(ctx) {
           <button class="ghost" id="learn-hint" style="display:none">hint ♪</button>
           <button class="ghost" id="learn-next" style="visibility:hidden">next →</button>
         </div>
+        <label class="autonext"><input type="checkbox" id="learn-autonext"> auto-next on correct</label>
       </div>`;
 
-    root.querySelector("#learn-back").addEventListener("click", () => { view = "home"; render(); });
+    root.querySelector("#learn-back").addEventListener("click", () => { cancelAutoNext(); view = "home"; render(); });
     root.querySelector("#learn-replay").addEventListener("click", () => replay());
     root.querySelector("#learn-hint").addEventListener("click", () => hint());
-    root.querySelector("#learn-next").addEventListener("click", () => nextRound());
+    root.querySelector("#learn-next").addEventListener("click", () => { cancelAutoNext(); nextRound(); });
+    const autoCb = root.querySelector("#learn-autonext");
+    autoCb.checked = autoNext;
+    autoCb.addEventListener("change", () => {
+      autoNext = autoCb.checked;
+      localStorage.setItem("pt.learn.autonext", autoNext ? "1" : "0");
+    });
 
     startRound();
   }
@@ -205,8 +209,19 @@ export function setupLearn(ctx) {
   // =========================================================================
   // Round dispatch
   // =========================================================================
+  function cancelAutoNext() {
+    if (autoNextTimer) { clearTimeout(autoNextTimer); autoNextTimer = null; }
+  }
+  // Call after a correct answer; advances automatically if the toggle is on.
+  function maybeAutoNext(delay = 850) {
+    if (!autoNext) return;
+    cancelAutoNext();
+    autoNextTimer = setTimeout(() => { autoNextTimer = null; startRound(); }, delay);
+  }
+
   function startRound() {
     if (!ready) { setPrompt("Loading sounds…"); return; }
+    cancelAutoNext();
     showNext(false);
     if (phaseKey === "pitches")   return startPitches();
     if (phaseKey === "intervals") return startIntervals();
@@ -233,16 +248,6 @@ export function setupLearn(ctx) {
     for (let i = 0; i < pool.length; i++) { r -= weights[i]; if (r <= 0) return pool[i]; }
     return pool[pool.length - 1];
   }
-  function masteryStrip(pool) {
-    // A compact per-note readout so you can see which notes you've weaned off.
-    return `<div class="mastery-strip">${pool.map((n) => {
-      const s = noteStrength(n);
-      const pct = Math.round((1 - s) * 100); // learned %
-      const cls = s <= 0.05 ? "done" : s < 0.5 ? "mid" : "";
-      return `<div class="mastery-cell ${cls}"><span>${n}</span>
-        <div class="mastery-bar"><div style="width:${pct}%"></div></div></div>`;
-    }).join("")}</div>`;
-  }
   function startPitches() {
     const pool = POOL_ORDER.slice(0, prog.pitches.pool);
     const note = pickPitch(pool);
@@ -260,7 +265,7 @@ export function setupLearn(ctx) {
     const btns = pool.map((n) =>
       `<button class="answer-btn small" data-pc="${n}">${n}</button>`
     ).join("");
-    setAnswers(btns + masteryStrip(pool));
+    setAnswers(btns);
     root.querySelectorAll("#learn-answers button[data-pc]").forEach((b) =>
       b.addEventListener("click", () => answerPitch(b.dataset.pc))
     );
@@ -275,7 +280,6 @@ export function setupLearn(ctx) {
       session.done = true;
       if (session.attempts === 1) {
         fadeNote(session.note);
-        const newLvl = Math.round((1 - noteStrength(session.note)) * 100);
         prog.pitches.correctInPool++;
         prog.pitches.total++;
         if (prog.pitches.correctInPool >= REPS_PER_NOTE) {
@@ -290,14 +294,15 @@ export function setupLearn(ctx) {
             setPrompt(`✅ ${session.note} — all 12 notes in play! Intervals unlocked.`);
           }
         } else {
-          setPrompt(`✅ ${session.note} — ${newLvl}% learned ${crutchTag(noteStrength(session.note))}`);
+          setPrompt(`✅ ${session.note}`);
         }
       } else {
-        setPrompt(`✅ ${session.note} (took ${session.attempts})`);
+        setPrompt(`✅ ${session.note}`);
       }
       saveProg();
       setBar(prog.pitches.correctInPool / REPS_PER_NOTE);
       showNext(true);
+      maybeAutoNext();
     } else {
       bumpNote(session.note);
       saveProg();
@@ -340,10 +345,9 @@ export function setupLearn(ctx) {
     session.replay = () => playVoicing(session.pair[which]);
     session.hint   = () => playVoicing(session.pair[which], true);
 
-    const heard = voicingNoteNames(session.pair[which]);
     setScore(`${INTERVAL_LABELS[semis]} · ${Math.min(prog.intervals.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT}`);
     setBar(Math.min(prog.intervals.correct, PHASE_UNLOCK_AT) / PHASE_UNLOCK_AT);
-    setPrompt(`Which voicing did you hear? ${crutchTag(avgStrength(heard))}`);
+    setPrompt(`Which voicing did you hear?`);
     showHint(true);
 
     const [A, B] = session.pair;
@@ -398,6 +402,7 @@ export function setupLearn(ctx) {
       setBar(Math.min(prog.intervals.correct, PHASE_UNLOCK_AT) / PHASE_UNLOCK_AT);
       setScore(`${INTERVAL_LABELS[prog.intervals.semis]} · ${Math.min(prog.intervals.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT}`);
       showNext(true);
+      maybeAutoNext();
     } else {
       heard.forEach((n) => bumpNote(n));
       saveProg();
@@ -458,11 +463,10 @@ export function setupLearn(ctx) {
     session.replay = () => playChord(session.pair[which]);
     session.hint   = () => playChord(session.pair[which], true);
 
-    const heard = chordNoteNames(session.pair[which]);
     const scoreTxt = `${type} · ${Math.min(cfg.prog.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT}`;
     setScore(scoreTxt);
     setBar(Math.min(cfg.prog.correct, PHASE_UNLOCK_AT) / PHASE_UNLOCK_AT);
-    setPrompt(`Which voicing did you hear? ${crutchTag(avgStrength(heard))}`);
+    setPrompt(`Which voicing did you hear?`);
     showHint(true);
 
     const [A, B] = session.pair;
@@ -511,6 +515,7 @@ export function setupLearn(ctx) {
       setBar(Math.min(cfg.prog.correct, PHASE_UNLOCK_AT) / PHASE_UNLOCK_AT);
       setScore(`${session.type} · ${Math.min(cfg.prog.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT}`);
       showNext(true);
+      maybeAutoNext();
     } else {
       heard.forEach((n) => bumpNote(n));
       saveProg();
