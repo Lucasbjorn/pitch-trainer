@@ -104,12 +104,15 @@ export function setupLearn(ctx) {
   function bumpNote(name, amt = CRUTCH_BUMP) { prog.notes[name] = Math.min(1, noteStrength(name) + amt); }
 
   // Overlay one or more pitch classes (by NAME) at each note's own crutch level.
-  function overlayByMastery(names, full = false) {
+  // `oct` (optional) pitch-shifts the sample so the crutch sits in the same
+  // octave as the target note (samples are recorded at octave 4).
+  function overlayByMastery(names, full = false, oct = null) {
     const bank = ctx.getBank();
     if (!bank) return;
+    const rate = oct == null ? 1 : Math.pow(2, oct - 4);
     names.forEach((name) => {
       const db = full ? -8 : crutchGainDb(noteStrength(name));
-      if (db !== null) bank.play(name, { volume: db });
+      if (db !== null) bank.play(name, { volume: db, playbackRate: rate });
     });
   }
 
@@ -236,9 +239,9 @@ export function setupLearn(ctx) {
   // The target sound is a plain piano note; the PP-MIDI song-cue is layered
   // UNDER it as the crutch and fades out per note as that note is learned.
   // `note` is a pitch-class NAME (e.g. "C", "Eb"→"D#"), matching POOL_ORDER.
-  function playPitch(note, full = false) {
-    playPiano(`${note}4`, "1n", 0.95);
-    overlayByMastery([note], full);
+  function playPitch(note, oct, full = false) {
+    playPiano(`${note}${oct}`, "1n", 0.95);
+    overlayByMastery([note], full, oct);
   }
   // Weighted pick: notes that still need the crutch come up more often, but
   // mastered notes still get occasional review (spaced-repetition style).
@@ -251,11 +254,15 @@ export function setupLearn(ctx) {
   function startPitches() {
     const pool = POOL_ORDER.slice(0, prog.pitches.pool);
     const note = pickPitch(pool);
+    // Random octave straddling middle C (3 or 4 → C3…B4) so you can't anchor to
+    // a fixed register and slip into relative pitch.
+    const oct = 3 + Math.floor(Math.random() * 2);
     session = {
       note,
+      oct,
       attempts: 0,
-      replay: () => playPitch(note),
-      hint:   () => playPitch(note, true),
+      replay: () => playPitch(note, oct),
+      hint:   () => playPitch(note, oct, true),
     };
     setScore(`pool ${prog.pitches.pool}/12`);
     setBar(prog.pitches.correctInPool / REPS_PER_NOTE);
@@ -270,7 +277,7 @@ export function setupLearn(ctx) {
       b.addEventListener("click", () => answerPitch(b.dataset.pc))
     );
 
-    playPitch(note);
+    playPitch(note, oct);
   }
   function answerPitch(guess) {
     if (!session || session.done) return;
@@ -307,7 +314,7 @@ export function setupLearn(ctx) {
       bumpNote(session.note);
       saveProg();
       setPrompt(`❌ Not ${guess}. Crutch back on for ${session.note}…`);
-      setTimeout(() => playPitch(session.note), 350);
+      setTimeout(() => playPitch(session.note, session.oct), 350);
     }
   }
 
