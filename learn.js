@@ -261,7 +261,7 @@ export function setupLearn(ctx) {
       oct,
       attempts: 0,
       replay: () => playPitch(note, oct),
-      hint:   () => playPitch(note, oct, true),
+      hint:   () => playPiano(`${note}${oct}`, "2n", 0.9), // clean note, no crutch
     };
     setScore(`pool ${prog.pitches.pool}/12`);
     setBar(prog.pitches.correctInPool / REPS_PER_NOTE);
@@ -318,27 +318,33 @@ export function setupLearn(ctx) {
   }
 
   // ---- Phase 2: Intervals (2-voicing discrimination) -------------------------
+  // A and B are two fixed ROOT pitch classes (same interval on top). Each round
+  // the octave is re-rolled from the two octaves around middle C, so the pair is
+  // learned octave-independently and can't be anchored to a fixed register.
   function drawIntervalPair(semis) {
-    // Two distinct roots at distinct octaves so each voicing owns an absolute
-    // register — the whole point is memorizing the sound of that exact spot.
-    // Roots span the two octaves straddling middle C (C3…B4), same as Pitches.
-    const octs = [3, 4];
-    let a, b, guard = 0;
+    let ra, rb, guard = 0;
     do {
-      const oa = octs[Math.floor(Math.random() * octs.length)];
-      const ob = octs[Math.floor(Math.random() * octs.length)];
-      const ra = Math.floor(Math.random() * 12);
-      const rb = Math.floor(Math.random() * 12);
-      a = { rootPc: ra, oct: oa };
-      b = { rootPc: rb, oct: ob };
+      ra = Math.floor(Math.random() * 12);
+      rb = Math.floor(Math.random() * 12);
       guard++;
-    } while (guard < 30 && a.rootPc === b.rootPc && a.oct === b.oct);
-    return [a, b].map((v) => ({
-      ...v,
-      rootName: noteName(PITCH_NAMES[v.rootPc], v.oct),
-      topPc: (v.rootPc + semis) % 12,
-      topName: noteName(PITCH_NAMES[(v.rootPc + semis) % 12], v.oct + Math.floor((v.rootPc + semis) / 12)),
+    } while (guard < 40 && ra === rb);
+    return [ra, rb].map((rootPc) => ({
+      rootPc,
+      topPc: (rootPc + semis) % 12,
+      label: `${PITCH_NAMES[rootPc]}–${PITCH_NAMES[(rootPc + semis) % 12]}`,
     }));
+  }
+  function intervalPianoNames(v, oct) {
+    const rootMidi = pcOctToMidi(v.rootPc, oct);
+    return [midiName(rootMidi), midiName(rootMidi + prog.intervals.semis)];
+  }
+  function playInterval(v, oct, full = false) {
+    playPiano(intervalPianoNames(v, oct), "1n", 0.95);
+    overlayByMastery([PITCH_NAMES[v.rootPc], PITCH_NAMES[v.topPc]], full);
+  }
+  function hintInterval(v, oct) {
+    // Separate notes, no crutch — nothing else.
+    playPiano(intervalPianoNames(v, oct), "2n", 0.9, 0.45);
   }
   function startIntervals() {
     const semis = prog.intervals.semis;
@@ -346,11 +352,13 @@ export function setupLearn(ctx) {
       session = { pair: drawIntervalPair(semis), setReps: 0 };
     }
     const which = Math.random() < 0.5 ? 0 : 1;
+    const oct = 3 + Math.floor(Math.random() * 2); // re-roll octave each round
     session.which = which;
+    session.oct = oct;
     session.done = false;
     session.attempts = 0;
-    session.replay = () => playVoicing(session.pair[which]);
-    session.hint   = () => playVoicing(session.pair[which], true);
+    session.replay = () => playInterval(session.pair[which], oct);
+    session.hint   = () => hintInterval(session.pair[which], oct);
 
     setScore(`${INTERVAL_LABELS[semis]} · ${Math.min(prog.intervals.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT}`);
     setBar(Math.min(prog.intervals.correct, PHASE_UNLOCK_AT) / PHASE_UNLOCK_AT);
@@ -360,8 +368,8 @@ export function setupLearn(ctx) {
     const [A, B] = session.pair;
     setAnswers(`
       <div class="voicing-choices">
-        <button class="voicing-btn" data-which="0"><b>A</b><span>${A.rootName}–${A.topName}</span></button>
-        <button class="voicing-btn" data-which="1"><b>B</b><span>${B.rootName}–${B.topName}</span></button>
+        <button class="voicing-btn" data-which="0"><b>A</b><span>${A.label}</span></button>
+        <button class="voicing-btn" data-which="1"><b>B</b><span>${B.label}</span></button>
       </div>
       <div class="interval-picker">
         <label>Interval
@@ -382,18 +390,14 @@ export function setupLearn(ctx) {
       startIntervals();
     });
 
-    playVoicing(session.pair[which]);
-  }
-  function voicingNoteNames(v) { return [PITCH_NAMES[v.rootPc], PITCH_NAMES[v.topPc]]; }
-  function playVoicing(v, full = false) {
-    playPiano([v.rootName, v.topName], "1n", 0.95);
-    overlayByMastery(voicingNoteNames(v), full);
+    playInterval(session.pair[which], oct);
   }
   function answerInterval(which) {
     if (!session || session.done) return;
     session.attempts++;
     const correct = which === session.which;
-    const heard = voicingNoteNames(session.pair[session.which]);
+    const v = session.pair[session.which];
+    const heard = [PITCH_NAMES[v.rootPc], PITCH_NAMES[v.topPc]];
     if (correct) {
       session.done = true;
       session.setReps++;
@@ -404,8 +408,7 @@ export function setupLearn(ctx) {
         if (prog.intervals.correct >= PHASE_UNLOCK_AT) unlockGate(2);
         saveProg();
       }
-      const v = session.pair[which];
-      setPrompt(`✅ Voicing ${which === 0 ? "A" : "B"} — ${v.rootName}–${v.topName}`);
+      setPrompt(`✅ Voicing ${which === 0 ? "A" : "B"} — ${session.pair[which].label}`);
       setBar(Math.min(prog.intervals.correct, PHASE_UNLOCK_AT) / PHASE_UNLOCK_AT);
       setScore(`${INTERVAL_LABELS[prog.intervals.semis]} · ${Math.min(prog.intervals.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT}`);
       showNext(true);
@@ -414,7 +417,7 @@ export function setupLearn(ctx) {
       heard.forEach((n) => bumpNote(n));
       saveProg();
       setPrompt(`❌ That was the other one. Crutch back on…`);
-      setTimeout(() => playVoicing(session.pair[session.which]), 350);
+      setTimeout(() => playInterval(session.pair[session.which], session.oct), 350);
     }
   }
 
@@ -428,32 +431,33 @@ export function setupLearn(ctx) {
     }
     return { prog: prog.voicings, types: SEVENTH_TYPES, phaseIndex: 4, name: "Voicing" };
   }
-  function drawChordVoicing(intervals) {
-    const octs = [3, 4, 5];
-    const oct = octs[Math.floor(Math.random() * octs.length)];
-    const rootPc = Math.floor(Math.random() * 12);
-    const rootMidi = pcOctToMidi(rootPc, oct);
-    const midis = intervals.map((iv) => rootMidi + iv);
-    return {
-      rootPc, oct, rootMidi,
-      names: midis.map(midiName),
-      tones: midis.map((m) => ((m % 12) + 12) % 12),
-      label: `${PITCH_NAMES[rootPc]}${oct}`,
-    };
-  }
+  // Identity is the ROOT pitch class; octave re-rolls each round (same as
+  // Intervals) so triads/voicings are learned octave-independently.
   function drawChordPair(intervals) {
-    let a, b, guard = 0;
+    let ra, rb, guard = 0;
     do {
-      a = drawChordVoicing(intervals);
-      b = drawChordVoicing(intervals);
+      ra = Math.floor(Math.random() * 12);
+      rb = Math.floor(Math.random() * 12);
       guard++;
-    } while (guard < 40 && a.rootMidi === b.rootMidi);
-    return [a, b];
+    } while (guard < 40 && ra === rb);
+    return [ra, rb].map((rootPc) => ({
+      rootPc,
+      tones: intervals.map((iv) => (rootPc + iv) % 12),
+      label: PITCH_NAMES[rootPc],
+    }));
   }
   function chordNoteNames(v) { return v.tones.map((t) => PITCH_NAMES[t]); }
-  function playChord(v, full = false) {
-    playPiano(v.names, "1n", 0.95);
+  function chordPianoNames(v, oct) {
+    const rootMidi = pcOctToMidi(v.rootPc, oct);
+    return session.intervals.map((iv) => midiName(rootMidi + iv));
+  }
+  function playChord(v, oct, full = false) {
+    playPiano(chordPianoNames(v, oct), "1n", 0.95);
     overlayByMastery(chordNoteNames(v), full);
+  }
+  function hintChord(v, oct) {
+    // Separate notes, no crutch — nothing else.
+    playPiano(chordPianoNames(v, oct), "2n", 0.9, 0.4);
   }
   function startChordDiscrim(phaseKey) {
     const cfg = chordConfig(phaseKey);
@@ -463,12 +467,15 @@ export function setupLearn(ctx) {
     if (!session || !session.pair || session.type !== type || session.setReps >= INTERVAL_SET) {
       session = { pair: drawChordPair(intervals), setReps: 0, type };
     }
+    session.intervals = intervals;
     const which = Math.random() < 0.5 ? 0 : 1;
+    const oct = 3 + Math.floor(Math.random() * 2); // re-roll octave each round
     session.which = which;
+    session.oct = oct;
     session.done = false;
     session.attempts = 0;
-    session.replay = () => playChord(session.pair[which]);
-    session.hint   = () => playChord(session.pair[which], true);
+    session.replay = () => playChord(session.pair[which], oct);
+    session.hint   = () => hintChord(session.pair[which], oct);
 
     const scoreTxt = `${type} · ${Math.min(cfg.prog.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT}`;
     setScore(scoreTxt);
@@ -500,7 +507,7 @@ export function setupLearn(ctx) {
       startChordDiscrim(phaseKey);
     });
 
-    playChord(session.pair[which]);
+    playChord(session.pair[which], oct);
   }
   function answerChordDiscrim(phaseKey, which) {
     if (!session || session.done) return;
@@ -527,7 +534,7 @@ export function setupLearn(ctx) {
       heard.forEach((n) => bumpNote(n));
       saveProg();
       setPrompt(`❌ That was the other one. Crutch back on…`);
-      setTimeout(() => playChord(session.pair[session.which]), 350);
+      setTimeout(() => playChord(session.pair[session.which], session.oct), 350);
     }
   }
 
