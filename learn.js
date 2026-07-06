@@ -32,6 +32,12 @@ const REPS_PER_NOTE   = 10;   // correct reps before the pitch pool grows
 const INTERVAL_SET    = 12;   // reps before a new voicing pair is drawn
 const PHASE_UNLOCK_AT = 20;   // correct reps to unlock the next phase (2-4)
 
+// Faded scaffolding: the PP-MIDI crutch starts loud and fades a notch with
+// each first-try-correct, then jumps back up when you miss. "strength" is a
+// 0..1 value persisted per phase; 1 = full crutch, 0 = no crutch (clean).
+const CRUTCH_FADE = 0.15;     // strength removed per first-try correct (~7 to fade)
+const CRUTCH_BUMP = 0.6;      // strength restored on a wrong answer
+
 // Chord types for the absolute-discrimination phases. Both voicings in a pair
 // share one type so you're memorizing the absolute sound/register, not
 // telling quality apart relatively.
@@ -52,12 +58,14 @@ export function setupLearn(ctx) {
   function loadProg() {
     let p = {};
     try { p = JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch (_) {}
+    // Spread saved-over-defaults so new fields (like `crutch`) backfill onto
+    // existing progress.
     return {
       unlocked: p.unlocked ?? 1,                 // how many phases unlocked (>=1)
-      pitches:  p.pitches  ?? { pool: 3, correctInPool: 0, total: 0 },
-      intervals:p.intervals?? { semis: 4, reps: 0, correct: 0 },
-      triads:   p.triads   ?? { correct: 0, type: "Major" },
-      voicings: p.voicings ?? { correct: 0, type: "maj7" },
+      pitches:  { pool: 3, correctInPool: 0, total: 0, crutch: 1, ...(p.pitches   || {}) },
+      intervals:{ semis: 4, reps: 0, correct: 0, crutch: 1,        ...(p.intervals || {}) },
+      triads:   { correct: 0, type: "Major", crutch: 1,           ...(p.triads    || {}) },
+      voicings: { correct: 0, type: "maj7", crutch: 1,            ...(p.voicings  || {}) },
     };
   }
   function saveProg() { try { localStorage.setItem(LS_KEY, JSON.stringify(prog)); } catch (_) {} }
@@ -75,11 +83,24 @@ export function setupLearn(ctx) {
       try { piano.triggerAttackRelease(n, dur, now + i * gap, vel); } catch (_) {}
     });
   }
-  function overlaySamples(pcs) {
+  function overlaySamples(pcs, db = -6) {
     const bank = ctx.getBank();
     if (!bank) return;
-    pcs.forEach((pc) => bank.play(pc, { volume: -6 }));
+    pcs.forEach((pc) => bank.play(pc, { volume: db }));
   }
+
+  // ---- crutch scheduling ----
+  // Map strength (0..1) to the overlay gain in dB, or null when faded out.
+  function crutchGainDb(strength) {
+    if (strength <= 0.05) return null;   // gone — clean playback
+    return -18 * (1 - strength);         // strength 1 → 0 dB, fading toward ~-17
+  }
+  function crutchTag(strength) {
+    if (crutchGainDb(strength) === null) return "<span class='tag clean'>no crutch</span>";
+    return `<span class='tag'>crutch ${Math.round(strength * 100)}%</span>`;
+  }
+  function fadeCrutch(o) { o.crutch = Math.max(0, (o.crutch ?? 1) - CRUTCH_FADE); }
+  function bumpCrutch(o) { o.crutch = Math.min(1, (o.crutch ?? 1) + CRUTCH_BUMP); }
 
   // =========================================================================
   // Rendering
@@ -183,18 +204,26 @@ export function setupLearn(ctx) {
   function hint()      { if (session && session.hint) session.hint(); }
 
   // ---- Phase 1: Pitches ------------------------------------------------------
+  // The target sound is a plain piano note; the PP-MIDI song-cue is layered on
+  // top as the crutch and fades out as you improve.
+  function playPitch(pc, strength) {
+    playPiano(noteName(PITCH_NAMES[pc], 4), "1n", 0.85);
+    const db = crutchGainDb(strength);
+    if (db !== null) overlaySamples([pc], db);
+  }
   function startPitches() {
     const pool = POOL_ORDER.slice(0, prog.pitches.pool);
     const pc   = pool[Math.floor(Math.random() * pool.length)];
     session = {
       pc,
       attempts: 0,
-      replay: () => ctx.getBank().play(pc, {}),
+      replay: () => playPitch(pc, prog.pitches.crutch),
+      hint:   () => playPitch(pc, 1),
     };
     setScore(`pool ${prog.pitches.pool}/12`);
     setBar(prog.pitches.correctInPool / REPS_PER_NOTE);
-    setPrompt(`Which note is this?`);
-    showHint(false);
+    setPrompt(`Which note is this? ${crutchTag(prog.pitches.crutch)}`);
+    showHint(true);
 
     const btns = pool.map((n) =>
       `<button class="answer-btn small" data-pc="${n}">${n}</button>`
@@ -204,7 +233,7 @@ export function setupLearn(ctx) {
       b.addEventListener("click", () => answerPitch(b.dataset.pc))
     );
 
-    ctx.getBank().play(pc, {});
+    playPitch(pc, prog.pitches.crutch);
   }
   function answerPitch(guess) {
     if (!session || session.done) return;
@@ -213,6 +242,7 @@ export function setupLearn(ctx) {
     if (correct) {
       session.done = true;
       if (session.attempts === 1) {
+        fadeCrutch(prog.pitches);
         prog.pitches.correctInPool++;
         prog.pitches.total++;
         if (prog.pitches.correctInPool >= REPS_PER_NOTE) {
@@ -236,8 +266,10 @@ export function setupLearn(ctx) {
       setBar(prog.pitches.correctInPool / REPS_PER_NOTE);
       showNext(true);
     } else {
-      setPrompt(`❌ Not ${guess}. Listen again…`);
-      setTimeout(() => ctx.getBank().play(session.pc, {}), 350);
+      bumpCrutch(prog.pitches);
+      saveProg();
+      setPrompt(`❌ Not ${guess}. Crutch back on — listen again…`);
+      setTimeout(() => playPitch(session.pc, prog.pitches.crutch), 350);
     }
   }
 
@@ -269,17 +301,16 @@ export function setupLearn(ctx) {
       session = { pair: drawIntervalPair(semis), setReps: 0 };
     }
     const which = Math.random() < 0.5 ? 0 : 1;
-    const crutch = Math.random() < 0.5; // ~half with the PP-MIDI crutch
+    const strength = prog.intervals.crutch;
     session.which = which;
-    session.crutch = crutch;
     session.done = false;
     session.attempts = 0;
-    session.replay = () => playVoicing(session.pair[which], crutch);
-    session.hint   = () => playVoicing(session.pair[which], true);
+    session.replay = () => playVoicing(session.pair[which], prog.intervals.crutch);
+    session.hint   = () => playVoicing(session.pair[which], 1);
 
     setScore(`${INTERVAL_LABELS[semis]} · ${Math.min(prog.intervals.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT}`);
     setBar(Math.min(prog.intervals.correct, PHASE_UNLOCK_AT) / PHASE_UNLOCK_AT);
-    setPrompt(`Which voicing did you hear? ${crutch ? "<span class='tag'>+ crutch</span>" : "<span class='tag clean'>clean</span>"}`);
+    setPrompt(`Which voicing did you hear? ${crutchTag(strength)}`);
     showHint(true);
 
     const [A, B] = session.pair;
@@ -307,11 +338,12 @@ export function setupLearn(ctx) {
       startIntervals();
     });
 
-    playVoicing(session.pair[which], crutch);
+    playVoicing(session.pair[which], strength);
   }
-  function playVoicing(v, crutch) {
-    playPiano([v.rootName, v.topName], "1n", crutch ? 0.6 : 0.85);
-    if (crutch) overlaySamples([v.rootPc, v.topPc]);
+  function playVoicing(v, strength) {
+    playPiano([v.rootName, v.topName], "1n", 0.85);
+    const db = crutchGainDb(strength);
+    if (db !== null) overlaySamples([v.rootPc, v.topPc], db);
   }
   function answerInterval(which) {
     if (!session || session.done) return;
@@ -321,6 +353,7 @@ export function setupLearn(ctx) {
       session.done = true;
       session.setReps++;
       if (session.attempts === 1) {
+        fadeCrutch(prog.intervals);
         prog.intervals.reps++;
         prog.intervals.correct++;
         if (prog.intervals.correct >= PHASE_UNLOCK_AT) unlockGate(2);
@@ -332,8 +365,10 @@ export function setupLearn(ctx) {
       setScore(`${INTERVAL_LABELS[prog.intervals.semis]} · ${Math.min(prog.intervals.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT}`);
       showNext(true);
     } else {
-      setPrompt(`❌ That was the other one. Replaying with crutch…`);
-      setTimeout(() => playVoicing(session.pair[session.which], true), 350);
+      bumpCrutch(prog.intervals);
+      saveProg();
+      setPrompt(`❌ That was the other one. Crutch back on…`);
+      setTimeout(() => playVoicing(session.pair[session.which], prog.intervals.crutch), 350);
     }
   }
 
@@ -369,9 +404,10 @@ export function setupLearn(ctx) {
     } while (guard < 40 && a.rootMidi === b.rootMidi);
     return [a, b];
   }
-  function playChord(v, crutch) {
-    playPiano(v.names, "1n", crutch ? 0.6 : 0.85);
-    if (crutch) overlaySamples(v.tones);
+  function playChord(v, strength) {
+    playPiano(v.names, "1n", 0.85);
+    const db = crutchGainDb(strength);
+    if (db !== null) overlaySamples(v.tones, db);
   }
   function startChordDiscrim(phaseKey) {
     const cfg = chordConfig(phaseKey);
@@ -382,18 +418,17 @@ export function setupLearn(ctx) {
       session = { pair: drawChordPair(intervals), setReps: 0, type };
     }
     const which = Math.random() < 0.5 ? 0 : 1;
-    const crutch = Math.random() < 0.5;
+    const strength = cfg.prog.crutch;
     session.which = which;
-    session.crutch = crutch;
     session.done = false;
     session.attempts = 0;
-    session.replay = () => playChord(session.pair[which], crutch);
-    session.hint   = () => playChord(session.pair[which], true);
+    session.replay = () => playChord(session.pair[which], cfg.prog.crutch);
+    session.hint   = () => playChord(session.pair[which], 1);
 
     const scoreTxt = `${type} · ${Math.min(cfg.prog.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT}`;
     setScore(scoreTxt);
     setBar(Math.min(cfg.prog.correct, PHASE_UNLOCK_AT) / PHASE_UNLOCK_AT);
-    setPrompt(`Which voicing did you hear? ${crutch ? "<span class='tag'>+ crutch</span>" : "<span class='tag clean'>clean</span>"}`);
+    setPrompt(`Which voicing did you hear? ${crutchTag(strength)}`);
     showHint(true);
 
     const [A, B] = session.pair;
@@ -420,7 +455,7 @@ export function setupLearn(ctx) {
       startChordDiscrim(phaseKey);
     });
 
-    playChord(session.pair[which], crutch);
+    playChord(session.pair[which], strength);
   }
   function answerChordDiscrim(phaseKey, which) {
     if (!session || session.done) return;
@@ -431,6 +466,7 @@ export function setupLearn(ctx) {
       session.done = true;
       session.setReps++;
       if (session.attempts === 1) {
+        fadeCrutch(cfg.prog);
         cfg.prog.correct++;
         if (cfg.prog.correct >= PHASE_UNLOCK_AT) unlockGate(cfg.phaseIndex);
         saveProg();
@@ -441,8 +477,10 @@ export function setupLearn(ctx) {
       setScore(`${session.type} · ${Math.min(cfg.prog.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT}`);
       showNext(true);
     } else {
-      setPrompt(`❌ That was the other one. Replaying with crutch…`);
-      setTimeout(() => playChord(session.pair[session.which], true), 350);
+      bumpCrutch(cfg.prog);
+      saveProg();
+      setPrompt(`❌ That was the other one. Crutch back on…`);
+      setTimeout(() => playChord(session.pair[session.which], cfg.prog.crutch), 350);
     }
   }
 
