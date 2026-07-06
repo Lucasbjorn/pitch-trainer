@@ -321,7 +321,8 @@ export function setupLearn(ctx) {
   function drawIntervalPair(semis) {
     // Two distinct roots at distinct octaves so each voicing owns an absolute
     // register — the whole point is memorizing the sound of that exact spot.
-    const octs = [3, 4, 5];
+    // Roots span the two octaves straddling middle C (C3…B4), same as Pitches.
+    const octs = [3, 4];
     let a, b, guard = 0;
     do {
       const oa = octs[Math.floor(Math.random() * octs.length)];
