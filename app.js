@@ -4,6 +4,8 @@
 
 import { PitchDetector } from "https://esm.sh/pitchy@4";
 import * as Tone from "https://esm.sh/tone@14";
+import { setupLearn } from "./learn.js";
+import { setupPractice } from "./practice.js";
 
 // ---------------------------------------------------------------------------
 // CONFIG
@@ -139,6 +141,10 @@ const $intervalsRoots  = document.getElementById("intervals-roots");
 const $intervalsHint   = document.getElementById("intervals-hint");
 const $intervalsReplay = document.getElementById("intervals-replay");
 const $intervalsNext   = document.getElementById("intervals-next");
+
+// Learn + Practice containers
+const $learn    = document.getElementById("learn");
+const $practice = document.getElementById("practice");
 
 // ---------------------------------------------------------------------------
 // Shared sample bank (lazy; created on first mode init)
@@ -786,12 +792,21 @@ function skipIntervalsRound() {
 // ---------------------------------------------------------------------------
 async function switchMode(newMode) {
   if (newMode === mode) return;
+  const oldMode = mode;
   mode = newMode;
-  document.body.classList.toggle("quiz-mode", newMode !== "passive");
+
+  // "quiz-mode" shrinks the shared #note display (used by quiz + intervals).
+  document.body.classList.toggle("quiz-mode", newMode === "quiz" || newMode === "intervals");
+  document.body.classList.toggle("mode-learn", newMode === "learn");
+  document.body.classList.toggle("mode-practice", newMode === "practice");
 
   $modeBtns.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.mode === newMode);
   });
+
+  // Exit whichever module owned the previous tab.
+  if (oldMode === "learn")    learnMod.exit();
+  if (oldMode === "practice") practiceMod.exit();
 
   // Common teardown of any non-passive UI.
   cancelAutoAdvance();
@@ -799,6 +814,8 @@ async function switchMode(newMode) {
   intervals = null;
   $quiz.classList.remove("active");
   $intervals.classList.remove("active");
+  $learn.classList.remove("active");
+  $practice.classList.remove("active");
   hideAllAnswerGroups();
   $followup.classList.remove("active");
 
@@ -831,6 +848,16 @@ async function switchMode(newMode) {
     $intervalsResult.className   = "";
     setStatus("Intervals mode");
     await initIntervals();
+  } else if (newMode === "learn") {
+    await cleanupPassive();
+    hideStartButton();
+    $learn.classList.add("active");
+    await learnMod.enter();
+  } else if (newMode === "practice") {
+    await cleanupPassive();
+    hideStartButton();
+    $practice.classList.add("active");
+    await practiceMod.enter();
   }
 }
 
@@ -848,6 +875,24 @@ function switchSubmode(newSubmode) {
   setStatus(`Quiz — ${submodeLabel()}`);
   if (sampleBank) startQuizRound();
 }
+
+// ---------------------------------------------------------------------------
+// Learn + Practice modules — share audio + helpers via a small ctx object.
+// ---------------------------------------------------------------------------
+const sharedCtx = {
+  Tone,
+  PITCH_NAMES,
+  INTERVAL_LABELS,
+  ensureSampleBank,
+  ensurePiano,
+  getBank:  () => sampleBank,
+  getPiano: () => piano,
+  midiToNoteName,
+  midiToPc,
+  setStatus,
+};
+const learnMod    = setupLearn(sharedCtx);
+const practiceMod = setupPractice(sharedCtx);
 
 // ---------------------------------------------------------------------------
 // Wire up

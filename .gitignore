@@ -3,3 +3,6 @@ node_modules/
 *.log
 .vscode/
 .idea/
+.vercel
+
+.claude/settings.local.json

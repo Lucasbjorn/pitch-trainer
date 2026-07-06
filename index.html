@@ -25,9 +25,18 @@
     #mode-toggle {
       position: fixed;
       top: calc(env(safe-area-inset-top) + 0.8rem);
+      left: 0; right: 0;
       display: flex; gap: 0.5rem;
       z-index: 10;
+      justify-content: flex-start;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+      padding: 0 1rem;
+      white-space: nowrap;
     }
+    #mode-toggle::-webkit-scrollbar { display: none; }
+    .mode-btn { flex: 0 0 auto; }
     .mode-btn, .submode-btn {
       padding: 0.45rem 1rem;
       font-size: 0.85rem;
@@ -227,6 +236,200 @@
     #intervals-next { visibility: hidden; }
     #intervals-next.visible { visibility: visible; }
 
+    /* =========================================================
+       Learn + Practice — modern app styling
+       ========================================================= */
+    :root {
+      --bg: #0e0f13;
+      --card: #1a1c22;
+      --card2: #23262f;
+      --line: #2c2f38;
+      --text: #eef0f4;
+      --muted: #9aa0ac;
+      --accent: #6c8cff;
+      --good: #4caf50;
+      --bad: #f44336;
+    }
+
+    /* When in Learn/Practice: full-width, top-aligned, scrollable page. */
+    body.mode-learn, body.mode-practice { background: var(--bg); }
+    body.mode-learn, body.mode-practice {
+      justify-content: flex-start;
+    }
+    body.mode-learn #note, body.mode-practice #note,
+    body.mode-learn #debug, body.mode-practice #debug,
+    body.mode-learn #start, body.mode-practice #start,
+    body.mode-learn #status, body.mode-practice #status { display: none !important; }
+
+    #learn, #practice {
+      display: none;
+      width: 100%;
+      max-width: 520px;
+      padding: 0 1rem 2rem;
+      animation: fadeIn 0.2s ease;
+    }
+    #learn.active, #practice.active { display: block; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+    .screen-title { font-size: 1.9rem; font-weight: 800; margin: 0.2rem 0 0.3rem; letter-spacing: -0.02em; }
+    .screen-sub   { color: var(--muted); font-size: 0.95rem; margin: 0 0 1.2rem; line-height: 1.4; }
+
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 1rem 1.1rem;
+      margin-bottom: 1rem;
+    }
+    .panel-title { font-weight: 700; font-size: 1rem; margin-bottom: 0.7rem; display: flex; align-items: baseline; gap: 0.5rem; }
+    .panel-sub { color: var(--muted); font-weight: 500; font-size: 0.8rem; }
+
+    .primary-btn {
+      width: 100%;
+      padding: 1.05rem;
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: #fff;
+      background: linear-gradient(135deg, #6c8cff, #8b5cf6);
+      border: none;
+      border-radius: 16px;
+      cursor: pointer;
+      touch-action: manipulation;
+      margin: 0.4rem 0 1rem;
+      box-shadow: 0 8px 24px rgba(108,140,255,0.28);
+    }
+    .primary-btn:disabled { opacity: 0.45; box-shadow: none; }
+    .primary-btn:active:not(:disabled) { transform: translateY(1px); }
+
+    .icon-btn {
+      background: var(--card2); color: var(--text);
+      border: 1px solid var(--line); border-radius: 12px;
+      padding: 0.45rem 0.8rem; font-size: 0.85rem; font-weight: 600;
+      cursor: pointer; touch-action: manipulation;
+    }
+
+    /* ---- Learn home cards ---- */
+    .learn-cards { display: flex; flex-direction: column; gap: 0.7rem; }
+    .learn-card {
+      display: flex; align-items: center; gap: 0.9rem; text-align: left;
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 18px; padding: 1rem; cursor: pointer; color: var(--text);
+      touch-action: manipulation; width: 100%;
+    }
+    .learn-card:active:not(.locked) { background: var(--card2); }
+    .learn-card.locked { opacity: 0.5; cursor: default; }
+    .learn-card-icon { font-size: 1.7rem; width: 2.4rem; text-align: center; flex: 0 0 auto; }
+    .learn-card-body { flex: 1; min-width: 0; }
+    .learn-card-title { font-weight: 700; font-size: 1.1rem; }
+    .learn-card-blurb { color: var(--muted); font-size: 0.85rem; line-height: 1.35; margin-top: 0.15rem; }
+    .learn-card-sub { color: var(--accent); font-size: 0.78rem; font-weight: 600; margin-top: 0.4rem; }
+    .learn-card-chev { font-size: 1.6rem; color: var(--muted); flex: 0 0 auto; }
+
+    /* ---- Trainer shell (Learn) ---- */
+    .trainer { display: flex; flex-direction: column; gap: 0.9rem; }
+    .trainer-top { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+    .trainer-title { font-weight: 700; font-size: 1.05rem; }
+    .trainer-score { color: var(--muted); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+    .trainer-progress { height: 8px; background: var(--card2); border-radius: 999px; overflow: hidden; }
+    .trainer-progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg,#6c8cff,#8b5cf6); transition: width 0.3s; }
+    .trainer-prompt { text-align: center; font-size: 1.15rem; font-weight: 600; min-height: 2.6em; display: flex; align-items: center; justify-content: center; line-height: 1.35; }
+    .trainer-prompt b { color: var(--accent); }
+    .trainer-answers { display: flex; flex-direction: column; align-items: center; gap: 0.6rem; }
+    .trainer-answers > .answer-btn, .trainer-answers > div { }
+    #learn-answers { display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); gap: 0.4rem; width: 100%; }
+    #learn-answers .answer-btn { width: 100%; }
+    .trainer-actions { display: flex; justify-content: center; gap: 1.4rem; margin-top: 0.3rem; }
+
+    .tag { font-size: 0.7rem; padding: 0.12rem 0.5rem; border-radius: 999px; background: rgba(108,140,255,0.2); color: #a9bcff; font-weight: 700; vertical-align: middle; }
+    .tag.clean { background: rgba(123,216,143,0.18); color: #9be4ac; }
+
+    .voicing-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; width: 100%; grid-column: 1 / -1; }
+    .voicing-btn {
+      display: flex; flex-direction: column; align-items: center; gap: 0.25rem;
+      padding: 1rem 0.6rem; border-radius: 16px; border: 2px solid var(--line);
+      background: var(--card2); color: var(--text); cursor: pointer; touch-action: manipulation;
+    }
+    .voicing-btn:active { border-color: var(--accent); }
+    .voicing-btn b { font-size: 1.15rem; }
+    .voicing-btn span { color: var(--muted); font-size: 0.85rem; }
+    .interval-picker { grid-column: 1 / -1; text-align: center; margin-top: 0.3rem; }
+    .interval-picker label { color: var(--muted); font-size: 0.85rem; display: inline-flex; gap: 0.4rem; align-items: center; }
+    .interval-picker select {
+      background: var(--card2); color: var(--text); border: 1px solid var(--line);
+      border-radius: 999px; padding: 0.35rem 0.7rem; font-family: inherit; font-size: 0.85rem;
+    }
+
+    /* ---- Practice: stats + factions ---- */
+    .stat-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; margin-bottom: 1rem; }
+    .stat-card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 1.1rem; text-align: center; }
+    .stat-big { font-size: 2rem; font-weight: 800; letter-spacing: -0.02em; }
+    .stat-label { color: var(--muted); font-size: 0.82rem; margin-top: 0.15rem; }
+
+    .faction-row { display: grid; grid-template-columns: 6.5rem 1fr 2.6rem; align-items: center; gap: 0.6rem; margin: 0.45rem 0; }
+    .faction-label { font-size: 0.85rem; color: var(--text); }
+    .faction-track { height: 10px; background: var(--card2); border-radius: 999px; overflow: hidden; }
+    .faction-fill { height: 100%; width: 0%; border-radius: 999px; transition: width 0.4s; }
+    .faction-val { text-align: right; color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+    .suggestion { margin-top: 0.8rem; padding: 0.7rem 0.8rem; background: rgba(167,139,250,0.12); border: 1px solid rgba(167,139,250,0.3); border-radius: 12px; font-size: 0.85rem; line-height: 1.4; }
+    .suggestion b { color: #c4b5fd; }
+
+    .hist-row { display: flex; justify-content: space-between; padding: 0.4rem 0; border-bottom: 1px solid var(--line); font-size: 0.88rem; color: var(--muted); }
+    .hist-row:last-child { border-bottom: none; }
+    .hist-empty { color: var(--muted); font-size: 0.88rem; }
+
+    /* ---- Practice: setup ---- */
+    .setup-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+    .chip-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .chip {
+      padding: 0.5rem 1rem; border-radius: 999px; border: 2px solid var(--line);
+      background: var(--card2); color: var(--muted); font-weight: 700; cursor: pointer; touch-action: manipulation;
+    }
+    .chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .custom-time { display: flex; align-items: center; gap: 0.8rem; margin-top: 0.9rem; }
+    .custom-time input[type=range] { flex: 1; accent-color: var(--accent); }
+    #pr-range-val { color: var(--text); font-weight: 700; font-size: 0.9rem; min-width: 4.2rem; text-align: right; }
+
+    .skill-list { display: flex; flex-direction: column; gap: 0.55rem; }
+    .skill-row { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--card2); }
+    .skill-row.on { border-color: var(--accent); }
+    .skill-toggle { display: flex; align-items: center; gap: 0.7rem; width: 100%; padding: 0.8rem; background: none; border: none; color: var(--text); cursor: pointer; text-align: left; touch-action: manipulation; }
+    .skill-check { width: 1.4rem; height: 1.4rem; border-radius: 7px; border: 2px solid var(--line); display: flex; align-items: center; justify-content: center; font-size: 0.9rem; color: #fff; flex: 0 0 auto; }
+    .skill-row.on .skill-check { background: var(--accent); border-color: var(--accent); }
+    .skill-icon { font-size: 1.2rem; }
+    .skill-name { font-weight: 600; display: flex; flex-direction: column; }
+    .skill-faction { font-size: 0.72rem; color: var(--muted); font-weight: 500; }
+    .skill-mode { display: flex; gap: 0.4rem; padding: 0 0.8rem 0.8rem; }
+    .skill-mode.hidden { display: none; }
+    .seg { flex: 1; padding: 0.5rem; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--muted); font-size: 0.8rem; font-weight: 600; cursor: pointer; touch-action: manipulation; }
+    .seg.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+    .plan-list { display: flex; flex-direction: column; gap: 0.35rem; }
+    .plan-seg { display: flex; justify-content: space-between; font-size: 0.85rem; padding: 0.4rem 0.6rem; background: var(--card2); border-radius: 10px; }
+    .plan-seg.brk { color: var(--muted); background: transparent; font-size: 0.8rem; }
+
+    /* ---- Practice: runner ---- */
+    .runner { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 0.5rem; }
+    .runner-sub { color: var(--muted); font-size: 0.85rem; margin-top: 0.3rem; }
+    .runner-title { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.01em; }
+    .runner-clock { font-size: 4.2rem; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; color: var(--accent); line-height: 1.1; }
+    .runner[style*="--accent"] .runner-clock { color: var(--accent); }
+    .runner-ring { width: 100%; max-width: 320px; height: 8px; background: var(--card2); border-radius: 999px; overflow: hidden; }
+    .runner-ring-bar { height: 100%; width: 0%; background: var(--accent); transition: width 1s linear; }
+    .runner-body { margin: 1rem 0 0.5rem; width: 100%; max-width: 380px; }
+    .guide-note { color: var(--muted); font-size: 0.95rem; line-height: 1.5; }
+    .guide-content { margin-top: 0.8rem; }
+    .read-line { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 1rem; font-size: 1rem; line-height: 1.6; }
+    .read-line.big { font-size: 1.4rem; font-weight: 700; }
+    .read-line .notes { font-family: ui-monospace, Menlo, monospace; font-size: 1.3rem; letter-spacing: 0.1em; color: var(--text); }
+    .runner-controls { display: flex; gap: 1.6rem; margin-top: 0.8rem; }
+    .runner-controls .ghost { font-size: 1rem; color: var(--text); }
+    .runner-next { color: var(--muted); font-size: 0.85rem; margin-top: 0.6rem; }
+
+    /* ---- Practice: summary ---- */
+    .summary { display: flex; flex-direction: column; align-items: center; text-align: center; }
+    .summary-emoji { font-size: 3.5rem; margin: 1rem 0 0.3rem; }
+    .summary .panel, .summary .stat-cards { width: 100%; }
+
     /* ---- Status ---- */
     #status {
       position: fixed;
@@ -245,6 +448,8 @@
     <button class="mode-btn active" data-mode="passive"   type="button">🎤 Passive</button>
     <button class="mode-btn"        data-mode="quiz"      type="button">🎯 Quiz</button>
     <button class="mode-btn"        data-mode="intervals" type="button">🎼 Intervals</button>
+    <button class="mode-btn"        data-mode="learn"     type="button">📚 Learn</button>
+    <button class="mode-btn"        data-mode="practice"  type="button">🗓️ Practice</button>
   </div>
 
   <div id="note" class="idle">—</div>
@@ -323,6 +528,12 @@
       <button id="intervals-next"   class="ghost" type="button">next →</button>
     </div>
   </div>
+
+  <!-- Learn mode (rendered by learn.js) -->
+  <div id="learn"></div>
+
+  <!-- Practice Routine (rendered by practice.js) -->
+  <div id="practice"></div>
 
   <div id="status">Tap Start to begin</div>
 
