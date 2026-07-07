@@ -112,11 +112,29 @@ export function setupTune(ctx) {
   function barSeconds() { return 4 * spb(); }
 
   // ---- playback ----
-  function fireNote(name, durSec, vel) {
+  // Plucked upright-bass-ish voice (Tone doesn't ship an upright sampler).
+  let bassSynth = null;
+  function getBass() {
+    if (!bassSynth) {
+      bassSynth = new Tone.MonoSynth({
+        oscillator: { type: "triangle" },
+        envelope: { attack: 0.012, decay: 0.35, sustain: 0.15, release: 0.5 },
+        filter: { type: "lowpass", Q: 1.5 },
+        filterEnvelope: { attack: 0.008, decay: 0.25, sustain: 0.05, release: 0.4, baseFrequency: 110, octaves: 2.2 },
+      }).toDestination();
+      bassSynth.volume.value = 2;
+    }
+    return bassSynth;
+  }
+  function fireNote(name, durSec, vel, isBass) {
     const now = Tone.now();
     if (usePiano) {
-      const piano = ctx.getPiano();
-      if (piano) { try { piano.triggerAttackRelease(name, durSec * 0.95, now, vel); } catch (_) {} }
+      if (isBass) {
+        try { getBass().triggerAttackRelease(name, durSec * 0.9, now, vel); } catch (_) {}
+      } else {
+        const piano = ctx.getPiano();
+        if (piano) { try { piano.triggerAttackRelease(name, durSec * 0.95, now, vel); } catch (_) {} }
+      }
     }
     if (usePpmidi) {
       const bank = ctx.getBank();
@@ -140,13 +158,13 @@ export function setupTune(ctx) {
     const slot = barSeconds() / Math.max(1, chords.length);
     const evs = chords.map((ch, ci) => {
       const pc = ((rootPcOf(ch) + transpose()) % 12 + 12) % 12;
-      return { name: FLAT[pc] + tune.bassOct, dur: slot * 0.98, at: ci * slot, vel: 0.9 };
+      return { name: FLAT[pc] + tune.bassOct, dur: slot * 0.98, at: ci * slot, vel: 0.9, bass: true };
     });
     return { evs, total: barSeconds() };
   }
   function scheduleBar(i, atSec) {
     barEvents(i).evs.forEach((ev) => {
-      noteTimers.push(setTimeout(() => fireNote(ev.name, ev.dur, ev.vel ?? 0.82), (atSec + ev.at) * 1000));
+      noteTimers.push(setTimeout(() => fireNote(ev.name, ev.dur, ev.vel ?? 0.82, ev.bass), (atSec + ev.at) * 1000));
     });
     return barEvents(i).total;
   }
