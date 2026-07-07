@@ -20,12 +20,32 @@ const LETTER_PC = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 // string; two chords in a bar are space-separated ("Dm7 G7").
 const TUNES = [
   {
-    id: "myideal", name: "My Ideal", quality: "major", tonicPc: 0, bpm: 84, bassOct: 2,
+    id: "myideal", name: "My Ideal", quality: "major", tonicPc: 0, bpm: 84, bassOct: 2, hasMelody: true,
     sections: [
-      { label: "A", bars: ["Cmaj7 A7", "Dm7", "Bb7 A7", "D7"] },
-      { label: "B", bars: ["G7 Dm7", "G7 E7", "Am7 D7", "Ab7 G7"] },
-      { label: "A", bars: ["Cmaj7 A7", "Dm7", "Bb7 A7", "D7"] },
-      { label: "C", bars: ["Dm7", "Fm7 Bb7", "Cmaj7 B7 Bb7", "Am7 D7 G7", "C6"] },
+      { label: "A", bars: [
+        { ch: "Cmaj7 A7", mel: [["A5",0.5],["G5",0.5],["E5",0.5],["C5",0.5],["C6",1.5],["A5",0.5]] },
+        { ch: "Dm7",      mel: [["A5",0.5],["F5",0.5],["A5",0.5],["A5",2],["E5",0.5]] },
+        { ch: "Bb7 A7",   mel: [["F5",0.5],["D5",0.5],["F5",0.5],["D5",1.5],["G4",1]] },
+        { ch: "D7",       mel: [["E5",4]] },
+      ] },
+      { label: "B", bars: [
+        { ch: "G7 Dm7",   mel: [["F5",0.5],["D5",0.5],["B4",0.5],["G4",0.5],["G5",1.5],["F5",0.5]] },
+        { ch: "G7 E7",    mel: [["A5",0.5],["F5",0.5],["A5",0.5],["F5",2.5]] },
+        { ch: "Am7 D7",   mel: [["C5",0.5],["D5",0.5],["F5",0.5],["A5",0.5],["C6",0.5],["D6",1.5]] },
+        { ch: "Ab7 G7",   mel: [["C#6",0.5],["A#5",0.5],["A5",0.5],["C6",2.5]] },
+      ] },
+      { label: "A", bars: [
+        { ch: "Cmaj7 A7", mel: [["A5",0.5],["G5",0.5],["E5",0.5],["C5",0.5],["C6",1.5],["A5",0.5]] },
+        { ch: "Dm7",      mel: [["A5",0.5],["F5",0.5],["A5",0.5],["A5",2],["E5",0.5]] },
+        { ch: "Bb7 A7",   mel: [["F5",0.5],["D5",0.5],["F5",0.5],["D5",1.5],["G4",1]] },
+        { ch: "D7",       mel: [["C6",3],["B4",1]] },
+      ] },
+      { label: "C", bars: [
+        { ch: "Dm7 Fm7 Bb7",      mel: [["G5",0.5],["F5",0.5],["D5",0.5],["B4",0.5],["B5",1.5],["A5",0.5]] },
+        { ch: "Cmaj7 B7 Bb7 Am7", mel: [["C5",0.5],["E5",0.5],["G5",0.5],["B5",0.5],["G5",0.5],["C6",0.5],["C5",0.5],["A4",0.5]] },
+        { ch: "Dm7 G7",           mel: [["C5",2],["D5",2]] },
+        { ch: "C6",               mel: [["C5",2],["r",1],["r",1]] },
+      ] },
     ],
   },
   {
@@ -55,7 +75,7 @@ const TUNES = [
 
 const REPS_PER_BAR = 3;
 const REVIEW_EVERY = 4;
-const MIC = { minClarity: 0.9, minRms: 0.015, minFreq: 70, maxFreq: 1000, holdMs: 90 };
+const MIC = { minClarity: 0.88, minRms: 0.013, minFreq: 70, maxFreq: 1100, holdMs: 70 };
 
 export function setupTune(ctx) {
   const { Tone } = ctx;
@@ -75,6 +95,7 @@ export function setupTune(ctx) {
 
   let rep = 0, paused = false, noteTimers = [], masterTimer = null;
   let loopMode = "feed";    // "feed" | "bar" | "section" | "all"
+  let singRange = "all";    // "all" | "section" | "here"
   let mic = null;
 
   // ---- persistence ----
@@ -150,7 +171,14 @@ export function setupTune(ctx) {
     const bar = flat[i];
     if (line === "melody" && bar.mel) {
       let at = 0; const evs = [];
-      bar.mel.forEach(([n, b]) => { const d = b * spb(); if (n !== "r") evs.push({ name: n, dur: d, at }); at += d; });
+      bar.mel.forEach(([n, b]) => {
+        const d = b * spb();
+        if (n !== "r") {
+          const midi = Tone.Frequency(n).toMidi() + transpose();
+          evs.push({ name: Tone.Frequency(midi, "midi").toNote(), dur: d, at });
+        }
+        at += d;
+      });
       return { evs, total: Math.max(at, barSeconds()) };
     }
     // bass: play each chord's root in its slice of the bar
@@ -300,7 +328,7 @@ export function setupTune(ctx) {
           <input type="range" id="tune-bpm" min="50" max="240" step="2" value="${bpm}">
           <span id="tune-bpm-val">${bpm} bpm</span>
         </div>
-        <button class="primary-btn" id="tune-sing">🎤 Sing test (through bar ${barIdx + 1})</button>
+        <button class="primary-btn" id="tune-sing">🎤 Sing test</button>
         <div class="tune-actions">
           <button class="ghost" id="tune-pause">${paused ? "▶ resume" : "⏸ pause"}</button>
           <button class="ghost" id="tune-prev">‹ prev</button>
@@ -379,21 +407,30 @@ export function setupTune(ctx) {
   }
 
   // ---- singing test ----
-  function singTarget() {
-    const pcs = [];
-    for (let i = 0; i <= barIdx; i++) {
+  // Distinct pitch classes to sing, for a bar range. Melody: each note.
+  // Bass: each chord root. Consecutive duplicates are collapsed so you don't
+  // have to re-articulate a held/repeated pitch to advance.
+  function rangeBars(range) {
+    if (range === "here") return [0, barIdx];
+    if (range === "section") return [sectionBars(barIdx)[0], sectionBars(barIdx).slice(-1)[0]];
+    return [0, flat.length - 1]; // "all"
+  }
+  function buildTarget(range) {
+    const [lo, hi] = rangeBars(range);
+    const raw = [];
+    for (let i = lo; i <= hi; i++) {
       const bar = flat[i];
       if (line === "melody" && bar.mel) {
-        bar.mel.forEach(([n]) => { if (n !== "r") pcs.push(((Tone.Frequency(n).toMidi() + transpose()) % 12 + 12) % 12); });
+        bar.mel.forEach(([n]) => { if (n !== "r") raw.push(((Tone.Frequency(n).toMidi() + transpose()) % 12 + 12) % 12); });
       } else {
-        (bar.ch || "").trim().split(/\s+/).filter(Boolean).forEach((ch) => pcs.push(((rootPcOf(ch) + transpose()) % 12 + 12) % 12));
+        (bar.ch || "").trim().split(/\s+/).filter(Boolean).forEach((ch) => raw.push(((rootPcOf(ch) + transpose()) % 12 + 12) % 12));
       }
     }
-    return pcs;
+    return raw.filter((pc, i) => i === 0 || pc !== raw[i - 1]); // collapse repeats
   }
   async function startSing() {
     pauseGuided();
-    const target = singTarget();
+    const target = buildTarget(singRange);
     renderSing(target);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
@@ -443,7 +480,12 @@ export function setupTune(ctx) {
           <div class="trainer-title">Sing the ${line}</div>
           <div style="width:60px"></div>
         </div>
-        <p class="screen-sub">Sing the ${line === "bass" ? "bass motion" : "melody"} through bar ${barIdx + 1} in ${PC[keyPc]}. Any octave.</p>
+        <p class="screen-sub">Sing the ${line === "bass" ? "bass motion" : "melody"} in ${PC[keyPc]}, in order. Any octave.</p>
+        <div class="line-toggle" style="margin-bottom:0.7rem">
+          <button class="seg ${singRange === "all" ? "active" : ""}" data-srange="all">Whole tune</button>
+          <button class="seg ${singRange === "section" ? "active" : ""}" data-srange="section">Section</button>
+          <button class="seg ${singRange === "here" ? "active" : ""}" data-srange="here">To bar ${barIdx + 1}</button>
+        </div>
         <div class="sing-target" id="sing-target">${target.map((pc, i) => `<span class="sng" data-i="${i}">${PC[pc]}</span>`).join("")}</div>
         <div class="tune-bar-card"><div class="tune-bar-num">heard</div><div class="tune-chord" id="sing-live">—</div><div class="tune-loop" id="sing-status">listening…</div></div>
         <div class="tune-actions">
@@ -454,6 +496,12 @@ export function setupTune(ctx) {
     root.querySelector("#sing-back").addEventListener("click", exitSing);
     root.querySelector("#sing-done").addEventListener("click", exitSing);
     root.querySelector("#sing-restart").addEventListener("click", () => { if (mic) { mic.ptr = 0; mic.released = true; mic.holdStart = 0; markSing(); setSingStatus("listening…"); } });
+    root.querySelectorAll("[data-srange]").forEach((b) => b.addEventListener("click", () => {
+      singRange = b.dataset.srange;
+      const t = buildTarget(singRange);
+      if (mic) { mic.target = t; mic.ptr = 0; mic.released = true; mic.holdStart = 0; }
+      renderSing(t);
+    }));
   }
   function exitSing() { stopSing(); paused = false; renderSession(); guidedStep(); }
   function markSing() {
