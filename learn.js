@@ -41,6 +41,7 @@ const PHASES = [
   { key: "triads",   icon: "🎹", name: "Triads",    blurb: "Discriminate 3 triad voicings by absolute sound." },
   { key: "voicings", icon: "🧩", name: "Voicings",  blurb: "Three 7th-chord voicings, discriminated by ear." },
   { key: "pattern",  icon: "🎶", name: "Pattern",   blurb: "Learn a lick absolutely, then spot it in every key." },
+  { key: "relative", icon: "🔭", name: "Wide Leap", blurb: "Two notes octaves apart — name the top note or the interval." },
   { key: "yesno",    icon: "✅", name: "Yes / No",  blurb: "A piano note — does it match the note shown?" },
 ];
 
@@ -51,6 +52,8 @@ const DISCRIM_OPTIONS = 3;    // # of absolute options (A/B/C) to discriminate
 const AWARD_STREAK    = 15;   // mirrors stats.js; shown in the celebration
 
 const LETTERS = ["A", "B", "C", "D", "E", "F"];
+// Simple-interval names indexed by (compound semitones % 12); 0 = octave(s).
+const REL_LABELS = ["8ve", "m2", "M2", "m3", "M3", "P4", "TT", "P5", "m6", "M6", "m7", "M7"];
 
 // Faded scaffolding: the PP-MIDI crutch starts loud and fades a notch with
 // each first-try-correct, then jumps back up when you miss. "strength" is a
@@ -104,6 +107,7 @@ export function setupLearn(ctx) {
       triads:   { correct: 0, type: "Major",           ...(p.triads    || {}) },
       voicings: { correct: 0, type: "maj7",            ...(p.voicings  || {}) },
       pattern:  { patKey: "1235", correct: 0, pool: 3, correctInPool: 0, ...(p.pattern || {}) },
+      relative: { mode: "relative", correct: 0,        ...(p.relative || {}) },
     };
   }
   function saveProg() { try { localStorage.setItem(LS_KEY, JSON.stringify(prog)); } catch (_) {} }
@@ -216,6 +220,7 @@ export function setupLearn(ctx) {
     if (key === "triads")   return `${prog.triads.type} · ${Math.min(prog.triads.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT} to advance`;
     if (key === "voicings") return `${prog.voicings.type} · ${Math.min(prog.voicings.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT} to advance`;
     if (key === "pattern")  { const p = PATTERNS.find((x) => x.key === prog.pattern.patKey); return `${p ? p.name : ""} · ${prog.pattern.correct} correct`; }
+    if (key === "relative") return `${prog.relative.mode} · ${prog.relative.correct} correct`;
     if (key === "yesno")    return `match-or-not drill`;
     return "";
   }
@@ -320,6 +325,7 @@ export function setupLearn(ctx) {
     if (phaseKey === "triads")    return startChordDiscrim("triads");
     if (phaseKey === "voicings")  return startChordDiscrim("voicings");
     if (phaseKey === "pattern")   return startPattern();
+    if (phaseKey === "relative")  return startRelative();
     if (phaseKey === "yesno")     return startYesNo();
   }
   function nextRound() { startRound(); }
@@ -825,6 +831,102 @@ export function setupLearn(ctx) {
     const bank = ctx.getBank(); if (bank) bank.play(shownName, {}); // OG sample anchor of shown note
     showNext(true);
     maybeAutoNext(1500);
+  }
+
+  // ---- Phase: Wide Leap (relative / absolute) -------------------------------
+  // Two notes octaves apart. Absolute: name the top note's pitch class.
+  // Relative: name the interval (reduced within an octave).
+  function playRelative(withCrutch) {
+    const piano = ctx.getPiano();
+    const now = Tone.now();
+    const s = session;
+    if (piano) {
+      try {
+        piano.triggerAttackRelease(midiName(s.botMidi), "2n", now, 0.9);
+        piano.triggerAttackRelease(midiName(s.topMidi), "2n", now + 0.6, 0.9);
+      } catch (_) {}
+    }
+    if (withCrutch && s.mode === "absolute") {
+      const topName = PITCH_NAMES[s.topPc];
+      const db = trainingWheels ? -8 : crutchGainDb(noteStrength(topName));
+      if (db !== null) { const bank = ctx.getBank(); if (bank) setTimeout(() => bank.play(topName, { volume: db }), 600); }
+    }
+  }
+  function hintRelative() {
+    const piano = ctx.getPiano();
+    const now = Tone.now();
+    if (piano) {
+      try {
+        piano.triggerAttackRelease(midiName(session.botMidi), "2n", now, 0.9);
+        piano.triggerAttackRelease(midiName(session.topMidi), "2n", now + 1.0, 0.9);
+      } catch (_) {}
+    }
+  }
+  function startRelative() {
+    const mode = prog.relative.mode;
+    const botPc = Math.floor(Math.random() * 12);
+    const botMidi = pcOctToMidi(botPc, 2);
+    const octs = 2 + Math.floor(Math.random() * 2); // 2 or 3 octaves
+    const simple = Math.floor(Math.random() * 12);
+    const total = octs * 12 + simple;
+    const topMidi = botMidi + total;
+    const topPc = ((topMidi % 12) + 12) % 12;
+    session = {
+      mode, botPc, botMidi, topMidi, topPc, total, done: false, attempts: 0, hintUsed: false,
+      replay: () => playRelative(true),
+      hint:   () => hintRelative(),
+    };
+    setScore(`${mode} · ${prog.relative.correct} correct`);
+    setBar((prog.relative.correct % 10) / 10);
+    setPrompt(`Bottom note: <b>${PITCH_NAMES[botPc]}</b> — name the <b>${mode === "absolute" ? "top note" : "interval"}</b>`);
+    showHint(true);
+
+    const opts = mode === "absolute"
+      ? PITCH_NAMES.map((n, i) => `<button class="answer-btn small" data-pc="${i}">${n}</button>`).join("")
+      : REL_LABELS.map((l, i) => `<button class="answer-btn small" data-int="${i}">${l}</button>`).join("");
+    const toggle = `<div class="line-toggle" style="margin-top:0.8rem">
+      <button class="seg ${mode === "relative" ? "active" : ""}" data-rmode="relative">Relative</button>
+      <button class="seg ${mode === "absolute" ? "active" : ""}" data-rmode="absolute">Absolute</button>
+    </div>`;
+    setAnswers(`<div class="note-grid">${opts}</div>${toggle}`);
+    root.querySelectorAll("#learn-answers [data-pc]").forEach((b) => b.addEventListener("click", () => answerRelative("abs", +b.dataset.pc)));
+    root.querySelectorAll("#learn-answers [data-int]").forEach((b) => b.addEventListener("click", () => answerRelative("rel", +b.dataset.int)));
+    root.querySelectorAll("[data-rmode]").forEach((b) => b.addEventListener("click", () => { prog.relative.mode = b.dataset.rmode; saveProg(); startRelative(); }));
+
+    playRelative(true);
+  }
+  function answerRelative(kind, val) {
+    if (!session || session.done) return;
+    session.attempts++;
+    const mode = session.mode;
+    const topName = PITCH_NAMES[session.topPc];
+    const correct = mode === "absolute" ? val === session.topPc : val === (session.total % 12);
+    if (session.attempts === 1) {
+      bumpSess(correct);
+      if (mode === "absolute") {
+        celebrate(recordNote(topName, correct, session.hintUsed || anyCrutchAudible([topName])));
+      } else {
+        celebrate(recordInterval(REL_LABELS[session.total % 12], [PITCH_NAMES[session.botPc], topName], correct, session.hintUsed));
+      }
+    }
+    const reveal = `${midiName(session.botMidi)} → ${midiName(session.topMidi)} · ${session.total} semis (${REL_LABELS[session.total % 12]})`;
+    if (correct) {
+      session.done = true;
+      if (session.attempts === 1) {
+        if (mode === "absolute") fadeNote(topName);
+        prog.relative.correct++;
+        saveProg();
+      }
+      setPrompt(`✅ ${reveal}`);
+      setBar((prog.relative.correct % 10) / 10);
+      setScore(`${mode} · ${prog.relative.correct} correct`);
+      showNext(true);
+      maybeAutoNext();
+    } else {
+      if (mode === "absolute") bumpNote(topName);
+      setPrompt(mode === "absolute" ? `❌ top was ${topName}` : `❌ it was ${REL_LABELS[session.total % 12]}`);
+      setTimeout(() => playRelative(true), 350);
+    }
   }
 
   // ---- unlock helper ----
