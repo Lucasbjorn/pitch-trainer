@@ -61,6 +61,12 @@ const REL_LABELS = ["8ve", "m2", "M2", "m3", "M3", "P4", "TT", "P5", "m6", "M6",
 // 0..1 value persisted per phase; 1 = full crutch, 0 = no crutch (clean).
 const CRUTCH_FADE = 0.15;     // strength removed per first-try correct (~7 to fade)
 const CRUTCH_BUMP = 0.6;      // strength restored on a wrong answer
+// Discrimination phases (Intervals/Triads/Voicings) draw a fresh set of random
+// roots every INTERVAL_SET reps, so a purely per-note crutch barely moves
+// within a set. These drive a per-SET crutch that visibly fades as you nail the
+// current set and jumps back on a miss.
+const SET_FADE = 0.22;        // per-set crutch removed per correct rep (~5 to clear)
+const SET_BUMP = 0.4;         // per-set crutch restored on a wrong answer
 
 // Chord types for the absolute-discrimination phases. Both voicings in a pair
 // share one type so you're memorizing the absolute sound/register, not
@@ -135,6 +141,7 @@ export function setupLearn(ctx) {
     return -8 - (1 - strength) * 12;     // strength 1 → -8 dB (under the piano), fading to ~-19
   }
   function noteStrength(name) { return prog.notes[name] ?? 1; }
+  function avgStrength(names) { return names.reduce((a, n) => a + noteStrength(n), 0) / Math.max(1, names.length); }
   function fadeNote(name, amt = CRUTCH_FADE) { prog.notes[name] = Math.max(0, noteStrength(name) - amt); }
   // A slip on a nearly-mastered note only refreshes the crutch briefly (so it
   // plays once or twice more) instead of yanking full scaffolding back.
@@ -449,7 +456,9 @@ export function setupLearn(ctx) {
   }
   function playInterval(v, oct, full = false) {
     playPiano(intervalPianoNames(v, oct), "1n", 0.95);
-    overlayUniform([PITCH_NAMES[v.rootPc], PITCH_NAMES[v.topPc]], full);
+    const names = [PITCH_NAMES[v.rootPc], PITCH_NAMES[v.topPc]];
+    const db = (full || trainingWheels) ? FORCE_DB : crutchGainDb(session ? session.crutch : 1);
+    if (db !== null) { const bank = ctx.getBank(); if (bank) names.forEach((n) => bank.play(n, { volume: db })); }
   }
   function hintInterval(v, oct) {
     // Separate notes, no crutch — nothing else.
@@ -458,7 +467,9 @@ export function setupLearn(ctx) {
   function startIntervals() {
     const semis = prog.intervals.semis;
     if (!session || !session.pair || session.setReps >= INTERVAL_SET) {
-      session = { pair: drawIntervalSet(semis), setReps: 0 };
+      const pair = drawIntervalSet(semis);
+      const allNotes = pair.flatMap((v) => [PITCH_NAMES[v.rootPc], PITCH_NAMES[v.topPc]]);
+      session = { pair, setReps: 0, crutch: avgStrength(allNotes) }; // seed from mastery
     }
     const which = Math.floor(Math.random() * session.pair.length);
     const oct = 3 + Math.floor(Math.random() * 2); // re-roll octave each round
@@ -509,14 +520,15 @@ export function setupLearn(ctx) {
     const heard = [PITCH_NAMES[v.rootPc], PITCH_NAMES[v.topPc]];
     if (session.attempts === 1) {
       bumpSess(correct);
-      const assisted = session.hintUsed || anyCrutchAudible(heard);
+      const assisted = session.hintUsed || trainingWheels || crutchGainDb(session.crutch) !== null;
       celebrate(recordInterval(INTERVAL_LABELS[prog.intervals.semis], heard, correct, assisted));
     }
     if (correct) {
       session.done = true;
       session.setReps++;
       if (session.attempts === 1) {
-        heard.forEach((n) => fadeNote(n, CRUTCH_FADE * 0.5)); // indirect evidence → gentler fade
+        heard.forEach((n) => fadeNote(n, CRUTCH_FADE * 0.5)); // per-note mastery (stats)
+        session.crutch = Math.max(0, session.crutch - SET_FADE); // per-set fade
         prog.intervals.reps++;
         prog.intervals.correct++;
         if (prog.intervals.correct >= PHASE_UNLOCK_AT) unlockGate(2);
@@ -529,6 +541,7 @@ export function setupLearn(ctx) {
       maybeAutoNext();
     } else {
       heard.forEach((n) => bumpNote(n));
+      session.crutch = Math.min(1, session.crutch + SET_BUMP); // per-set bump
       saveProg();
       setPrompt(`❌ Not that one. Crutch back on…`);
       setTimeout(() => playInterval(session.pair[session.which], session.oct), 350);
@@ -561,7 +574,9 @@ export function setupLearn(ctx) {
   }
   function playChord(v, oct, full = false) {
     playPiano(chordPianoNames(v, oct), "1n", 0.95);
-    overlayUniform(chordNoteNames(v), full);
+    const names = chordNoteNames(v);
+    const db = (full || trainingWheels) ? FORCE_DB : crutchGainDb(session ? session.crutch : 1);
+    if (db !== null) { const bank = ctx.getBank(); if (bank) names.forEach((n) => bank.play(n, { volume: db })); }
   }
   function hintChord(v, oct) {
     // Separate notes, no crutch — nothing else.
@@ -589,7 +604,9 @@ export function setupLearn(ctx) {
     const intervals = cfg.types[type];
 
     if (!session || !session.pair || session.type !== type || session.setReps >= INTERVAL_SET) {
-      session = { pair: drawChordSet(intervals), setReps: 0, type };
+      const pair = drawChordSet(intervals);
+      const allNotes = pair.flatMap((v) => v.tones.map((t) => PITCH_NAMES[t]));
+      session = { pair, setReps: 0, type, crutch: avgStrength(allNotes) };
     }
     session.intervals = intervals;
     const which = Math.floor(Math.random() * session.pair.length);
@@ -643,14 +660,15 @@ export function setupLearn(ctx) {
     const heard = chordNoteNames(session.pair[session.which]);
     if (session.attempts === 1) {
       bumpSess(correct);
-      const assisted = session.hintUsed || anyCrutchAudible(heard);
+      const assisted = session.hintUsed || trainingWheels || crutchGainDb(session.crutch) !== null;
       celebrate(recordInterval(session.type, heard, correct, assisted));
     }
     if (correct) {
       session.done = true;
       session.setReps++;
       if (session.attempts === 1) {
-        heard.forEach((n) => fadeNote(n, CRUTCH_FADE * 0.4)); // indirect → gentle fade
+        heard.forEach((n) => fadeNote(n, CRUTCH_FADE * 0.4)); // per-note mastery (stats)
+        session.crutch = Math.max(0, session.crutch - SET_FADE); // per-set fade
         cfg.prog.correct++;
         if (cfg.prog.correct >= PHASE_UNLOCK_AT) unlockGate(cfg.phaseIndex);
         saveProg();
@@ -663,6 +681,7 @@ export function setupLearn(ctx) {
       maybeAutoNext();
     } else {
       heard.forEach((n) => bumpNote(n));
+      session.crutch = Math.min(1, session.crutch + SET_BUMP); // per-set bump
       saveProg();
       setPrompt(`❌ Not that one. Crutch back on…`);
       setTimeout(() => playChord(session.pair[session.which], session.oct), 350);
