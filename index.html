@@ -463,6 +463,16 @@
     .tune-tempo input[type=range] { flex: 1; accent-color: var(--accent); }
     .tune-tempo #tune-bpm-val { min-width: 5rem; text-align: right; color: var(--text); font-weight: 700; }
     .tune-actions { display: flex; justify-content: center; gap: 1.2rem; margin-top: 0.4rem; flex-wrap: wrap; }
+    .tune-controls { display: flex; align-items: center; gap: 0.8rem; margin-bottom: 0.8rem; flex-wrap: wrap; }
+    .tune-controls .mini { display: flex; align-items: center; gap: 0.4rem; color: var(--muted); font-size: 0.85rem; }
+    .tune-controls select { background: var(--card2); color: var(--text); border: 1px solid var(--line); border-radius: 999px; padding: 0.35rem 0.7rem; font-family: inherit; font-size: 0.85rem; }
+    .tune-controls .line-toggle { margin: 0; flex: 1; min-width: 160px; }
+    .tune-checks { display: flex; gap: 1.4rem; margin-bottom: 1rem; color: var(--text); font-size: 0.9rem; }
+    .tune-checks label { display: flex; align-items: center; gap: 0.4rem; }
+    .tune-checks input { width: 1.05rem; height: 1.05rem; accent-color: var(--accent); }
+    .sing-target { display: flex; flex-wrap: wrap; gap: 0.35rem; justify-content: center; margin-bottom: 1rem; }
+    .sng { padding: 0.3rem 0.55rem; border-radius: 8px; background: var(--card2); color: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 0.9rem; }
+    .sng.hit { background: var(--good); color: #072; font-weight: 700; }
 
     /* ---- Status ---- */
     #status {
