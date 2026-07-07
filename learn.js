@@ -75,6 +75,13 @@ export function setupLearn(ctx) {
   let autoNext = localStorage.getItem("pt.learn.autonext") === "1";
   let autoNextTimer = null;
   let trainingWheels = localStorage.getItem("pt.learn.wheels") === "1";
+  let ynImagine = localStorage.getItem("pt.learn.yn.imagine") === "1";
+  let ynTimer = null;
+  function loadYnAllowed() {
+    try { const a = JSON.parse(localStorage.getItem("pt.learn.yn.allowed")); if (Array.isArray(a) && a.length) return new Set(a); } catch (_) {}
+    return new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  }
+  let ynAllowed = loadYnAllowed();
 
   // ---- persistence ----
   function loadProg() {
@@ -229,6 +236,10 @@ export function setupLearn(ctx) {
           <button class="ghost" id="learn-hint" style="display:none">hint ♪</button>
           <button class="ghost" id="learn-next" style="visibility:hidden">next →</button>
         </div>
+        <div class="trainer-actions" id="learn-decomp-row" style="display:none">
+          <button class="ghost" id="learn-decomp">decompose ✂︎</button>
+          <button class="ghost" id="learn-decomp-pp">decompose + PP ✂︎</button>
+        </div>
         <div class="learn-opts">
           <label class="autonext"><input type="checkbox" id="learn-autonext"> auto-next on correct</label>
           <label class="autonext"><input type="checkbox" id="learn-wheels"> 🛞 training wheels</label>
@@ -239,6 +250,8 @@ export function setupLearn(ctx) {
     root.querySelector("#learn-replay").addEventListener("click", () => replay());
     root.querySelector("#learn-hint").addEventListener("click", () => hint());
     root.querySelector("#learn-next").addEventListener("click", () => { cancelAutoNext(); nextRound(); });
+    root.querySelector("#learn-decomp").addEventListener("click", () => { if (session && session.decompose) session.decompose(false); });
+    root.querySelector("#learn-decomp-pp").addEventListener("click", () => { if (session && session.decompose) { session.hintUsed = true; session.decompose(true); } });
     const autoCb = root.querySelector("#learn-autonext");
     autoCb.checked = autoNext;
     autoCb.addEventListener("change", () => {
@@ -273,6 +286,7 @@ export function setupLearn(ctx) {
   function setBar(frac)        { const e = $("#learn-bar");    if (e) e.style.width = `${Math.max(0, Math.min(1, frac)) * 100}%`; }
   function showNext(v)         { const e = $("#learn-next");   if (e) e.style.visibility = v ? "visible" : "hidden"; }
   function showHint(v)         { const e = $("#learn-hint");   if (e) e.style.display = v ? "" : "none"; }
+  function showDecompose(v)    { const e = $("#learn-decomp-row"); if (e) e.style.display = v ? "flex" : "none"; }
   function setAnswers(html)    { const e = $("#learn-answers");if (e) e.innerHTML = html; }
 
   // =========================================================================
@@ -292,6 +306,7 @@ export function setupLearn(ctx) {
     if (!ready) { setPrompt("Loading sounds…"); return; }
     cancelAutoNext();
     showNext(false);
+    showDecompose(false); // only chord phases turn this on
     if (phaseKey === "pitches")   return startPitches();
     if (phaseKey === "intervals") return startIntervals();
     if (phaseKey === "triads")    return startChordDiscrim("triads");
@@ -535,6 +550,22 @@ export function setupLearn(ctx) {
     // Separate notes, no crutch — nothing else.
     playPiano(chordPianoNames(v, oct), "2n", 0.9, 0.4);
   }
+  // Break the voicing into its sub-units: each adjacent dyad plus the outer
+  // interval (root+top). Reveals every internal relationship, one at a time.
+  function decomposeChord(v, oct, withPp) {
+    const names = chordPianoNames(v, oct);
+    const pcs = chordNoteNames(v);
+    const pairs = [];
+    for (let i = 0; i < names.length - 1; i++) pairs.push([[names[i], names[i + 1]], [pcs[i], pcs[i + 1]]]);
+    pairs.push([[names[0], names[names.length - 1]], [pcs[0], pcs[pcs.length - 1]]]); // outer
+    const piano = ctx.getPiano();
+    const gap = 0.85;
+    pairs.forEach(([pnames, ppcs], i) => {
+      const at = Tone.now() + 0.05 + i * gap;
+      if (piano) { try { piano.triggerAttackRelease(pnames, "2n", at, 0.9); } catch (_) {} }
+      if (withPp) setTimeout(() => overlayUniform(ppcs, true), (0.05 + i * gap) * 1000);
+    });
+  }
   function startChordDiscrim(phaseKey) {
     const cfg = chordConfig(phaseKey);
     const type = cfg.prog.type;
@@ -553,6 +584,8 @@ export function setupLearn(ctx) {
     session.hintUsed = false;
     session.replay = () => playChord(session.pair[which], oct);
     session.hint   = () => hintChord(session.pair[which], oct);
+    session.decompose = (withPp) => decomposeChord(session.pair[which], oct, withPp);
+    showDecompose(true);
 
     const scoreTxt = `${type} · ${Math.min(cfg.prog.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT}`;
     setScore(scoreTxt);
@@ -687,28 +720,65 @@ export function setupLearn(ctx) {
 
   // ---- Phase: Yes / No ------------------------------------------------------
   function playYn(pc, oct) { playPiano(`${PITCH_NAMES[pc]}${oct}`, "1n", 0.92); }
+  function ynSetAnswersDisabled(d) { root.querySelectorAll("#learn-answers [data-yn]").forEach((b) => (b.disabled = d)); }
   function startYesNo() {
-    const shownPc = Math.floor(Math.random() * 12);
+    if (ynTimer) { clearTimeout(ynTimer); ynTimer = null; }
+    const allowed = [...ynAllowed];
+    const pool = allowed.length ? allowed : [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+    const shownPc = pool[Math.floor(Math.random() * pool.length)];
     const isSame = Math.random() < 0.5;
+    // Distractor is drawn evenly from ALL 12 (minus the shown note), not just
+    // the selected pool.
     const playedPc = isSame ? shownPc : (shownPc + 1 + Math.floor(Math.random() * 11)) % 12;
     const oct = 3 + Math.floor(Math.random() * 2);
     session = { shownPc, playedPc, isSame, oct, done: false, replay: () => playYn(playedPc, oct) };
+
     setScore("");
     setBar(0);
     showHint(false);
-    setPrompt(`<span class="big-note">${PITCH_NAMES[shownPc]}</span><span class="yn-sub">Does the piano note match?</span>`);
-    setAnswers(`<div class="yn-answers"><button class="answer-btn" data-yn="1">Yes ✓</button><button class="answer-btn" data-yn="0">No ✗</button></div>`);
+    setPrompt(`<span class="big-note">${PITCH_NAMES[shownPc]}</span><span class="yn-sub" id="yn-sub">${ynImagine ? "imagine it… 🎧" : "Does the piano note match?"}</span>`);
+
+    const chips = PITCH_NAMES.map((n, i) =>
+      `<button class="yn-chip ${ynAllowed.has(i) ? "on" : ""}" data-pick="${i}">${n}</button>`).join("");
+    setAnswers(`
+      <div class="yn-answers"><button class="answer-btn" data-yn="1">Yes ✓</button><button class="answer-btn" data-yn="0">No ✗</button></div>
+      <div class="yn-config">
+        <label class="autonext"><input type="checkbox" id="yn-imagine" ${ynImagine ? "checked" : ""}> imagine first (2s)</label>
+        <div class="yn-pick-label">notes to test:</div>
+        <div class="yn-pick">${chips}</div>
+      </div>`);
     root.querySelectorAll("[data-yn]").forEach((b) => b.addEventListener("click", () => answerYesNo(b.dataset.yn === "1")));
-    playYn(playedPc, oct);
+    root.querySelectorAll("[data-pick]").forEach((b) => b.addEventListener("click", () => {
+      const i = +b.dataset.pick;
+      if (ynAllowed.has(i)) { if (ynAllowed.size > 1) ynAllowed.delete(i); } else ynAllowed.add(i);
+      localStorage.setItem("pt.learn.yn.allowed", JSON.stringify([...ynAllowed]));
+      startYesNo();
+    }));
+    const imgCb = root.querySelector("#yn-imagine");
+    imgCb.addEventListener("change", () => { ynImagine = imgCb.checked; localStorage.setItem("pt.learn.yn.imagine", ynImagine ? "1" : "0"); startYesNo(); });
+
+    if (ynImagine) {
+      ynSetAnswersDisabled(true);
+      ynTimer = setTimeout(() => {
+        ynTimer = null;
+        const sub = $("#yn-sub"); if (sub) sub.textContent = "Does the piano note match?";
+        ynSetAnswersDisabled(false);
+        playYn(playedPc, oct);
+      }, 2000);
+    } else {
+      playYn(playedPc, oct);
+    }
   }
   function answerYesNo(saidYes) {
     if (!session || session.done) return;
+    if (ynTimer) return; // still in the imagine window
     session.done = true;
     const correct = saidYes === session.isSame;
     const shownName = PITCH_NAMES[session.shownPc];
     const heard = PITCH_NAMES[session.playedPc];
     celebrate(recordNote(shownName, correct, false)); // pure test — unassisted
-    setPrompt(`<span class="big-note">${shownName}</span><span class="yn-sub">${correct ? "✅ Correct" : "❌ Wrong"} — played was <b>${heard}</b> (${session.isSame ? "match" : "different"})</span>`);
+    const sub = $("#yn-sub");
+    if (sub) sub.innerHTML = `${correct ? "✅ Correct" : "❌ Wrong"} — played was <b>${heard}</b> (${session.isSame ? "match" : "different"})`;
     const bank = ctx.getBank(); if (bank) bank.play(shownName, {}); // OG sample anchor of shown note
     showNext(true);
     maybeAutoNext(1500);
