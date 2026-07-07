@@ -50,6 +50,7 @@ const INTERVAL_SET    = 12;   // reps before a new option set is drawn
 const PHASE_UNLOCK_AT = 20;   // correct reps to unlock the next phase (2-4)
 const DISCRIM_OPTIONS = 3;    // # of absolute options (A/B/C) to discriminate
 const AWARD_STREAK    = 15;   // mirrors stats.js; shown in the celebration
+const FORCE_DB        = -4;   // clearly-audible level for hint/decompose/training-wheels crutch
 
 const LETTERS = ["A", "B", "C", "D", "E", "F"];
 // Simple-interval names indexed by (compound semitones % 12); 0 = octave(s).
@@ -154,7 +155,7 @@ export function setupLearn(ctx) {
     const bank = ctx.getBank();
     if (!bank) return;
     names.forEach((name) => {
-      const db = (full || trainingWheels) ? -8 : crutchGainDb(noteStrength(name));
+      const db = (full || trainingWheels) ? FORCE_DB : crutchGainDb(noteStrength(name));
       if (db !== null) bank.play(name, { volume: db });
     });
   }
@@ -166,7 +167,7 @@ export function setupLearn(ctx) {
     if (!bank) return;
     const uniq = [...new Set(names)];
     const s = uniq.reduce((a, n) => a + noteStrength(n), 0) / uniq.length;
-    const db = (full || trainingWheels) ? -8 : crutchGainDb(s);
+    const db = (full || trainingWheels) ? FORCE_DB : crutchGainDb(s);
     if (db === null) return;
     uniq.forEach((name) => bank.play(name, { volume: db }));
   }
@@ -220,7 +221,7 @@ export function setupLearn(ctx) {
     if (key === "triads")   return `${prog.triads.type} · ${Math.min(prog.triads.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT} to advance`;
     if (key === "voicings") return `${prog.voicings.type} · ${Math.min(prog.voicings.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT} to advance`;
     if (key === "pattern")  { const p = PATTERNS.find((x) => x.key === prog.pattern.patKey); return `${p ? p.name : ""} · ${prog.pattern.correct} correct`; }
-    if (key === "relative") return `${prog.relative.mode} · ${prog.relative.correct} correct`;
+    if (key === "relative") return `${prog.relative.correct} correct`;
     if (key === "yesno")    return `match-or-not drill`;
     return "";
   }
@@ -683,7 +684,7 @@ export function setupLearn(ctx) {
     const bank = ctx.getBank();
     const names = patternPcs(rootPc, offs);
     const avg = names.reduce((a, n) => a + noteStrength(n), 0) / names.length;
-    const db = (full || trainingWheels) ? -8 : crutchGainDb(avg);
+    const db = (full || trainingWheels) ? FORCE_DB : crutchGainDb(avg);
     const gap = 0.42;
     offs.forEach((o, i) => {
       const midi = rootMidi + o;
@@ -836,7 +837,7 @@ export function setupLearn(ctx) {
   // ---- Phase: Wide Leap (relative / absolute) -------------------------------
   // Two notes octaves apart. Absolute: name the top note's pitch class.
   // Relative: name the interval (reduced within an octave).
-  function playRelative(withCrutch) {
+  function playRelative() {
     const piano = ctx.getPiano();
     const now = Tone.now();
     const s = session;
@@ -846,10 +847,13 @@ export function setupLearn(ctx) {
         piano.triggerAttackRelease(midiName(s.topMidi), "2n", now + 0.6, 0.9);
       } catch (_) {}
     }
-    if (withCrutch && s.mode === "absolute") {
-      const topName = PITCH_NAMES[s.topPc];
-      const db = trainingWheels ? -8 : crutchGainDb(noteStrength(topName));
-      if (db !== null) { const bank = ctx.getBank(); if (bank) setTimeout(() => bank.play(topName, { volume: db }), 600); }
+    // No PP-MIDI here unless training wheels are on — then BOTH notes get it.
+    if (trainingWheels) {
+      const bank = ctx.getBank();
+      if (bank) {
+        bank.play(PITCH_NAMES[s.botPc], { volume: FORCE_DB });
+        setTimeout(() => bank.play(PITCH_NAMES[s.topPc], { volume: FORCE_DB }), 600);
+      }
     }
   }
   function hintRelative() {
@@ -863,7 +867,6 @@ export function setupLearn(ctx) {
     }
   }
   function startRelative() {
-    const mode = prog.relative.mode;
     const botPc = Math.floor(Math.random() * 12);
     const botMidi = pcOctToMidi(botPc, 2);
     const octs = 2 + Math.floor(Math.random() * 2); // 2 or 3 octaves
@@ -872,60 +875,43 @@ export function setupLearn(ctx) {
     const topMidi = botMidi + total;
     const topPc = ((topMidi % 12) + 12) % 12;
     session = {
-      mode, botPc, botMidi, topMidi, topPc, total, done: false, attempts: 0, hintUsed: false,
-      replay: () => playRelative(true),
+      mode: "absolute", botPc, botMidi, topMidi, topPc, total, done: false, attempts: 0, hintUsed: false,
+      replay: () => playRelative(),
       hint:   () => hintRelative(),
     };
-    setScore(`${mode} · ${prog.relative.correct} correct`);
+    setScore(`${prog.relative.correct} correct`);
     setBar((prog.relative.correct % 10) / 10);
-    setPrompt(`Bottom note: <b>${PITCH_NAMES[botPc]}</b> — name the <b>${mode === "absolute" ? "top note" : "interval"}</b>`);
+    setPrompt(`Bottom note: <b>${PITCH_NAMES[botPc]}</b> — name the <b>top note</b>`);
     showHint(true);
 
-    const opts = mode === "absolute"
-      ? PITCH_NAMES.map((n, i) => `<button class="answer-btn small" data-pc="${i}">${n}</button>`).join("")
-      : REL_LABELS.map((l, i) => `<button class="answer-btn small" data-int="${i}">${l}</button>`).join("");
-    const toggle = `<div class="line-toggle" style="margin-top:0.8rem">
-      <button class="seg ${mode === "relative" ? "active" : ""}" data-rmode="relative">Relative</button>
-      <button class="seg ${mode === "absolute" ? "active" : ""}" data-rmode="absolute">Absolute</button>
-    </div>`;
-    setAnswers(`<div class="note-grid">${opts}</div>${toggle}`);
-    root.querySelectorAll("#learn-answers [data-pc]").forEach((b) => b.addEventListener("click", () => answerRelative("abs", +b.dataset.pc)));
-    root.querySelectorAll("#learn-answers [data-int]").forEach((b) => b.addEventListener("click", () => answerRelative("rel", +b.dataset.int)));
-    root.querySelectorAll("[data-rmode]").forEach((b) => b.addEventListener("click", () => { prog.relative.mode = b.dataset.rmode; saveProg(); startRelative(); }));
+    const opts = PITCH_NAMES.map((n, i) => `<button class="answer-btn small" data-pc="${i}">${n}</button>`).join("");
+    setAnswers(`<div class="note-grid">${opts}</div>`);
+    root.querySelectorAll("#learn-answers [data-pc]").forEach((b) => b.addEventListener("click", () => answerRelative(+b.dataset.pc)));
 
-    playRelative(true);
+    playRelative();
   }
-  function answerRelative(kind, val) {
+  function answerRelative(val) {
     if (!session || session.done) return;
     session.attempts++;
-    const mode = session.mode;
     const topName = PITCH_NAMES[session.topPc];
-    const correct = mode === "absolute" ? val === session.topPc : val === (session.total % 12);
+    const correct = val === session.topPc;
     if (session.attempts === 1) {
       bumpSess(correct);
-      if (mode === "absolute") {
-        celebrate(recordNote(topName, correct, session.hintUsed || anyCrutchAudible([topName])));
-      } else {
-        celebrate(recordInterval(REL_LABELS[session.total % 12], [PITCH_NAMES[session.botPc], topName], correct, session.hintUsed));
-      }
+      celebrate(recordNote(topName, correct, session.hintUsed || trainingWheels));
     }
     const reveal = `${midiName(session.botMidi)} → ${midiName(session.topMidi)} · ${session.total} semis (${REL_LABELS[session.total % 12]})`;
     if (correct) {
       session.done = true;
-      if (session.attempts === 1) {
-        if (mode === "absolute") fadeNote(topName);
-        prog.relative.correct++;
-        saveProg();
-      }
+      if (session.attempts === 1) { fadeNote(topName); prog.relative.correct++; saveProg(); }
       setPrompt(`✅ ${reveal}`);
       setBar((prog.relative.correct % 10) / 10);
-      setScore(`${mode} · ${prog.relative.correct} correct`);
+      setScore(`${prog.relative.correct} correct`);
       showNext(true);
       maybeAutoNext();
     } else {
-      if (mode === "absolute") bumpNote(topName);
-      setPrompt(mode === "absolute" ? `❌ top was ${topName}` : `❌ it was ${REL_LABELS[session.total % 12]}`);
-      setTimeout(() => playRelative(true), 350);
+      bumpNote(topName);
+      setPrompt(`❌ top was ${topName}`);
+      setTimeout(() => playRelative(), 350);
     }
   }
 
