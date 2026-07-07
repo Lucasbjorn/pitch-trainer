@@ -251,24 +251,24 @@
       --bad: #f44336;
     }
 
-    /* When in Learn/Practice: full-width, top-aligned, scrollable page. */
-    body.mode-learn, body.mode-practice { background: var(--bg); }
-    body.mode-learn, body.mode-practice {
+    /* When in Learn/Practice/Tune: full-width, top-aligned, scrollable page. */
+    body.mode-learn, body.mode-practice, body.mode-tune { background: var(--bg); }
+    body.mode-learn, body.mode-practice, body.mode-tune {
       justify-content: flex-start;
     }
-    body.mode-learn #note, body.mode-practice #note,
-    body.mode-learn #debug, body.mode-practice #debug,
-    body.mode-learn #start, body.mode-practice #start,
-    body.mode-learn #status, body.mode-practice #status { display: none !important; }
+    body.mode-learn #note, body.mode-practice #note, body.mode-tune #note,
+    body.mode-learn #debug, body.mode-practice #debug, body.mode-tune #debug,
+    body.mode-learn #start, body.mode-practice #start, body.mode-tune #start,
+    body.mode-learn #status, body.mode-practice #status, body.mode-tune #status { display: none !important; }
 
-    #learn, #practice {
+    #learn, #practice, #tune {
       display: none;
       width: 100%;
       max-width: 520px;
       padding: 0 1rem 2rem;
       animation: fadeIn 0.2s ease;
     }
-    #learn.active, #practice.active { display: block; }
+    #learn.active, #practice.active, #tune.active { display: block; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
     .screen-title { font-size: 1.9rem; font-weight: 800; margin: 0.2rem 0 0.3rem; letter-spacing: -0.02em; }
@@ -444,6 +444,26 @@
     .summary-emoji { font-size: 3.5rem; margin: 1rem 0 0.3rem; }
     .summary .panel, .summary .stat-cards { width: 100%; }
 
+    /* ---- Tune Learner ---- */
+    .tune-session { display: flex; flex-direction: column; }
+    .line-toggle { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+    .line-toggle .seg { flex: 1; padding: 0.6rem; }
+    .tune-bar-card {
+      background: var(--card); border: 1px solid var(--line); border-radius: 20px;
+      padding: 1.4rem 1rem; text-align: center; margin-bottom: 1rem;
+    }
+    .tune-bar-num { color: var(--muted); font-size: 0.85rem; }
+    .tune-chord { font-size: 2.6rem; font-weight: 800; letter-spacing: -0.02em; margin: 0.3rem 0; }
+    .tune-notes {
+      font-family: ui-monospace, Menlo, monospace; font-size: 1.1rem;
+      color: var(--accent); letter-spacing: 0.04em; min-height: 1.4em;
+    }
+    .tune-loop { color: var(--muted); font-size: 0.85rem; margin-top: 0.7rem; }
+    .tune-tempo { display: flex; align-items: center; gap: 0.8rem; margin-bottom: 1rem; color: var(--muted); font-size: 0.85rem; }
+    .tune-tempo input[type=range] { flex: 1; accent-color: var(--accent); }
+    .tune-tempo #tune-bpm-val { min-width: 5rem; text-align: right; color: var(--text); font-weight: 700; }
+    .tune-actions { display: flex; justify-content: center; gap: 1.2rem; margin-top: 0.4rem; flex-wrap: wrap; }
+
     /* ---- Status ---- */
     #status {
       position: fixed;
@@ -464,6 +484,7 @@
     <button class="mode-btn"        data-mode="intervals" type="button">🎼 Intervals</button>
     <button class="mode-btn"        data-mode="learn"     type="button">📚 Learn</button>
     <button class="mode-btn"        data-mode="practice"  type="button">🗓️ Practice</button>
+    <button class="mode-btn"        data-mode="tune"      type="button">🎶 Tunes</button>
   </div>
 
   <div id="note" class="idle">—</div>
@@ -548,6 +569,9 @@
 
   <!-- Practice Routine (rendered by practice.js) -->
   <div id="practice"></div>
+
+  <!-- Tune Learner (rendered by tune.js) -->
+  <div id="tune"></div>
 
   <div id="status">Tap Start to begin</div>
 

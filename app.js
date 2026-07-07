@@ -6,6 +6,7 @@ import { PitchDetector } from "https://esm.sh/pitchy@4";
 import * as Tone from "https://esm.sh/tone@14";
 import { setupLearn } from "./learn.js";
 import { setupPractice } from "./practice.js";
+import { setupTune } from "./tune.js";
 
 // ---------------------------------------------------------------------------
 // CONFIG
@@ -142,9 +143,10 @@ const $intervalsHint   = document.getElementById("intervals-hint");
 const $intervalsReplay = document.getElementById("intervals-replay");
 const $intervalsNext   = document.getElementById("intervals-next");
 
-// Learn + Practice containers
+// Learn + Practice + Tune containers
 const $learn    = document.getElementById("learn");
 const $practice = document.getElementById("practice");
+const $tune     = document.getElementById("tune");
 
 // ---------------------------------------------------------------------------
 // Shared sample bank (lazy; created on first mode init)
@@ -799,6 +801,7 @@ async function switchMode(newMode) {
   document.body.classList.toggle("quiz-mode", newMode === "quiz" || newMode === "intervals");
   document.body.classList.toggle("mode-learn", newMode === "learn");
   document.body.classList.toggle("mode-practice", newMode === "practice");
+  document.body.classList.toggle("mode-tune", newMode === "tune");
 
   $modeBtns.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.mode === newMode);
@@ -807,6 +810,7 @@ async function switchMode(newMode) {
   // Exit whichever module owned the previous tab.
   if (oldMode === "learn")    learnMod.exit();
   if (oldMode === "practice") practiceMod.exit();
+  if (oldMode === "tune")     tuneMod.exit();
 
   // Common teardown of any non-passive UI.
   cancelAutoAdvance();
@@ -816,6 +820,7 @@ async function switchMode(newMode) {
   $intervals.classList.remove("active");
   $learn.classList.remove("active");
   $practice.classList.remove("active");
+  $tune.classList.remove("active");
   hideAllAnswerGroups();
   $followup.classList.remove("active");
 
@@ -858,6 +863,11 @@ async function switchMode(newMode) {
     hideStartButton();
     $practice.classList.add("active");
     await practiceMod.enter();
+  } else if (newMode === "tune") {
+    await cleanupPassive();
+    hideStartButton();
+    $tune.classList.add("active");
+    await tuneMod.enter();
   }
 }
 
@@ -893,6 +903,7 @@ const sharedCtx = {
 };
 const learnMod    = setupLearn(sharedCtx);
 const practiceMod = setupPractice(sharedCtx);
+const tuneMod     = setupTune(sharedCtx);
 
 // ---------------------------------------------------------------------------
 // Wire up
