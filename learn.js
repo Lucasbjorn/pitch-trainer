@@ -27,6 +27,7 @@ const PATTERNS = [
   { key: "arp",      name: "major arpeggio",      offs: [0, 4, 7, 12] },
   { key: "minarp",   name: "minor arpeggio",      offs: [0, 3, 7, 12] },
   { key: "enclose",  name: "upper enclosure",     offs: [0, 2, 1, -1, 0] },
+  { key: "desccell", name: "descending cell",      offs: [0, -2, -7, 1, 0, -2] },
 ];
 
 const INTERVAL_LABELS = {

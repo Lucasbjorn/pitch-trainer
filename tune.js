@@ -112,11 +112,10 @@ export function setupTune(ctx) {
     if (usePpmidi) {
       const bank = ctx.getBank();
       if (bank) {
+        // OG one-octave sample for the pitch class — no pitch-shifting.
         const midi = Tone.Frequency(name).toMidi();
         const pcName = PC[((midi % 12) + 12) % 12];
-        const base = bank.baseFreq[pcName];
-        const freq = Tone.Frequency(midi, "midi").toFrequency();
-        try { bank.play(pcName, { playbackRate: freq / base, volume: -3, stopAfter: Math.max(0.35, durSec) }); } catch (_) {}
+        try { bank.play(pcName, { volume: -3, stopAfter: Math.max(0.35, durSec) }); } catch (_) {}
       }
     }
   }
