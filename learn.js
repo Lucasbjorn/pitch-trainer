@@ -12,9 +12,22 @@
 // Progress persists in localStorage so the path resumes where you left off.
 // Everything renders into #learn; index.html only supplies the empty container.
 
+import { recordNote, recordInterval, recordNotes } from "./stats.js";
+
 const LS_KEY = "pt.learn.v1";
 
 const POOL_ORDER = ["C", "E", "G", "A", "D", "F", "B", "C#", "D#", "F#", "G#", "A#"];
+
+// Pattern phase — short absolute phrases, defined as semitone offsets from a
+// root. Generic pedagogical shapes; add your own by extending this list.
+const PATTERNS = [
+  { key: "1235",     name: "1–2–3–5 (major)",     offs: [0, 2, 4, 7] },
+  { key: "123up",    name: "1–2–3 up",            offs: [0, 2, 4] },
+  { key: "chromdn",  name: "chromatic down ×4",   offs: [0, -1, -2, -3] },
+  { key: "arp",      name: "major arpeggio",      offs: [0, 4, 7, 12] },
+  { key: "minarp",   name: "minor arpeggio",      offs: [0, 3, 7, 12] },
+  { key: "enclose",  name: "upper enclosure",     offs: [0, 2, 1, -1, 0] },
+];
 
 const INTERVAL_LABELS = {
   1: "m2", 2: "M2", 3: "m3", 4: "M3", 5: "P4", 6: "TT",
@@ -24,14 +37,17 @@ const INTERVAL_LABELS = {
 const PHASES = [
   { key: "pitches",  icon: "🎯", name: "Pitches",   blurb: "Single notes with the PP-MIDI crutch. Pool grows as you nail it." },
   { key: "intervals",icon: "🎼", name: "Intervals", blurb: "Memorize two specific voicings of one interval, by absolute sound." },
-  { key: "triads",   icon: "🎹", name: "Triads",    blurb: "Memorize two specific triad voicings by absolute sound." },
-  { key: "voicings", icon: "🧩", name: "Voicings",  blurb: "Two specific 7th-chord voicings, discriminated by ear." },
+  { key: "triads",   icon: "🎹", name: "Triads",    blurb: "Discriminate 3 triad voicings by absolute sound." },
+  { key: "voicings", icon: "🧩", name: "Voicings",  blurb: "Three 7th-chord voicings, discriminated by ear." },
+  { key: "pattern",  icon: "🎶", name: "Pattern",   blurb: "Learn a lick absolutely, then spot it in every key." },
+  { key: "yesno",    icon: "✅", name: "Yes / No",  blurb: "A piano note — does it match the note shown?" },
 ];
 
 const REPS_PER_NOTE   = 10;   // correct reps before the pitch pool grows
 const INTERVAL_SET    = 12;   // reps before a new option set is drawn
 const PHASE_UNLOCK_AT = 20;   // correct reps to unlock the next phase (2-4)
 const DISCRIM_OPTIONS = 3;    // # of absolute options (A/B/C) to discriminate
+const AWARD_STREAK    = 15;   // mirrors stats.js; shown in the celebration
 
 const LETTERS = ["A", "B", "C", "D", "E", "F"];
 
@@ -58,6 +74,7 @@ export function setupLearn(ctx) {
   let ready = false;
   let autoNext = localStorage.getItem("pt.learn.autonext") === "1";
   let autoNextTimer = null;
+  let trainingWheels = localStorage.getItem("pt.learn.wheels") === "1";
 
   // ---- persistence ----
   function loadProg() {
@@ -77,6 +94,7 @@ export function setupLearn(ctx) {
       intervals:{ semis: 4, reps: 0, correct: 0,        ...(p.intervals || {}) },
       triads:   { correct: 0, type: "Major",           ...(p.triads    || {}) },
       voicings: { correct: 0, type: "maj7",            ...(p.voicings  || {}) },
+      pattern:  { patKey: "1235", correct: 0,          ...(p.pattern   || {}) },
     };
   }
   function saveProg() { try { localStorage.setItem(LS_KEY, JSON.stringify(prog)); } catch (_) {} }
@@ -104,18 +122,40 @@ export function setupLearn(ctx) {
   }
   function noteStrength(name) { return prog.notes[name] ?? 1; }
   function fadeNote(name, amt = CRUTCH_FADE) { prog.notes[name] = Math.max(0, noteStrength(name) - amt); }
-  function bumpNote(name, amt = CRUTCH_BUMP) { prog.notes[name] = Math.min(1, noteStrength(name) + amt); }
+  // A slip on a nearly-mastered note only refreshes the crutch briefly (so it
+  // plays once or twice more) instead of yanking full scaffolding back.
+  function bumpNote(name, amt = CRUTCH_BUMP) {
+    const cur = noteStrength(name);
+    prog.notes[name] = cur < 0.1 ? 0.3 : Math.min(1, cur + amt);
+  }
+  function anyCrutchAudible(names) {
+    if (trainingWheels) return true;
+    const uniq = [...new Set(names)];
+    const s = uniq.reduce((a, n) => a + noteStrength(n), 0) / uniq.length;
+    return crutchGainDb(s) !== null;
+  }
 
-  // Overlay one or more pitch classes (by NAME) at each note's own crutch level.
-  // Always the original-pitch sample — never pitch-shifted — so it aligns by
-  // pitch class with its own OG note regardless of the target's octave.
+  // Single-note overlay (Pitches, Yes/No reveal) — each note at its own level.
+  // Original-pitch samples, never shifted. Training wheels forces full.
   function overlayByMastery(names, full = false) {
     const bank = ctx.getBank();
     if (!bank) return;
     names.forEach((name) => {
-      const db = full ? -8 : crutchGainDb(noteStrength(name));
+      const db = (full || trainingWheels) ? -8 : crutchGainDb(noteStrength(name));
       if (db !== null) bank.play(name, { volume: db });
     });
+  }
+  // Multi-note overlay (Intervals, Triads, Voicings, Pattern) — all notes play
+  // together at ONE uniform level (their average) so the whole shape sounds;
+  // you never hear just one note because the other happens to be mastered.
+  function overlayUniform(names, full = false) {
+    const bank = ctx.getBank();
+    if (!bank) return;
+    const uniq = [...new Set(names)];
+    const s = uniq.reduce((a, n) => a + noteStrength(n), 0) / uniq.length;
+    const db = (full || trainingWheels) ? -8 : crutchGainDb(s);
+    if (db === null) return;
+    uniq.forEach((name) => bank.play(name, { volume: db }));
   }
 
   // =========================================================================
@@ -166,6 +206,8 @@ export function setupLearn(ctx) {
     }
     if (key === "triads")   return `${prog.triads.type} · ${Math.min(prog.triads.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT} to advance`;
     if (key === "voicings") return `${prog.voicings.type} · ${Math.min(prog.voicings.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT} to advance`;
+    if (key === "pattern")  { const p = PATTERNS.find((x) => x.key === prog.pattern.patKey); return `${p ? p.name : ""} · ${prog.pattern.correct} correct`; }
+    if (key === "yesno")    return `match-or-not drill`;
     return "";
   }
 
@@ -179,6 +221,7 @@ export function setupLearn(ctx) {
           <div class="trainer-score" id="learn-score"></div>
         </div>
         <div class="trainer-progress"><div class="trainer-progress-bar" id="learn-bar"></div></div>
+        <div class="learn-award" id="learn-award"></div>
         <div class="trainer-prompt" id="learn-prompt"></div>
         <div class="trainer-answers" id="learn-answers"></div>
         <div class="trainer-actions">
@@ -186,7 +229,10 @@ export function setupLearn(ctx) {
           <button class="ghost" id="learn-hint" style="display:none">hint ♪</button>
           <button class="ghost" id="learn-next" style="visibility:hidden">next →</button>
         </div>
-        <label class="autonext"><input type="checkbox" id="learn-autonext"> auto-next on correct</label>
+        <div class="learn-opts">
+          <label class="autonext"><input type="checkbox" id="learn-autonext"> auto-next on correct</label>
+          <label class="autonext"><input type="checkbox" id="learn-wheels"> 🛞 training wheels</label>
+        </div>
       </div>`;
 
     root.querySelector("#learn-back").addEventListener("click", () => { cancelAutoNext(); view = "home"; render(); });
@@ -199,8 +245,26 @@ export function setupLearn(ctx) {
       autoNext = autoCb.checked;
       localStorage.setItem("pt.learn.autonext", autoNext ? "1" : "0");
     });
+    const wheelsCb = root.querySelector("#learn-wheels");
+    wheelsCb.checked = trainingWheels;
+    wheelsCb.addEventListener("change", () => {
+      trainingWheels = wheelsCb.checked;
+      localStorage.setItem("pt.learn.wheels", trainingWheels ? "1" : "0");
+    });
 
     startRound();
+  }
+
+  // Assistance = crutch was audible, hint used, or not first try.
+  function celebrate(awards) {
+    const list = Array.isArray(awards) ? awards : (awards ? [awards] : []);
+    if (!list.length) return;
+    const a = list[0];
+    const e = $("#learn-award");
+    if (!e) return;
+    e.textContent = `🏆 Mastered ${a.name} — no-assist streak of ${AWARD_STREAK}!`;
+    e.classList.add("show");
+    setTimeout(() => { const el = $("#learn-award"); if (el) el.classList.remove("show"); }, 4000);
   }
 
   const $ = (id) => root.querySelector(id);
@@ -232,10 +296,12 @@ export function setupLearn(ctx) {
     if (phaseKey === "intervals") return startIntervals();
     if (phaseKey === "triads")    return startChordDiscrim("triads");
     if (phaseKey === "voicings")  return startChordDiscrim("voicings");
+    if (phaseKey === "pattern")   return startPattern();
+    if (phaseKey === "yesno")     return startYesNo();
   }
   function nextRound() { startRound(); }
   function replay()    { if (session && session.replay) session.replay(); }
-  function hint()      { if (session && session.hint) session.hint(); }
+  function hint()      { if (session) session.hintUsed = true; if (session && session.hint) session.hint(); }
 
   // ---- Phase 1: Pitches ------------------------------------------------------
   // The target sound is a plain piano note; the PP-MIDI song-cue is layered
@@ -263,6 +329,7 @@ export function setupLearn(ctx) {
       note,
       oct,
       attempts: 0,
+      hintUsed: false,
       replay: () => playPitch(note, oct),
       hint:   () => playPiano(`${note}${oct}`, "2n", 0.9), // clean note, no crutch
     };
@@ -285,6 +352,10 @@ export function setupLearn(ctx) {
     if (!session || session.done) return;
     session.attempts++;
     const correct = guess === session.note;
+    if (session.attempts === 1) {
+      const assisted = session.hintUsed || anyCrutchAudible([session.note]);
+      celebrate(recordNote(session.note, correct, assisted));
+    }
     if (correct) {
       session.done = true;
       if (session.attempts === 1) {
@@ -347,7 +418,7 @@ export function setupLearn(ctx) {
   }
   function playInterval(v, oct, full = false) {
     playPiano(intervalPianoNames(v, oct), "1n", 0.95);
-    overlayByMastery([PITCH_NAMES[v.rootPc], PITCH_NAMES[v.topPc]], full);
+    overlayUniform([PITCH_NAMES[v.rootPc], PITCH_NAMES[v.topPc]], full);
   }
   function hintInterval(v, oct) {
     // Separate notes, no crutch — nothing else.
@@ -364,6 +435,7 @@ export function setupLearn(ctx) {
     session.oct = oct;
     session.done = false;
     session.attempts = 0;
+    session.hintUsed = false;
     session.replay = () => playInterval(session.pair[which], oct);
     session.hint   = () => hintInterval(session.pair[which], oct);
 
@@ -404,6 +476,10 @@ export function setupLearn(ctx) {
     const correct = which === session.which;
     const v = session.pair[session.which];
     const heard = [PITCH_NAMES[v.rootPc], PITCH_NAMES[v.topPc]];
+    if (session.attempts === 1) {
+      const assisted = session.hintUsed || anyCrutchAudible(heard);
+      celebrate(recordInterval(INTERVAL_LABELS[prog.intervals.semis], heard, correct, assisted));
+    }
     if (correct) {
       session.done = true;
       session.setReps++;
@@ -453,7 +529,7 @@ export function setupLearn(ctx) {
   }
   function playChord(v, oct, full = false) {
     playPiano(chordPianoNames(v, oct), "1n", 0.95);
-    overlayByMastery(chordNoteNames(v), full);
+    overlayUniform(chordNoteNames(v), full);
   }
   function hintChord(v, oct) {
     // Separate notes, no crutch — nothing else.
@@ -474,6 +550,7 @@ export function setupLearn(ctx) {
     session.oct = oct;
     session.done = false;
     session.attempts = 0;
+    session.hintUsed = false;
     session.replay = () => playChord(session.pair[which], oct);
     session.hint   = () => hintChord(session.pair[which], oct);
 
@@ -514,6 +591,10 @@ export function setupLearn(ctx) {
     session.attempts++;
     const correct = which === session.which;
     const heard = chordNoteNames(session.pair[session.which]);
+    if (session.attempts === 1) {
+      const assisted = session.hintUsed || anyCrutchAudible(heard);
+      celebrate(recordInterval(session.type, heard, correct, assisted));
+    }
     if (correct) {
       session.done = true;
       session.setReps++;
@@ -535,6 +616,102 @@ export function setupLearn(ctx) {
       setPrompt(`❌ Not that one. Crutch back on…`);
       setTimeout(() => playChord(session.pair[session.which], session.oct), 350);
     }
+  }
+
+  // ---- Phase: Pattern -------------------------------------------------------
+  // Play a short phrase (semitone offsets from a random root) with the crutch;
+  // identify the pitch it starts on. Crutch fades per note like everything else.
+  function patternPcs(rootPc, offs) {
+    return offs.map((o) => PITCH_NAMES[(((rootPc + o) % 12) + 12) % 12]);
+  }
+  function playPattern(rootPc, oct, offs, full = false) {
+    const rootMidi = pcOctToMidi(rootPc, oct);
+    playPiano(offs.map((o) => midiName(rootMidi + o)), "2n", 0.9, 0.32);
+    overlayUniform(patternPcs(rootPc, offs), full);
+  }
+  function hintPattern(rootPc, oct, offs) {
+    const rootMidi = pcOctToMidi(rootPc, oct);
+    playPiano(offs.map((o) => midiName(rootMidi + o)), "2n", 0.9, 0.4); // no crutch
+  }
+  function startPattern() {
+    const pat = PATTERNS.find((p) => p.key === prog.pattern.patKey) || PATTERNS[0];
+    const rootPc = Math.floor(Math.random() * 12);
+    const oct = 3 + Math.floor(Math.random() * 2);
+    session = {
+      rootPc, oct, offs: pat.offs, done: false, attempts: 0, hintUsed: false,
+      replay: () => playPattern(rootPc, oct, pat.offs),
+      hint:   () => hintPattern(rootPc, oct, pat.offs),
+    };
+    setScore(`${prog.pattern.correct} correct`);
+    setBar((prog.pattern.correct % 10) / 10);
+    setPrompt(`Where does the phrase start? (name the first note)`);
+    showHint(true);
+    const patOpts = PATTERNS.map((p) => `<option value="${p.key}" ${p.key === pat.key ? "selected" : ""}>${p.name}</option>`).join("");
+    const btns = PITCH_NAMES.map((n, i) => `<button class="answer-btn small" data-pc="${i}">${n}</button>`).join("");
+    setAnswers(`
+      <div class="note-grid">${btns}</div>
+      <div class="interval-picker"><label>Pattern <select id="learn-pat-sel">${patOpts}</select></label></div>`);
+    root.querySelectorAll("#learn-answers [data-pc]").forEach((b) =>
+      b.addEventListener("click", () => answerPattern(+b.dataset.pc)));
+    const sel = $("#learn-pat-sel");
+    if (sel) sel.addEventListener("change", () => { prog.pattern.patKey = sel.value; saveProg(); startPattern(); });
+    playPattern(rootPc, oct, pat.offs);
+  }
+  function answerPattern(pcGuess) {
+    if (!session || session.done) return;
+    session.attempts++;
+    const correct = pcGuess === session.rootPc;
+    const notes = patternPcs(session.rootPc, session.offs);
+    if (session.attempts === 1) {
+      const assisted = session.hintUsed || anyCrutchAudible(notes);
+      celebrate(recordNotes(notes, correct, assisted));
+    }
+    if (correct) {
+      session.done = true;
+      if (session.attempts === 1) {
+        notes.forEach((n) => fadeNote(n, CRUTCH_FADE * 0.4));
+        prog.pattern.correct++;
+        saveProg();
+      }
+      setPrompt(`✅ starts on ${PITCH_NAMES[session.rootPc]}`);
+      setBar((prog.pattern.correct % 10) / 10);
+      setScore(`${prog.pattern.correct} correct`);
+      showNext(true);
+      maybeAutoNext();
+    } else {
+      notes.forEach((n) => bumpNote(n));
+      setPrompt(`❌ Not ${PITCH_NAMES[pcGuess]}. Crutch back on…`);
+      setTimeout(() => playPattern(session.rootPc, session.oct, session.offs), 350);
+    }
+  }
+
+  // ---- Phase: Yes / No ------------------------------------------------------
+  function playYn(pc, oct) { playPiano(`${PITCH_NAMES[pc]}${oct}`, "1n", 0.92); }
+  function startYesNo() {
+    const shownPc = Math.floor(Math.random() * 12);
+    const isSame = Math.random() < 0.5;
+    const playedPc = isSame ? shownPc : (shownPc + 1 + Math.floor(Math.random() * 11)) % 12;
+    const oct = 3 + Math.floor(Math.random() * 2);
+    session = { shownPc, playedPc, isSame, oct, done: false, replay: () => playYn(playedPc, oct) };
+    setScore("");
+    setBar(0);
+    showHint(false);
+    setPrompt(`<span class="big-note">${PITCH_NAMES[shownPc]}</span><span class="yn-sub">Does the piano note match?</span>`);
+    setAnswers(`<div class="yn-answers"><button class="answer-btn" data-yn="1">Yes ✓</button><button class="answer-btn" data-yn="0">No ✗</button></div>`);
+    root.querySelectorAll("[data-yn]").forEach((b) => b.addEventListener("click", () => answerYesNo(b.dataset.yn === "1")));
+    playYn(playedPc, oct);
+  }
+  function answerYesNo(saidYes) {
+    if (!session || session.done) return;
+    session.done = true;
+    const correct = saidYes === session.isSame;
+    const shownName = PITCH_NAMES[session.shownPc];
+    const heard = PITCH_NAMES[session.playedPc];
+    celebrate(recordNote(shownName, correct, false)); // pure test — unassisted
+    setPrompt(`<span class="big-note">${shownName}</span><span class="yn-sub">${correct ? "✅ Correct" : "❌ Wrong"} — played was <b>${heard}</b> (${session.isSame ? "match" : "different"})</span>`);
+    const bank = ctx.getBank(); if (bank) bank.play(shownName, {}); // OG sample anchor of shown note
+    showNext(true);
+    maybeAutoNext(1500);
   }
 
   // ---- unlock helper ----

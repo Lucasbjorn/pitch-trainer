@@ -8,6 +8,7 @@ import { setupLearn } from "./learn.js";
 import { setupPractice } from "./practice.js";
 import { setupTune } from "./tune.js";
 import { setupYesNo } from "./yesno.js";
+import { setupStats } from "./stats.js";
 
 // ---------------------------------------------------------------------------
 // CONFIG
@@ -149,6 +150,7 @@ const $learn    = document.getElementById("learn");
 const $practice = document.getElementById("practice");
 const $tune     = document.getElementById("tune");
 const $yesno    = document.getElementById("yesno");
+const $stats    = document.getElementById("stats");
 
 // ---------------------------------------------------------------------------
 // Shared sample bank (lazy; created on first mode init)
@@ -805,6 +807,7 @@ async function switchMode(newMode) {
   document.body.classList.toggle("mode-practice", newMode === "practice");
   document.body.classList.toggle("mode-tune", newMode === "tune");
   document.body.classList.toggle("mode-yesno", newMode === "yesno");
+  document.body.classList.toggle("mode-stats", newMode === "stats");
 
   $modeBtns.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.mode === newMode);
@@ -815,6 +818,7 @@ async function switchMode(newMode) {
   if (oldMode === "practice") practiceMod.exit();
   if (oldMode === "tune")     tuneMod.exit();
   if (oldMode === "yesno")    yesnoMod.exit();
+  if (oldMode === "stats")    statsMod.exit();
 
   // Common teardown of any non-passive UI.
   cancelAutoAdvance();
@@ -826,6 +830,7 @@ async function switchMode(newMode) {
   $practice.classList.remove("active");
   $tune.classList.remove("active");
   $yesno.classList.remove("active");
+  $stats.classList.remove("active");
   hideAllAnswerGroups();
   $followup.classList.remove("active");
 
@@ -878,6 +883,11 @@ async function switchMode(newMode) {
     hideStartButton();
     $yesno.classList.add("active");
     await yesnoMod.enter();
+  } else if (newMode === "stats") {
+    await cleanupPassive();
+    hideStartButton();
+    $stats.classList.add("active");
+    await statsMod.enter();
   }
 }
 
@@ -915,6 +925,7 @@ const learnMod    = setupLearn(sharedCtx);
 const practiceMod = setupPractice(sharedCtx);
 const tuneMod     = setupTune(sharedCtx);
 const yesnoMod    = setupYesNo(sharedCtx);
+const statsMod    = setupStats(sharedCtx);
 
 // ---------------------------------------------------------------------------
 // Wire up
@@ -971,3 +982,6 @@ $intervalsReplay.addEventListener("click", () => {
 $intervalsNext.addEventListener("click", () => {
   skipIntervalsRound();
 });
+
+// Open on the Learn tab by default.
+switchMode("learn");
