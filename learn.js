@@ -82,6 +82,7 @@ export function setupLearn(ctx) {
     return new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
   }
   let ynAllowed = loadYnAllowed();
+  let sess = { correct: 0, total: 0 }; // running per-visit score for the phase
 
   // ---- persistence ----
   function loadProg() {
@@ -101,7 +102,7 @@ export function setupLearn(ctx) {
       intervals:{ semis: 4, reps: 0, correct: 0,        ...(p.intervals || {}) },
       triads:   { correct: 0, type: "Major",           ...(p.triads    || {}) },
       voicings: { correct: 0, type: "maj7",            ...(p.voicings  || {}) },
-      pattern:  { patKey: "1235", correct: 0,          ...(p.pattern   || {}) },
+      pattern:  { patKey: "1235", correct: 0, pool: 3, correctInPool: 0, ...(p.pattern || {}) },
     };
   }
   function saveProg() { try { localStorage.setItem(LS_KEY, JSON.stringify(prog)); } catch (_) {} }
@@ -228,6 +229,7 @@ export function setupLearn(ctx) {
           <div class="trainer-score" id="learn-score"></div>
         </div>
         <div class="trainer-progress"><div class="trainer-progress-bar" id="learn-bar"></div></div>
+        <div class="trainer-sess" id="learn-sess">session 0/0</div>
         <div class="learn-award" id="learn-award"></div>
         <div class="trainer-prompt" id="learn-prompt"></div>
         <div class="trainer-answers" id="learn-answers"></div>
@@ -288,6 +290,11 @@ export function setupLearn(ctx) {
   function showHint(v)         { const e = $("#learn-hint");   if (e) e.style.display = v ? "" : "none"; }
   function showDecompose(v)    { const e = $("#learn-decomp-row"); if (e) e.style.display = v ? "flex" : "none"; }
   function setAnswers(html)    { const e = $("#learn-answers");if (e) e.innerHTML = html; }
+  function bumpSess(correct)   {
+    sess.total++; if (correct) sess.correct++;
+    const e = $("#learn-sess");
+    if (e) e.textContent = `session ${sess.correct}/${sess.total} · ${Math.round((sess.correct / sess.total) * 100)}%`;
+  }
 
   // =========================================================================
   // Round dispatch
@@ -368,6 +375,7 @@ export function setupLearn(ctx) {
     session.attempts++;
     const correct = guess === session.note;
     if (session.attempts === 1) {
+      bumpSess(correct);
       const assisted = session.hintUsed || anyCrutchAudible([session.note]);
       celebrate(recordNote(session.note, correct, assisted));
     }
@@ -492,6 +500,7 @@ export function setupLearn(ctx) {
     const v = session.pair[session.which];
     const heard = [PITCH_NAMES[v.rootPc], PITCH_NAMES[v.topPc]];
     if (session.attempts === 1) {
+      bumpSess(correct);
       const assisted = session.hintUsed || anyCrutchAudible(heard);
       celebrate(recordInterval(INTERVAL_LABELS[prog.intervals.semis], heard, correct, assisted));
     }
@@ -625,6 +634,7 @@ export function setupLearn(ctx) {
     const correct = which === session.which;
     const heard = chordNoteNames(session.pair[session.which]);
     if (session.attempts === 1) {
+      bumpSess(correct);
       const assisted = session.hintUsed || anyCrutchAudible(heard);
       celebrate(recordInterval(session.type, heard, correct, assisted));
     }
@@ -657,33 +667,51 @@ export function setupLearn(ctx) {
   function patternPcs(rootPc, offs) {
     return offs.map((o) => PITCH_NAMES[(((rootPc + o) % 12) + 12) % 12]);
   }
+  // Play the phrase note-by-note; each PP-MIDI sample fires WITH its own piano
+  // note (in sequence), not all stacked at once. Whole phrase uses one uniform
+  // crutch level so it fades coherently.
   function playPattern(rootPc, oct, offs, full = false) {
     const rootMidi = pcOctToMidi(rootPc, oct);
-    playPiano(offs.map((o) => midiName(rootMidi + o)), "2n", 0.9, 0.32);
-    overlayUniform(patternPcs(rootPc, offs), full);
+    const piano = ctx.getPiano();
+    const bank = ctx.getBank();
+    const names = patternPcs(rootPc, offs);
+    const avg = names.reduce((a, n) => a + noteStrength(n), 0) / names.length;
+    const db = (full || trainingWheels) ? -8 : crutchGainDb(avg);
+    const gap = 0.42;
+    offs.forEach((o, i) => {
+      const midi = rootMidi + o;
+      const at = Tone.now() + 0.05 + i * gap;
+      if (piano) { try { piano.triggerAttackRelease(midiName(midi), "4n", at, 0.9); } catch (_) {} }
+      if (db !== null && bank) {
+        const pcName = PITCH_NAMES[((midi % 12) + 12) % 12];
+        setTimeout(() => bank.play(pcName, { volume: db }), (0.05 + i * gap) * 1000);
+      }
+    });
   }
   function hintPattern(rootPc, oct, offs) {
     const rootMidi = pcOctToMidi(rootPc, oct);
-    playPiano(offs.map((o) => midiName(rootMidi + o)), "2n", 0.9, 0.4); // no crutch
+    playPiano(offs.map((o) => midiName(rootMidi + o)), "4n", 0.9, 0.42); // no crutch
   }
   function startPattern() {
     const pat = PATTERNS.find((p) => p.key === prog.pattern.patKey) || PATTERNS[0];
-    const rootPc = Math.floor(Math.random() * 12);
+    const pool = POOL_ORDER.slice(0, prog.pattern.pool);
+    const rootName = pool[Math.floor(Math.random() * pool.length)];
+    const rootPc = PITCH_NAMES.indexOf(rootName);
     const oct = 3 + Math.floor(Math.random() * 2);
     session = {
       rootPc, oct, offs: pat.offs, done: false, attempts: 0, hintUsed: false,
       replay: () => playPattern(rootPc, oct, pat.offs),
       hint:   () => hintPattern(rootPc, oct, pat.offs),
     };
-    setScore(`${prog.pattern.correct} correct`);
-    setBar((prog.pattern.correct % 10) / 10);
-    setPrompt(`Where does the phrase start? (name the first note)`);
+    setScore(`pool ${prog.pattern.pool}/12`);
+    setBar(prog.pattern.correctInPool / REPS_PER_NOTE);
+    setPrompt(`Where does the phrase start?`);
     showHint(true);
     const patOpts = PATTERNS.map((p) => `<option value="${p.key}" ${p.key === pat.key ? "selected" : ""}>${p.name}</option>`).join("");
-    const btns = PITCH_NAMES.map((n, i) => `<button class="answer-btn small" data-pc="${i}">${n}</button>`).join("");
+    const btns = pool.map((n) => `<button class="answer-btn" data-pc="${PITCH_NAMES.indexOf(n)}">${n}</button>`).join("");
     setAnswers(`
-      <div class="note-grid">${btns}</div>
-      <div class="interval-picker"><label>Pattern <select id="learn-pat-sel">${patOpts}</select></label></div>`);
+      <div class="pattern-picker"><label>Phrase <select id="learn-pat-sel">${patOpts}</select></label></div>
+      <div class="note-grid wide">${btns}</div>`);
     root.querySelectorAll("#learn-answers [data-pc]").forEach((b) =>
       b.addEventListener("click", () => answerPattern(+b.dataset.pc)));
     const sel = $("#learn-pat-sel");
@@ -696,6 +724,7 @@ export function setupLearn(ctx) {
     const correct = pcGuess === session.rootPc;
     const notes = patternPcs(session.rootPc, session.offs);
     if (session.attempts === 1) {
+      bumpSess(correct);
       const assisted = session.hintUsed || anyCrutchAudible(notes);
       celebrate(recordNotes(notes, correct, assisted));
     }
@@ -704,11 +733,19 @@ export function setupLearn(ctx) {
       if (session.attempts === 1) {
         notes.forEach((n) => fadeNote(n, CRUTCH_FADE * 0.4));
         prog.pattern.correct++;
+        prog.pattern.correctInPool++;
+        if (prog.pattern.correctInPool >= REPS_PER_NOTE && prog.pattern.pool < 12) {
+          prog.pattern.pool++; prog.pattern.correctInPool = 0;
+          setPrompt(`✅ ${PITCH_NAMES[session.rootPc]} — new option added: <b>${POOL_ORDER[prog.pattern.pool - 1]}</b>`);
+        } else {
+          setPrompt(`✅ starts on ${PITCH_NAMES[session.rootPc]}`);
+        }
         saveProg();
+      } else {
+        setPrompt(`✅ starts on ${PITCH_NAMES[session.rootPc]}`);
       }
-      setPrompt(`✅ starts on ${PITCH_NAMES[session.rootPc]}`);
-      setBar((prog.pattern.correct % 10) / 10);
-      setScore(`${prog.pattern.correct} correct`);
+      setBar(prog.pattern.correctInPool / REPS_PER_NOTE);
+      setScore(`pool ${prog.pattern.pool}/12`);
       showNext(true);
       maybeAutoNext();
     } else {
@@ -757,14 +794,18 @@ export function setupLearn(ctx) {
     const imgCb = root.querySelector("#yn-imagine");
     imgCb.addEventListener("change", () => { ynImagine = imgCb.checked; localStorage.setItem("pt.learn.yn.imagine", ynImagine ? "1" : "0"); startYesNo(); });
 
-    if (ynImagine) {
+    // Training wheels: hear the SHOWN note's OG sample as a reference first.
+    session.wheelsRef = trainingWheels;
+    if (trainingWheels) { const bank = ctx.getBank(); if (bank) bank.play(PITCH_NAMES[shownPc], {}); }
+    const delay = ynImagine ? 2000 : (trainingWheels ? 1200 : 0);
+    if (delay > 0) {
       ynSetAnswersDisabled(true);
       ynTimer = setTimeout(() => {
         ynTimer = null;
-        const sub = $("#yn-sub"); if (sub) sub.textContent = "Does the piano note match?";
+        const sub = $("#yn-sub"); if (sub && ynImagine) sub.textContent = "Does the piano note match?";
         ynSetAnswersDisabled(false);
         playYn(playedPc, oct);
-      }, 2000);
+      }, delay);
     } else {
       playYn(playedPc, oct);
     }
@@ -776,7 +817,8 @@ export function setupLearn(ctx) {
     const correct = saidYes === session.isSame;
     const shownName = PITCH_NAMES[session.shownPc];
     const heard = PITCH_NAMES[session.playedPc];
-    celebrate(recordNote(shownName, correct, false)); // pure test — unassisted
+    bumpSess(correct);
+    celebrate(recordNote(shownName, correct, !!session.wheelsRef)); // ref heard = assisted
     const sub = $("#yn-sub");
     if (sub) sub.innerHTML = `${correct ? "✅ Correct" : "❌ Wrong"} — played was <b>${heard}</b> (${session.isSame ? "match" : "different"})`;
     const bank = ctx.getBank(); if (bank) bank.play(shownName, {}); // OG sample anchor of shown note
@@ -800,8 +842,21 @@ export function setupLearn(ctx) {
     phaseKey = key;
     view = "trainer";
     session = null;
+    sess = { correct: 0, total: 0 }; // fresh running score per phase visit
     render();
   }
+
+  // Keyboard: number keys pick answer options in order (12 slots).
+  const KEYMAP = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "="];
+  window.addEventListener("keydown", (e) => {
+    if (view !== "trainer") return;
+    const tag = (document.activeElement && document.activeElement.tagName) || "";
+    if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+    const idx = KEYMAP.indexOf(e.key);
+    if (idx < 0) return;
+    const btns = [...root.querySelectorAll("#learn-answers button")];
+    if (btns[idx]) { e.preventDefault(); btns[idx].click(); }
+  });
 
   return {
     async enter() {
