@@ -65,8 +65,17 @@ const CRUTCH_BUMP = 0.6;      // strength restored on a wrong answer
 // roots every INTERVAL_SET reps, so a purely per-note crutch barely moves
 // within a set. These drive a per-SET crutch that visibly fades as you nail the
 // current set and jumps back on a miss.
-const SET_FADE = 0.22;        // per-set crutch removed per correct rep (~5 to clear)
-const SET_BUMP = 0.4;         // per-set crutch restored on a wrong answer
+const SET_FADE = 0.22;        // (legacy) per-set crutch removed per correct rep
+const SET_BUMP = 0.4;         // (legacy) per-set crutch restored on a wrong answer
+
+// Discrimination engine (Intervals/Triads/Voicings): a 3-down/1-up staircase on
+// the crutch SUPPORT level (psychophysics — converges to ~79% accuracy), plus
+// spaced item scheduling across all 12 keys with study→test exposure.
+const SUPPORT_MAX     = 5;    // crutch level 0..5 (0 = clean, no crutch)
+const STAIR_DOWN      = 3;    // correct-in-a-row to lower support (3-down/1-up)
+const CLEAN_TO_MASTER = 2;    // clean (crutch-off) correct tests to master an item
+const REVIEW_GAP      = 18;   // test-rounds before a mastered item is due for review
+const REVIEW_PROB     = 0.35; // chance a freed slot pulls a due review item vs a new key
 
 // Chord types for the absolute-discrimination phases. Both voicings in a pair
 // share one type so you're memorizing the absolute sound/register, not
@@ -115,6 +124,9 @@ export function setupLearn(ctx) {
       voicings: { correct: 0, type: "maj7",            ...(p.voicings  || {}) },
       pattern:  { patKey: "1235", correct: 0, pool: 3, correctInPool: 0, ...(p.pattern || {}) },
       relative: { mode: "relative", correct: 0,        ...(p.relative || {}) },
+      disc:     { ...(p.disc || {}) },     // per-item state: `${phase}:${type}:${root}`
+      support:  { ...(p.support || {}) },  // per-type staircase: `${phase}:${type}`
+      discT:    p.discT ?? 0,              // global test-round counter (review scheduling)
     };
   }
   function saveProg() { try { localStorage.setItem(LS_KEY, JSON.stringify(prog)); } catch (_) {} }
@@ -329,9 +341,9 @@ export function setupLearn(ctx) {
     showNext(false);
     showDecompose(false); // only chord phases turn this on
     if (phaseKey === "pitches")   return startPitches();
-    if (phaseKey === "intervals") return startIntervals();
-    if (phaseKey === "triads")    return startChordDiscrim("triads");
-    if (phaseKey === "voicings")  return startChordDiscrim("voicings");
+    if (phaseKey === "intervals") return startDisc("intervals");
+    if (phaseKey === "triads")    return startDisc("triads");
+    if (phaseKey === "voicings")  return startDisc("voicings");
     if (phaseKey === "pattern")   return startPattern();
     if (phaseKey === "relative")  return startRelative();
     if (phaseKey === "yesno")     return startYesNo();
@@ -429,262 +441,215 @@ export function setupLearn(ctx) {
     }
   }
 
-  // ---- Phase 2: Intervals (2-voicing discrimination) -------------------------
-  // A and B are two fixed ROOT pitch classes (same interval on top). Each round
-  // the octave is re-rolled from the two octaves around middle C, so the pair is
-  // learned octave-independently and can't be anchored to a fixed register.
-  function pickDistinctRoots(n) {
-    const roots = [];
-    let guard = 0;
-    while (roots.length < n && guard < 300) {
-      const r = Math.floor(Math.random() * 12);
-      if (!roots.includes(r)) roots.push(r);
-      guard++;
-    }
-    return roots;
-  }
-  function drawIntervalSet(semis) {
-    return pickDistinctRoots(DISCRIM_OPTIONS).map((rootPc) => ({
-      rootPc,
-      topPc: (rootPc + semis) % 12,
-      label: `${PITCH_NAMES[rootPc]}–${PITCH_NAMES[(rootPc + semis) % 12]}`,
-    }));
-  }
-  function intervalPianoNames(v, oct) {
-    const rootMidi = pcOctToMidi(v.rootPc, oct);
-    return [midiName(rootMidi), midiName(rootMidi + prog.intervals.semis)];
-  }
-  function playInterval(v, oct, full = false) {
-    playPiano(intervalPianoNames(v, oct), "1n", 0.95);
-    const names = [PITCH_NAMES[v.rootPc], PITCH_NAMES[v.topPc]];
-    const db = (full || trainingWheels) ? FORCE_DB : crutchGainDb(session ? session.crutch : 1);
-    if (db !== null) { const bank = ctx.getBank(); if (bank) names.forEach((n) => bank.play(n, { volume: db })); }
-  }
-  function hintInterval(v, oct) {
-    // Separate notes, no crutch — nothing else.
-    playPiano(intervalPianoNames(v, oct), "2n", 0.9, 0.45);
-  }
-  function startIntervals() {
-    const semis = prog.intervals.semis;
-    if (!session || !session.pair || session.setReps >= INTERVAL_SET) {
-      const pair = drawIntervalSet(semis);
-      const allNotes = pair.flatMap((v) => [PITCH_NAMES[v.rootPc], PITCH_NAMES[v.topPc]]);
-      session = { pair, setReps: 0, crutch: avgStrength(allNotes) }; // seed from mastery
-    }
-    const which = Math.floor(Math.random() * session.pair.length);
-    const oct = 3 + Math.floor(Math.random() * 2); // re-roll octave each round
-    session.which = which;
-    session.oct = oct;
-    session.done = false;
-    session.attempts = 0;
-    session.hintUsed = false;
-    session.replay = () => playInterval(session.pair[which], oct);
-    session.hint   = () => hintInterval(session.pair[which], oct);
+  // ---- Phases 2-4: discrimination engine (Intervals / Triads / Voicings) -----
+  // A 3-down/1-up staircase tunes the crutch SUPPORT level (psychophysics —
+  // converges to ~79% accuracy). Items (one root per key) are scheduled across
+  // all 12 keys: a new item gets a STUDY exposure (crutch on, answer revealed)
+  // before it is TESTED later (spaced, since the 3 slots interleave). Master an
+  // item by identifying it crutch-off; it retires and a new key rotates in, and
+  // mastered items return for retention checks. The A/B/C slots keep positions.
+  function levelDb(L) { return L <= 0 ? null : -4 - (SUPPORT_MAX - L) * 3; }
 
-    setScore(`${INTERVAL_LABELS[semis]} · ${Math.min(prog.intervals.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT}`);
-    setBar(Math.min(prog.intervals.correct, PHASE_UNLOCK_AT) / PHASE_UNLOCK_AT);
-    setPrompt(`Which one did you hear?`);
-    showHint(true);
-
-    const btns = session.pair.map((v, i) =>
-      `<button class="voicing-btn" data-which="${i}"><b>${LETTERS[i]}</b><span>${v.label}</span></button>`
-    ).join("");
-    setAnswers(`
-      <div class="voicing-choices">${btns}</div>
-      <div class="interval-picker">
-        <label>Interval
-          <select id="learn-int-sel">
-            ${Object.entries(INTERVAL_LABELS).map(([s, l]) =>
-              `<option value="${s}" ${+s === semis ? "selected" : ""}>${l}</option>`).join("")}
-          </select>
-        </label>
-      </div>`);
-    root.querySelectorAll(".voicing-btn").forEach((b) =>
-      b.addEventListener("click", () => answerInterval(+b.dataset.which))
-    );
-    const sel = $("#learn-int-sel");
-    if (sel) sel.addEventListener("change", () => {
-      prog.intervals.semis = parseInt(sel.value, 10);
-      saveProg();
-      session = null;
-      startIntervals();
-    });
-
-    playInterval(session.pair[which], oct);
-  }
-  function answerInterval(which) {
-    if (!session || session.done) return;
-    session.attempts++;
-    const correct = which === session.which;
-    const v = session.pair[session.which];
-    const heard = [PITCH_NAMES[v.rootPc], PITCH_NAMES[v.topPc]];
-    if (session.attempts === 1) {
-      bumpSess(correct);
-      const assisted = session.hintUsed || trainingWheels || crutchGainDb(session.crutch) !== null;
-      celebrate(recordInterval(INTERVAL_LABELS[prog.intervals.semis], heard, correct, assisted));
+  function discCfg(pk) {
+    if (pk === "intervals") {
+      return {
+        typeKey: () => String(prog.intervals.semis),
+        typeLabelShort: () => INTERVAL_LABELS[prog.intervals.semis],
+        typeOptions: () => Object.entries(INTERVAL_LABELS).map(([s, l]) => ({ value: s, label: l })),
+        selId: "learn-int-sel", selLabel: "Interval",
+        onType: (v) => { prog.intervals.semis = parseInt(v, 10); },
+        offsets: () => [0, prog.intervals.semis],
+        label: (r) => `${PITCH_NAMES[r]}–${PITCH_NAMES[((r + prog.intervals.semis) % 12 + 12) % 12]}`,
+        record: (notes, c, a) => recordInterval(INTERVAL_LABELS[prog.intervals.semis], notes, c, a),
+        decompose: false,
+      };
     }
-    if (correct) {
-      session.done = true;
-      session.setReps++;
-      if (session.attempts === 1) {
-        heard.forEach((n) => fadeNote(n, CRUTCH_FADE * 0.5)); // per-note mastery (stats)
-        session.crutch = Math.max(0, session.crutch - SET_FADE); // per-set fade
-        prog.intervals.reps++;
-        prog.intervals.correct++;
-        if (prog.intervals.correct >= PHASE_UNLOCK_AT) unlockGate(2);
-        saveProg();
-      }
-      setPrompt(`✅ ${LETTERS[which]} — ${session.pair[which].label}`);
-      setBar(Math.min(prog.intervals.correct, PHASE_UNLOCK_AT) / PHASE_UNLOCK_AT);
-      setScore(`${INTERVAL_LABELS[prog.intervals.semis]} · ${Math.min(prog.intervals.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT}`);
-      showNext(true);
-      maybeAutoNext();
-    } else {
-      heard.forEach((n) => bumpNote(n));
-      session.crutch = Math.min(1, session.crutch + SET_BUMP); // per-set bump
-      saveProg();
-      setPrompt(`❌ Not that one. Crutch back on…`);
-      setTimeout(() => playInterval(session.pair[session.which], session.oct), 350);
-    }
+    const isTri = pk === "triads";
+    const P = isTri ? prog.triads : prog.voicings;
+    const TY = isTri ? TRIAD_TYPES : SEVENTH_TYPES;
+    const nm = isTri ? "Triad" : "Voicing";
+    return {
+      typeKey: () => P.type,
+      typeLabelShort: () => P.type,
+      typeOptions: () => Object.keys(TY).map((t) => ({ value: t, label: t })),
+      selId: "learn-chord-sel", selLabel: `${nm} type`,
+      onType: (v) => { P.type = v; },
+      offsets: () => TY[P.type],
+      label: (r) => `${PITCH_NAMES[r]} ${P.type}`,
+      record: (notes, c, a) => recordInterval(P.type, notes, c, a),
+      decompose: true,
+    };
   }
 
-  // ---- Phases 3 & 4: chord discrimination (absolute) -------------------------
-  // Same idea as the Intervals phase, one level up: draw TWO specific voicings
-  // of one chord type at different roots/octaves, play one, and identify which
-  // exact voicing it was. ~half the reps carry the PP-MIDI crutch.
-  function chordConfig(phaseKey) {
-    if (phaseKey === "triads") {
-      return { prog: prog.triads, types: TRIAD_TYPES, phaseIndex: 3, name: "Triad" };
+  function itemKey(pk, tk, r) { return `${pk}:${tk}:${r}`; }
+  function getItem(pk, tk, r) {
+    const k = itemKey(pk, tk, r);
+    return prog.disc[k] || (prog.disc[k] = { seen: 0, clean: 0, mastered: false, dueAt: 0 });
+  }
+  function getSup(pk, tk) {
+    const k = `${pk}:${tk}`;
+    return prog.support[k] || (prog.support[k] = { L: 4, streak: 0 });
+  }
+  function masteredCount(pk, tk) { let n = 0; for (let r = 0; r < 12; r++) if (getItem(pk, tk, r).mastered) n++; return n; }
+
+  function shapeNoteNames(root, offsets) { return offsets.map((o) => PITCH_NAMES[(((root + o) % 12) + 12) % 12]); }
+  function playShape(root, oct, offsets, db) {
+    const rootMidi = pcOctToMidi(root, oct);
+    playPiano(offsets.map((o) => midiName(rootMidi + o)), "1n", 0.95);
+    if (db !== null && db !== undefined) {
+      const bank = ctx.getBank();
+      if (bank) offsets.forEach((o) => bank.play(PITCH_NAMES[(((root + o) % 12) + 12) % 12], { volume: db }));
     }
-    return { prog: prog.voicings, types: SEVENTH_TYPES, phaseIndex: 4, name: "Voicing" };
   }
-  // Identity is the ROOT pitch class; octave re-rolls each round (same as
-  // Intervals) so triads/voicings are learned octave-independently.
-  function drawChordSet(intervals) {
-    return pickDistinctRoots(DISCRIM_OPTIONS).map((rootPc) => ({
-      rootPc,
-      tones: intervals.map((iv) => (rootPc + iv) % 12),
-      label: PITCH_NAMES[rootPc],
-    }));
+  function playShapeArp(root, oct, offsets) {
+    const rootMidi = pcOctToMidi(root, oct);
+    playPiano(offsets.map((o) => midiName(rootMidi + o)), "2n", 0.9, 0.42); // separate notes, no crutch
   }
-  function chordNoteNames(v) { return v.tones.map((t) => PITCH_NAMES[t]); }
-  function chordPianoNames(v, oct) {
-    const rootMidi = pcOctToMidi(v.rootPc, oct);
-    return session.intervals.map((iv) => midiName(rootMidi + iv));
-  }
-  function playChord(v, oct, full = false) {
-    playPiano(chordPianoNames(v, oct), "1n", 0.95);
-    const names = chordNoteNames(v);
-    const db = (full || trainingWheels) ? FORCE_DB : crutchGainDb(session ? session.crutch : 1);
-    if (db !== null) { const bank = ctx.getBank(); if (bank) names.forEach((n) => bank.play(n, { volume: db })); }
-  }
-  function hintChord(v, oct) {
-    // Separate notes, no crutch — nothing else.
-    playPiano(chordPianoNames(v, oct), "2n", 0.9, 0.4);
-  }
-  // Break the voicing into its sub-units: each adjacent dyad plus the outer
-  // interval (root+top). Reveals every internal relationship, one at a time.
-  function decomposeChord(v, oct, withPp) {
-    const names = chordPianoNames(v, oct);
-    const pcs = chordNoteNames(v);
+  function decomposeShape(root, oct, offsets, withPp) {
+    const rootMidi = pcOctToMidi(root, oct);
+    const names = offsets.map((o) => midiName(rootMidi + o));
+    const pcs = shapeNoteNames(root, offsets);
     const pairs = [];
     for (let i = 0; i < names.length - 1; i++) pairs.push([[names[i], names[i + 1]], [pcs[i], pcs[i + 1]]]);
-    pairs.push([[names[0], names[names.length - 1]], [pcs[0], pcs[pcs.length - 1]]]); // outer
+    if (names.length > 2) pairs.push([[names[0], names[names.length - 1]], [pcs[0], pcs[pcs.length - 1]]]);
     const piano = ctx.getPiano();
     const gap = 0.85;
-    pairs.forEach(([pnames, ppcs], i) => {
+    pairs.forEach(([pn, pp], i) => {
       const at = Tone.now() + 0.05 + i * gap;
-      if (piano) { try { piano.triggerAttackRelease(pnames, "2n", at, 0.9); } catch (_) {} }
-      if (withPp) setTimeout(() => overlayUniform(ppcs, true), (0.05 + i * gap) * 1000);
+      if (piano) { try { piano.triggerAttackRelease(pn, "2n", at, 0.9); } catch (_) {} }
+      if (withPp) setTimeout(() => { const b = ctx.getBank(); if (b) pp.forEach((n) => b.play(n, { volume: FORCE_DB })); }, (0.05 + i * gap) * 1000);
     });
   }
-  function startChordDiscrim(phaseKey) {
-    const cfg = chordConfig(phaseKey);
-    const type = cfg.prog.type;
-    const intervals = cfg.types[type];
 
-    if (!session || !session.pair || session.type !== type || session.setReps >= INTERVAL_SET) {
-      const pair = drawChordSet(intervals);
-      const allNotes = pair.flatMap((v) => v.tones.map((t) => PITCH_NAMES[t]));
-      session = { pair, setReps: 0, type, crutch: avgStrength(allNotes) };
+  function initSlots(pk, tk) {
+    const roots = [...Array(12).keys()];
+    roots.sort((a, b) => {
+      const ia = getItem(pk, tk, a), ib = getItem(pk, tk, b);
+      return (ia.mastered ? 1 : 0) - (ib.mastered ? 1 : 0) || ia.seen - ib.seen || Math.random() - 0.5;
+    });
+    return roots.slice(0, 3);
+  }
+  function pickTarget(pk, tk) {
+    const all = [0, 1, 2];
+    const pool = all.filter((i) => i !== session.lastTarget);
+    const use = pool.length ? pool : all;
+    const w = use.map((i) => { const it = getItem(pk, tk, session.slots[i]); return it.seen === 0 ? 3 : (it.mastered ? 0.6 : 1); });
+    let r = Math.random() * w.reduce((a, b) => a + b, 0);
+    for (let j = 0; j < use.length; j++) { r -= w[j]; if (r <= 0) return use[j]; }
+    return use[use.length - 1];
+  }
+  function swapSlot(pk, tk, idx) {
+    const inUse = new Set(session.slots);
+    let choice = null;
+    if (Math.random() < REVIEW_PROB) {
+      const due = [];
+      for (let r = 0; r < 12; r++) { if (inUse.has(r)) continue; const it = getItem(pk, tk, r); if (it.mastered && it.dueAt <= prog.discT) due.push(r); }
+      if (due.length) choice = due[Math.floor(Math.random() * due.length)];
     }
-    session.intervals = intervals;
-    const which = Math.floor(Math.random() * session.pair.length);
-    const oct = 3 + Math.floor(Math.random() * 2); // re-roll octave each round
-    session.which = which;
-    session.oct = oct;
-    session.done = false;
-    session.attempts = 0;
-    session.hintUsed = false;
-    session.replay = () => playChord(session.pair[which], oct);
-    session.hint   = () => hintChord(session.pair[which], oct);
-    session.decompose = (withPp) => decomposeChord(session.pair[which], oct, withPp);
-    showDecompose(true);
-
-    const scoreTxt = `${type} · ${Math.min(cfg.prog.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT}`;
-    setScore(scoreTxt);
-    setBar(Math.min(cfg.prog.correct, PHASE_UNLOCK_AT) / PHASE_UNLOCK_AT);
-    setPrompt(`Which one did you hear?`);
-    showHint(true);
-
-    const typeOpts = Object.keys(cfg.types)
-      .map((t) => `<option value="${t}" ${t === type ? "selected" : ""}>${t}</option>`).join("");
-    const btns = session.pair.map((v, i) =>
-      `<button class="voicing-btn" data-which="${i}"><b>${LETTERS[i]}</b><span>${v.label} ${type}</span></button>`
-    ).join("");
+    if (choice === null) {
+      const fresh = [];
+      for (let r = 0; r < 12; r++) { if (inUse.has(r)) continue; if (!getItem(pk, tk, r).mastered) fresh.push(r); }
+      if (fresh.length) { fresh.sort((a, b) => getItem(pk, tk, a).seen - getItem(pk, tk, b).seen || Math.random() - 0.5); choice = fresh[0]; }
+    }
+    if (choice === null) {
+      const any = [];
+      for (let r = 0; r < 12; r++) if (!inUse.has(r)) any.push(r);
+      choice = any.length ? any[Math.floor(Math.random() * any.length)] : session.slots[idx];
+    }
+    session.slots[idx] = choice; // keep the slot's on-screen position
+  }
+  function highlightSlot(idx) {
+    root.querySelectorAll(".voicing-btn").forEach((b, i) => b.classList.toggle("study-hl", i === idx));
+  }
+  function renderDiscButtons(D) {
+    const btns = session.slots.map((r, i) => `<button class="voicing-btn" data-which="${i}"><b>${LETTERS[i]}</b><span>${D.label(r)}</span></button>`).join("");
+    const opts = D.typeOptions().map((o) => `<option value="${o.value}" ${o.value === session.tk ? "selected" : ""}>${o.label}</option>`).join("");
     setAnswers(`
       <div class="voicing-choices">${btns}</div>
-      <div class="interval-picker">
-        <label>${cfg.name} type
-          <select id="learn-chord-sel">${typeOpts}</select>
-        </label>
-      </div>`);
-    root.querySelectorAll(".voicing-btn").forEach((b) =>
-      b.addEventListener("click", () => answerChordDiscrim(phaseKey, +b.dataset.which))
-    );
-    const sel = $("#learn-chord-sel");
-    if (sel) sel.addEventListener("change", () => {
-      cfg.prog.type = sel.value;
-      saveProg();
-      session = null;
-      startChordDiscrim(phaseKey);
-    });
-
-    playChord(session.pair[which], oct);
+      <div class="interval-picker"><label>${D.selLabel} <select id="${D.selId}">${opts}</select></label></div>`);
+    root.querySelectorAll(".voicing-btn").forEach((b) => b.addEventListener("click", () => answerDisc(session.pk, +b.dataset.which)));
+    const sel = $(`#${D.selId}`);
+    if (sel) sel.addEventListener("change", () => { const pk = session.pk; D.onType(sel.value); saveProg(); session = null; startDisc(pk); });
   }
-  function answerChordDiscrim(phaseKey, which) {
+  function discScore(pk, tk, sup) {
+    const D = discCfg(pk);
+    return `${D.typeLabelShort()} · ${masteredCount(pk, tk)}/12 · ${sup.L === 0 ? "no crutch" : "crutch " + sup.L}`;
+  }
+  function startDisc(pk) {
+    const D = discCfg(pk);
+    const tk = D.typeKey();
+    if (!session || session.pk !== pk || session.tk !== tk || !session.slots) {
+      session = { pk, tk, slots: initSlots(pk, tk), lastTarget: -1 };
+    }
+    session.offsets = D.offsets();
+    const target = pickTarget(pk, tk);
+    const root = session.slots[target];
+    const item = getItem(pk, tk, root);
+    const sup = getSup(pk, tk);
+    const oct = 3 + Math.floor(Math.random() * 2);
+    const mode = item.seen === 0 ? "study" : "test";
+    const db = mode === "study" ? FORCE_DB : (trainingWheels ? FORCE_DB : levelDb(sup.L));
+    session.target = target; session.mode = mode; session.oct = oct;
+    session.done = false; session.attempts = 0; session.hintUsed = false;
+    session.replay = () => playShape(root, oct, session.offsets, mode === "study" ? FORCE_DB : db);
+    session.hint   = () => playShapeArp(root, oct, session.offsets);
+    if (D.decompose) { session.decompose = (pp) => decomposeShape(root, oct, session.offsets, pp); showDecompose(true); } else showDecompose(false);
+    showHint(true);
+
+    setScore(discScore(pk, tk, sup));
+    setBar(masteredCount(pk, tk) / 12);
+    renderDiscButtons(D);
+
+    if (mode === "study") {
+      setPrompt(`🔊 Study — this one is <b>${D.label(root)}</b>`);
+      highlightSlot(target);
+      item.seen++; saveProg();     // exposure done; it will be TESTED later (spaced)
+      showNext(true);
+      playShape(root, oct, session.offsets, FORCE_DB);
+    } else {
+      setPrompt(`Which one did you hear?`);
+      showNext(false);
+      playShape(root, oct, session.offsets, db);
+    }
+  }
+  function answerDisc(pk, slotIdx) {
     if (!session || session.done) return;
-    const cfg = chordConfig(phaseKey);
+    const tk = session.tk;
+    if (session.mode === "study") { session.lastTarget = session.target; startDisc(pk); return; }
+    const D = discCfg(pk);
     session.attempts++;
-    const correct = which === session.which;
-    const heard = chordNoteNames(session.pair[session.which]);
+    const target = session.target;
+    const root = session.slots[target];
+    const item = getItem(pk, tk, root);
+    const sup = getSup(pk, tk);
+    const correct = slotIdx === target;
+    const heard = shapeNoteNames(root, session.offsets);
+    const cleanTest = sup.L === 0 && !trainingWheels; // truly unassisted?
     if (session.attempts === 1) {
       bumpSess(correct);
-      const assisted = session.hintUsed || trainingWheels || crutchGainDb(session.crutch) !== null;
-      celebrate(recordInterval(session.type, heard, correct, assisted));
+      prog.discT = (prog.discT || 0) + 1;
+      celebrate(D.record(heard, correct, session.hintUsed || !cleanTest));
     }
+    session.done = true;
     if (correct) {
-      session.done = true;
-      session.setReps++;
-      if (session.attempts === 1) {
-        heard.forEach((n) => fadeNote(n, CRUTCH_FADE * 0.4)); // per-note mastery (stats)
-        session.crutch = Math.max(0, session.crutch - SET_FADE); // per-set fade
-        cfg.prog.correct++;
-        if (cfg.prog.correct >= PHASE_UNLOCK_AT) unlockGate(cfg.phaseIndex);
-        saveProg();
-      }
-      const v = session.pair[which];
-      setPrompt(`✅ ${LETTERS[which]} — ${v.label} ${session.type}`);
-      setBar(Math.min(cfg.prog.correct, PHASE_UNLOCK_AT) / PHASE_UNLOCK_AT);
-      setScore(`${session.type} · ${Math.min(cfg.prog.correct, PHASE_UNLOCK_AT)}/${PHASE_UNLOCK_AT}`);
-      showNext(true);
-      maybeAutoNext();
-    } else {
-      heard.forEach((n) => bumpNote(n));
-      session.crutch = Math.min(1, session.crutch + SET_BUMP); // per-set bump
+      sup.streak = (sup.streak || 0) + 1;
+      if (sup.streak >= STAIR_DOWN) { sup.L = Math.max(0, sup.L - 1); sup.streak = 0; } // 3-down
+      if (item.mastered) { item.dueAt = prog.discT + REVIEW_GAP * 2; swapSlot(pk, tk, target); } // passed a retention review
+      else if (cleanTest) { item.clean = (item.clean || 0) + 1; if (item.clean >= CLEAN_TO_MASTER) { item.mastered = true; item.dueAt = prog.discT + REVIEW_GAP; swapSlot(pk, tk, target); } }
       saveProg();
-      setPrompt(`❌ Not that one. Crutch back on…`);
-      setTimeout(() => playChord(session.pair[session.which], session.oct), 350);
+      setPrompt(`✅ ${LETTERS[target]} — ${D.label(root)}`);
+      setScore(discScore(pk, tk, sup));
+      setBar(masteredCount(pk, tk) / 12);
+      session.lastTarget = target;
+      showNext(true); maybeAutoNext();
+    } else {
+      sup.L = Math.min(SUPPORT_MAX, sup.L + 1); sup.streak = 0; // 1-up
+      item.clean = 0; item.mastered = false; item.seen = 0;     // re-study it later (spaced)
+      saveProg();
+      setPrompt(`❌ was ${LETTERS[target]} — ${D.label(root)}`);
+      setTimeout(() => playShape(root, session.oct, session.offsets, FORCE_DB), 350); // corrective, crutch on
+      session.lastTarget = target;
+      showNext(true); maybeAutoNext(1600);
     }
   }
 
