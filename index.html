@@ -251,24 +251,24 @@
       --bad: #f44336;
     }
 
-    /* When in Learn/Practice/Tune: full-width, top-aligned, scrollable page. */
-    body.mode-learn, body.mode-practice, body.mode-tune { background: var(--bg); }
-    body.mode-learn, body.mode-practice, body.mode-tune {
+    /* When in Learn/Practice/Tune/YesNo: full-width, top-aligned, scrollable. */
+    body.mode-learn, body.mode-practice, body.mode-tune, body.mode-yesno { background: var(--bg); }
+    body.mode-learn, body.mode-practice, body.mode-tune, body.mode-yesno {
       justify-content: flex-start;
     }
-    body.mode-learn #note, body.mode-practice #note, body.mode-tune #note,
-    body.mode-learn #debug, body.mode-practice #debug, body.mode-tune #debug,
-    body.mode-learn #start, body.mode-practice #start, body.mode-tune #start,
-    body.mode-learn #status, body.mode-practice #status, body.mode-tune #status { display: none !important; }
+    body.mode-learn #note, body.mode-practice #note, body.mode-tune #note, body.mode-yesno #note,
+    body.mode-learn #debug, body.mode-practice #debug, body.mode-tune #debug, body.mode-yesno #debug,
+    body.mode-learn #start, body.mode-practice #start, body.mode-tune #start, body.mode-yesno #start,
+    body.mode-learn #status, body.mode-practice #status, body.mode-tune #status, body.mode-yesno #status { display: none !important; }
 
-    #learn, #practice, #tune {
+    #learn, #practice, #tune, #yesno {
       display: none;
       width: 100%;
       max-width: 520px;
       padding: 0 1rem 2rem;
       animation: fadeIn 0.2s ease;
     }
-    #learn.active, #practice.active, #tune.active { display: block; }
+    #learn.active, #practice.active, #tune.active, #yesno.active { display: block; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
     .screen-title { font-size: 1.9rem; font-weight: 800; margin: 0.2rem 0 0.3rem; letter-spacing: -0.02em; }
@@ -474,6 +474,18 @@
     .sng { padding: 0.3rem 0.55rem; border-radius: 8px; background: var(--card2); color: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 0.9rem; }
     .sng.hit { background: var(--good); color: #072; font-weight: 700; }
 
+    /* ---- Yes / No ---- */
+    .yn { display: flex; flex-direction: column; align-items: center; text-align: center; }
+    .yn .trainer-score { margin: 0.2rem 0 0.6rem; }
+    .yn-note { font-size: 7rem; font-weight: 800; line-height: 1; letter-spacing: -0.04em; color: #fff; }
+    .yn-sub { color: var(--muted); font-size: 0.95rem; margin: 0.8rem 0 1.2rem; }
+    .yn-answers { display: flex; gap: 1rem; }
+    .yn-answers .answer-btn { min-width: 6rem; }
+    .yn-result { min-height: 1.5em; margin-top: 1.1rem; font-size: 0.95rem; font-weight: 600; color: #ddd; }
+    .yn-result.correct { color: var(--good); }
+    .yn-result.wrong { color: var(--bad); }
+    .yn-result b { color: var(--accent); }
+
     /* ---- Status ---- */
     #status {
       position: fixed;
@@ -495,6 +507,7 @@
     <button class="mode-btn"        data-mode="learn"     type="button">📚 Learn</button>
     <button class="mode-btn"        data-mode="practice"  type="button">🗓️ Practice</button>
     <button class="mode-btn"        data-mode="tune"      type="button">🎶 Tunes</button>
+    <button class="mode-btn"        data-mode="yesno"     type="button">✅ Yes/No</button>
   </div>
 
   <div id="note" class="idle">—</div>
@@ -582,6 +595,9 @@
 
   <!-- Tune Learner (rendered by tune.js) -->
   <div id="tune"></div>
+
+  <!-- Yes / No (rendered by yesno.js) -->
+  <div id="yesno"></div>
 
   <div id="status">Tap Start to begin</div>
 

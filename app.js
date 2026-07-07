@@ -7,6 +7,7 @@ import * as Tone from "https://esm.sh/tone@14";
 import { setupLearn } from "./learn.js";
 import { setupPractice } from "./practice.js";
 import { setupTune } from "./tune.js";
+import { setupYesNo } from "./yesno.js";
 
 // ---------------------------------------------------------------------------
 // CONFIG
@@ -147,6 +148,7 @@ const $intervalsNext   = document.getElementById("intervals-next");
 const $learn    = document.getElementById("learn");
 const $practice = document.getElementById("practice");
 const $tune     = document.getElementById("tune");
+const $yesno    = document.getElementById("yesno");
 
 // ---------------------------------------------------------------------------
 // Shared sample bank (lazy; created on first mode init)
@@ -802,6 +804,7 @@ async function switchMode(newMode) {
   document.body.classList.toggle("mode-learn", newMode === "learn");
   document.body.classList.toggle("mode-practice", newMode === "practice");
   document.body.classList.toggle("mode-tune", newMode === "tune");
+  document.body.classList.toggle("mode-yesno", newMode === "yesno");
 
   $modeBtns.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.mode === newMode);
@@ -811,6 +814,7 @@ async function switchMode(newMode) {
   if (oldMode === "learn")    learnMod.exit();
   if (oldMode === "practice") practiceMod.exit();
   if (oldMode === "tune")     tuneMod.exit();
+  if (oldMode === "yesno")    yesnoMod.exit();
 
   // Common teardown of any non-passive UI.
   cancelAutoAdvance();
@@ -821,6 +825,7 @@ async function switchMode(newMode) {
   $learn.classList.remove("active");
   $practice.classList.remove("active");
   $tune.classList.remove("active");
+  $yesno.classList.remove("active");
   hideAllAnswerGroups();
   $followup.classList.remove("active");
 
@@ -868,6 +873,11 @@ async function switchMode(newMode) {
     hideStartButton();
     $tune.classList.add("active");
     await tuneMod.enter();
+  } else if (newMode === "yesno") {
+    await cleanupPassive();
+    hideStartButton();
+    $yesno.classList.add("active");
+    await yesnoMod.enter();
   }
 }
 
@@ -904,6 +914,7 @@ const sharedCtx = {
 const learnMod    = setupLearn(sharedCtx);
 const practiceMod = setupPractice(sharedCtx);
 const tuneMod     = setupTune(sharedCtx);
+const yesnoMod    = setupYesNo(sharedCtx);
 
 // ---------------------------------------------------------------------------
 // Wire up
