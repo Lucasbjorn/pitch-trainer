@@ -282,14 +282,24 @@ export function setupTune(ctx) {
   function keyOptions() {
     return PC.map((n, i) => `<option value="${i}" ${i === keyPc ? "selected" : ""}>${n} ${tune.quality === "minor" ? "min" : "maj"}</option>`).join("");
   }
+  function barMelNames(b) {
+    if (typeof b !== "object" || !b.mel) return "";
+    return b.mel.filter(([n]) => n !== "r").map(([n]) => {
+      const midi = Tone.Frequency(n).toMidi() + transpose();
+      return FLAT[((midi % 12) + 12) % 12];
+    }).join(" ");
+  }
   function chartHtml() {
     let idx = 0;
     return tune.sections.map((s) => {
       const cells = s.bars.map((b) => {
         const i = idx++;
         const chRaw = typeof b === "string" ? b : (b.ch || "·");
-        const txt = tune.imported ? `${i + 1}` : transposeChord(chRaw, transpose());
-        return `<div class="chart-cell ${i === barIdx ? "cur" : ""}" data-bar="${i}">${txt}</div>`;
+        const chTxt = tune.imported ? `bar ${i + 1}` : transposeChord(chRaw, transpose());
+        const mel = tune.hasMelody ? barMelNames(b) : "";
+        return `<div class="chart-cell ${i === barIdx ? "cur" : ""}" data-bar="${i}">
+          <div class="cc-ch">${chTxt}</div>${mel ? `<div class="cc-mel">${mel}</div>` : ""}
+        </div>`;
       }).join("");
       return `<div class="chart-sec"><div class="chart-label">${s.label}</div><div class="chart-grid">${cells}</div></div>`;
     }).join("");
@@ -355,7 +365,11 @@ export function setupTune(ctx) {
     const sing = root.querySelector("#tune-sing"); if (sing) sing.textContent = `🎤 Sing test (through bar ${barIdx + 1})`;
   }
   function setHud(t) { const e = root.querySelector("#tune-hud"); if (e) e.textContent = t; }
-  function updateHud() { setHud(paused ? "⏸ paused" : `🔁 bar ${barIdx + 1} — rep ${Math.min(rep + 1, REPS_PER_BAR)}/${REPS_PER_BAR}`); }
+  function updateHud() {
+    if (paused) return setHud("⏸ paused");
+    const mel = (line === "melody" && flat[barIdx]) ? barMelNames(flat[barIdx]) : "";
+    setHud(`🔁 bar ${barIdx + 1} · rep ${Math.min(rep + 1, REPS_PER_BAR)}/${REPS_PER_BAR}${mel ? ` — ${mel}` : ""}`);
+  }
 
   function renderDone() {
     stopAll();
