@@ -20,6 +20,15 @@ const LETTER_PC = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 // string; two chords in a bar are space-separated ("Dm7 G7").
 const TUNES = [
   {
+    id: "myideal", name: "My Ideal", quality: "major", tonicPc: 0, bpm: 84, bassOct: 2,
+    sections: [
+      { label: "A", bars: ["Cmaj7 A7", "Dm7", "Bb7 A7", "D7"] },
+      { label: "B", bars: ["G7 Dm7", "G7 E7", "Am7 D7", "Ab7 G7"] },
+      { label: "A", bars: ["Cmaj7 A7", "Dm7", "Bb7 A7", "D7"] },
+      { label: "C", bars: ["Dm7", "Fm7 Bb7", "Cmaj7 B7 Bb7", "Am7 D7 G7", "C6"] },
+    ],
+  },
+  {
     id: "autumn", name: "Autumn Leaves", quality: "minor", tonicPc: 7, bpm: 100, bassOct: 2,
     sections: [
       { label: "A", bars: ["Cm7", "F7", "Bbmaj7", "Ebmaj7", "Am7b5", "D7", "Gm7", "Gm7"] },
