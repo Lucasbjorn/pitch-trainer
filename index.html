@@ -252,23 +252,23 @@
     }
 
     /* Full-width, top-aligned, scrollable app-style tabs. */
-    body.mode-learn, body.mode-practice, body.mode-tune, body.mode-yesno, body.mode-stats { background: var(--bg); }
-    body.mode-learn, body.mode-practice, body.mode-tune, body.mode-yesno, body.mode-stats {
+    body.mode-learn, body.mode-practice, body.mode-tune, body.mode-yesno, body.mode-stats, body.mode-apgames { background: var(--bg); }
+    body.mode-learn, body.mode-practice, body.mode-tune, body.mode-yesno, body.mode-stats, body.mode-apgames {
       justify-content: flex-start;
     }
-    body.mode-learn #note, body.mode-practice #note, body.mode-tune #note, body.mode-yesno #note, body.mode-stats #note,
-    body.mode-learn #debug, body.mode-practice #debug, body.mode-tune #debug, body.mode-yesno #debug, body.mode-stats #debug,
-    body.mode-learn #start, body.mode-practice #start, body.mode-tune #start, body.mode-yesno #start, body.mode-stats #start,
-    body.mode-learn #status, body.mode-practice #status, body.mode-tune #status, body.mode-yesno #status, body.mode-stats #status { display: none !important; }
+    body.mode-learn #note, body.mode-practice #note, body.mode-tune #note, body.mode-yesno #note, body.mode-stats #note, body.mode-apgames #note,
+    body.mode-learn #debug, body.mode-practice #debug, body.mode-tune #debug, body.mode-yesno #debug, body.mode-stats #debug, body.mode-apgames #debug,
+    body.mode-learn #start, body.mode-practice #start, body.mode-tune #start, body.mode-yesno #start, body.mode-stats #start, body.mode-apgames #start,
+    body.mode-learn #status, body.mode-practice #status, body.mode-tune #status, body.mode-yesno #status, body.mode-stats #status, body.mode-apgames #status { display: none !important; }
 
-    #learn, #practice, #tune, #yesno, #stats {
+    #learn, #practice, #tune, #yesno, #stats, #apgames {
       display: none;
       width: 100%;
       max-width: 520px;
       padding: 0 1rem 2rem;
       animation: fadeIn 0.2s ease;
     }
-    #learn.active, #practice.active, #tune.active, #yesno.active, #stats.active { display: block; }
+    #learn.active, #practice.active, #tune.active, #yesno.active, #stats.active, #apgames.active { display: block; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
     .screen-title { font-size: 1.9rem; font-weight: 800; margin: 0.2rem 0 0.3rem; letter-spacing: -0.02em; }
@@ -531,6 +531,26 @@
     .yn-result.wrong { color: var(--bad); }
     .yn-result b { color: var(--accent); }
 
+    /* ---- AP Mini Games ---- */
+    .apg { display: flex; flex-direction: column; align-items: center; text-align: center; }
+    .apg-score { color: var(--muted); font-size: 0.95rem; font-variant-numeric: tabular-nums; margin: 0.2rem 0 0.4rem; }
+    .apg-sub { color: var(--muted); font-size: 0.95rem; margin: 0.5rem 0 0.9rem; min-height: 1.3em; }
+    .apg-sub.ok { color: var(--good); font-weight: 700; }
+    .apg-sub.wrong { color: var(--bad); }
+    .apg-result { min-height: 1.5em; margin: 0.8rem 0; font-size: 0.9rem; font-weight: 600; font-family: ui-monospace, Menlo, monospace; color: #ddd; }
+    .apg-result.ok { color: var(--good); }
+    .apg-result.wrong { color: var(--bad); }
+    .apg-opts { display: flex; gap: 1.3rem; align-items: center; justify-content: center; margin-top: 1rem; flex-wrap: wrap; color: var(--muted); font-size: 0.85rem; }
+    .apg-opts .mini { display: flex; align-items: center; gap: 0.4rem; }
+    .apg-opts select { background: var(--card2); color: var(--text); border: 1px solid var(--line); border-radius: 999px; padding: 0.3rem 0.7rem; font-family: inherit; font-size: 0.85rem; }
+    .apg .note-grid { max-width: 380px; }
+    .apg-live { font-family: ui-monospace, Menlo, monospace; font-size: 1.1rem; color: var(--accent); min-height: 1.4em; }
+    /* Cents needle */
+    .needle { position: relative; width: 100%; max-width: 320px; height: 30px; background: var(--card2); border: 1px solid var(--line); border-radius: 8px; margin: 0.6rem 0; overflow: hidden; }
+    .needle-zone { position: absolute; top: 0; bottom: 0; background: rgba(76,175,80,0.22); }
+    .needle-center { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: var(--muted); transform: translateX(-1px); }
+    .needle-mark { position: absolute; top: 3px; bottom: 3px; width: 4px; border-radius: 2px; background: var(--accent); transform: translateX(-2px); transition: left 0.06s linear, background 0.1s; opacity: 0; }
+
     /* ---- Status ---- */
     #status {
       position: fixed;
@@ -552,6 +572,7 @@
     <button class="mode-btn"        data-mode="learn"     type="button">📚 Learn</button>
     <button class="mode-btn"        data-mode="practice"  type="button">🗓️ Practice</button>
     <button class="mode-btn"        data-mode="tune"      type="button">🎶 Tunes</button>
+    <button class="mode-btn"        data-mode="apgames"   type="button">🧠 AP Games</button>
     <button class="mode-btn"        data-mode="stats"     type="button">📊 Stats</button>
   </div>
 
@@ -646,6 +667,9 @@
 
   <!-- Stats (rendered by stats.js) -->
   <div id="stats"></div>
+
+  <!-- AP Mini Games (rendered by apgames.js) -->
+  <div id="apgames"></div>
 
   <div id="status">Tap Start to begin</div>
 

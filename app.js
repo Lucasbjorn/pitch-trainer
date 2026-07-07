@@ -9,6 +9,7 @@ import { setupPractice } from "./practice.js";
 import { setupTune } from "./tune.js";
 import { setupYesNo } from "./yesno.js";
 import { setupStats } from "./stats.js";
+import { setupApGames } from "./apgames.js";
 
 // ---------------------------------------------------------------------------
 // CONFIG
@@ -151,6 +152,7 @@ const $practice = document.getElementById("practice");
 const $tune     = document.getElementById("tune");
 const $yesno    = document.getElementById("yesno");
 const $stats    = document.getElementById("stats");
+const $apgames  = document.getElementById("apgames");
 
 // ---------------------------------------------------------------------------
 // Shared sample bank (lazy; created on first mode init)
@@ -285,6 +287,10 @@ async function initPassive() {
 
   try {
     setStatus("Starting audio…");
+    // Resume Tone's audio context inside this user gesture. Required because the
+    // app may have preloaded the sample bank on load (opening on Learn), which
+    // creates the context suspended; without this, sample playback is silent.
+    await Tone.start();
     setStatus("Loading samples…");
     await ensureSampleBank();
 
@@ -808,6 +814,7 @@ async function switchMode(newMode) {
   document.body.classList.toggle("mode-tune", newMode === "tune");
   document.body.classList.toggle("mode-yesno", newMode === "yesno");
   document.body.classList.toggle("mode-stats", newMode === "stats");
+  document.body.classList.toggle("mode-apgames", newMode === "apgames");
 
   $modeBtns.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.mode === newMode);
@@ -819,6 +826,7 @@ async function switchMode(newMode) {
   if (oldMode === "tune")     tuneMod.exit();
   if (oldMode === "yesno")    yesnoMod.exit();
   if (oldMode === "stats")    statsMod.exit();
+  if (oldMode === "apgames")  apgamesMod.exit();
 
   // Common teardown of any non-passive UI.
   cancelAutoAdvance();
@@ -831,6 +839,7 @@ async function switchMode(newMode) {
   $tune.classList.remove("active");
   $yesno.classList.remove("active");
   $stats.classList.remove("active");
+  $apgames.classList.remove("active");
   hideAllAnswerGroups();
   $followup.classList.remove("active");
 
@@ -888,6 +897,11 @@ async function switchMode(newMode) {
     hideStartButton();
     $stats.classList.add("active");
     await statsMod.enter();
+  } else if (newMode === "apgames") {
+    await cleanupPassive();
+    hideStartButton();
+    $apgames.classList.add("active");
+    await apgamesMod.enter();
   }
 }
 
@@ -926,6 +940,18 @@ const practiceMod = setupPractice(sharedCtx);
 const tuneMod     = setupTune(sharedCtx);
 const yesnoMod    = setupYesNo(sharedCtx);
 const statsMod    = setupStats(sharedCtx);
+const apgamesMod  = setupApGames(sharedCtx);
+
+// Resume Tone's audio context on the very first user interaction, so audio is
+// unlocked regardless of which tab the app opened on (it opens on Learn, which
+// preloads audio outside a gesture and leaves the context suspended).
+function unlockAudioOnce() {
+  Tone.start().catch(() => {});
+  window.removeEventListener("pointerdown", unlockAudioOnce);
+  window.removeEventListener("keydown", unlockAudioOnce);
+}
+window.addEventListener("pointerdown", unlockAudioOnce);
+window.addEventListener("keydown", unlockAudioOnce);
 
 // ---------------------------------------------------------------------------
 // Wire up
