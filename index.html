@@ -252,23 +252,23 @@
     }
 
     /* Full-width, top-aligned, scrollable app-style tabs. */
-    body.mode-learn, body.mode-practice, body.mode-tune, body.mode-yesno, body.mode-stats, body.mode-apgames { background: var(--bg); }
-    body.mode-learn, body.mode-practice, body.mode-tune, body.mode-yesno, body.mode-stats, body.mode-apgames {
+    body.mode-learn, body.mode-practice, body.mode-tune, body.mode-yesno, body.mode-stats, body.mode-apgames, body.mode-microtone { background: var(--bg); }
+    body.mode-learn, body.mode-practice, body.mode-tune, body.mode-yesno, body.mode-stats, body.mode-apgames, body.mode-microtone {
       justify-content: flex-start;
     }
-    body.mode-learn #note, body.mode-practice #note, body.mode-tune #note, body.mode-yesno #note, body.mode-stats #note, body.mode-apgames #note,
-    body.mode-learn #debug, body.mode-practice #debug, body.mode-tune #debug, body.mode-yesno #debug, body.mode-stats #debug, body.mode-apgames #debug,
-    body.mode-learn #start, body.mode-practice #start, body.mode-tune #start, body.mode-yesno #start, body.mode-stats #start, body.mode-apgames #start,
-    body.mode-learn #status, body.mode-practice #status, body.mode-tune #status, body.mode-yesno #status, body.mode-stats #status, body.mode-apgames #status { display: none !important; }
+    body.mode-learn #note, body.mode-practice #note, body.mode-tune #note, body.mode-yesno #note, body.mode-stats #note, body.mode-apgames #note, body.mode-microtone #note,
+    body.mode-learn #debug, body.mode-practice #debug, body.mode-tune #debug, body.mode-yesno #debug, body.mode-stats #debug, body.mode-apgames #debug, body.mode-microtone #debug,
+    body.mode-learn #start, body.mode-practice #start, body.mode-tune #start, body.mode-yesno #start, body.mode-stats #start, body.mode-apgames #start, body.mode-microtone #start,
+    body.mode-learn #status, body.mode-practice #status, body.mode-tune #status, body.mode-yesno #status, body.mode-stats #status, body.mode-apgames #status, body.mode-microtone #status { display: none !important; }
 
-    #learn, #practice, #tune, #yesno, #stats, #apgames {
+    #learn, #practice, #tune, #yesno, #stats, #apgames, #microtone {
       display: none;
       width: 100%;
       max-width: 520px;
       padding: 0 1rem 2rem;
       animation: fadeIn 0.2s ease;
     }
-    #learn.active, #practice.active, #tune.active, #yesno.active, #stats.active, #apgames.active { display: block; }
+    #learn.active, #practice.active, #tune.active, #yesno.active, #stats.active, #apgames.active, #microtone.active { display: block; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
     .screen-title { font-size: 1.9rem; font-weight: 800; margin: 0.2rem 0 0.3rem; letter-spacing: -0.02em; }
@@ -552,6 +552,15 @@
     .needle-center { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: var(--muted); transform: translateX(-1px); }
     .needle-mark { position: absolute; top: 3px; bottom: 3px; width: 4px; border-radius: 2px; background: var(--accent); transform: translateX(-2px); transition: left 0.06s linear, background 0.1s; opacity: 0; }
 
+    /* ---- Microtone keyboard ---- */
+    .micro-kbd { display: flex; align-items: flex-end; gap: 2px; width: 100%; overflow-x: auto; padding: 0.5rem 0; margin: 0.6rem 0; }
+    .mkey { flex: 1 0 auto; min-width: 20px; border: 1px solid var(--line); border-radius: 0 0 6px 6px; cursor: pointer; touch-action: manipulation; font-size: 0.6rem; color: var(--muted); padding: 0.2rem 0; }
+    .mkey.et { height: 90px; background: var(--card2); color: var(--text); font-weight: 700; }
+    .mkey.qt { height: 58px; background: #14161c; }
+    .mkey.ref { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .mkey.correct { background: var(--good); color: #072; border-color: var(--good); }
+    .mkey.wrong { background: var(--bad); color: #fff; border-color: var(--bad); }
+
     /* ---- Status ---- */
     #status {
       position: fixed;
@@ -574,6 +583,7 @@
     <button class="mode-btn"        data-mode="practice"  type="button">🗓️ Practice</button>
     <button class="mode-btn"        data-mode="tune"      type="button">🎶 Tunes</button>
     <button class="mode-btn"        data-mode="apgames"   type="button">🧠 AP Games</button>
+    <button class="mode-btn"        data-mode="microtone" type="button">🔬 Microtone</button>
     <button class="mode-btn"        data-mode="stats"     type="button">📊 Stats</button>
   </div>
 
@@ -671,6 +681,9 @@
 
   <!-- AP Mini Games (rendered by apgames.js) -->
   <div id="apgames"></div>
+
+  <!-- Microtone (rendered by microtone.js) -->
+  <div id="microtone"></div>
 
   <div id="status">Tap Start to begin</div>
 

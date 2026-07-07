@@ -10,6 +10,7 @@ import { setupTune } from "./tune.js";
 import { setupYesNo } from "./yesno.js";
 import { setupStats } from "./stats.js";
 import { setupApGames } from "./apgames.js";
+import { setupMicrotone } from "./microtone.js";
 
 // ---------------------------------------------------------------------------
 // CONFIG
@@ -153,6 +154,7 @@ const $tune     = document.getElementById("tune");
 const $yesno    = document.getElementById("yesno");
 const $stats    = document.getElementById("stats");
 const $apgames  = document.getElementById("apgames");
+const $microtone = document.getElementById("microtone");
 
 // ---------------------------------------------------------------------------
 // Shared sample bank (lazy; created on first mode init)
@@ -815,6 +817,7 @@ async function switchMode(newMode) {
   document.body.classList.toggle("mode-yesno", newMode === "yesno");
   document.body.classList.toggle("mode-stats", newMode === "stats");
   document.body.classList.toggle("mode-apgames", newMode === "apgames");
+  document.body.classList.toggle("mode-microtone", newMode === "microtone");
 
   $modeBtns.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.mode === newMode);
@@ -827,6 +830,7 @@ async function switchMode(newMode) {
   if (oldMode === "yesno")    yesnoMod.exit();
   if (oldMode === "stats")    statsMod.exit();
   if (oldMode === "apgames")  apgamesMod.exit();
+  if (oldMode === "microtone") microtoneMod.exit();
 
   // Common teardown of any non-passive UI.
   cancelAutoAdvance();
@@ -840,6 +844,7 @@ async function switchMode(newMode) {
   $yesno.classList.remove("active");
   $stats.classList.remove("active");
   $apgames.classList.remove("active");
+  $microtone.classList.remove("active");
   hideAllAnswerGroups();
   $followup.classList.remove("active");
 
@@ -902,6 +907,11 @@ async function switchMode(newMode) {
     hideStartButton();
     $apgames.classList.add("active");
     await apgamesMod.enter();
+  } else if (newMode === "microtone") {
+    await cleanupPassive();
+    hideStartButton();
+    $microtone.classList.add("active");
+    await microtoneMod.enter();
   }
 }
 
@@ -941,6 +951,7 @@ const tuneMod     = setupTune(sharedCtx);
 const yesnoMod    = setupYesNo(sharedCtx);
 const statsMod    = setupStats(sharedCtx);
 const apgamesMod  = setupApGames(sharedCtx);
+const microtoneMod = setupMicrotone(sharedCtx);
 
 // Resume Tone's audio context on the very first user interaction, so audio is
 // unlocked regardless of which tab the app opened on (it opens on Learn, which
