@@ -14,10 +14,26 @@ const KMIN = 1, KMAX = 9;        // JND difficulty: gap = 100/2^k cents (50¢ �
 const KEYS = 25;                 // Micro keyboard: 0..24 quarter-tones (one octave)
 
 const GAMES = [
+  { id: "learn", icon: "🎓", name: "Learn Microtones", blurb: "Guided: absorb the ¼-tone ladder, then master each interval's ♭¼ / exact / ♯¼." },
   { id: "jnd",   icon: "📏", name: "JND",         blurb: "Just-noticeable difference — the gap halves as you keep getting it right." },
   { id: "micro", icon: "🎛️", name: "Quarter-tones", blurb: "Name microtonal intervals on a 24-note keyboard." },
   { id: "onbtw", icon: "🎯", name: "On or Between", blurb: "Is this pitch exactly a note, or wedged between two?" },
 ];
+
+// Interval families for the guided learner, ordered easiest/most-useful first.
+// `qt` = the exact interval in quarter-tones (semitones × 2).
+const FAMILIES = [
+  { name: "Perfect 5th", short: "P5", qt: 14 },
+  { name: "Perfect 4th", short: "P4", qt: 10 },
+  { name: "Major 3rd",   short: "M3", qt: 8 },
+  { name: "Major 6th",   short: "M6", qt: 18 },
+  { name: "Minor 3rd",   short: "m3", qt: 6 },
+  { name: "Minor 6th",   short: "m6", qt: 16 },
+  { name: "Major 2nd",   short: "M2", qt: 4 },
+  { name: "Minor 7th",   short: "m7", qt: 20 },
+  { name: "Octave",      short: "8ve", qt: 24 },
+];
+const FAM_MASTER = 4; // correct tests to master a family and unlock the next
 
 export function setupMicrotone(ctx) {
   const { Tone } = ctx;
@@ -62,7 +78,7 @@ export function setupMicrotone(ctx) {
       </div>`;
     root.querySelectorAll("[data-game]").forEach((b) => b.addEventListener("click", () => open(b.dataset.game)));
   }
-  function open(id) { cancelAuto(); if (id === "jnd") startJnd(); else if (id === "micro") startMicro(); else startOnBtw(); }
+  function open(id) { cancelAuto(); if (id === "learn") startLearn(); else if (id === "jnd") startJnd(); else if (id === "micro") startMicro(); else startOnBtw(); }
 
   // =========================================================================
   // 1. JND — adaptive staircase on pitch difference
@@ -277,6 +293,133 @@ export function setupMicrotone(ctx) {
   }
 
   function setDisabled(ids, d) { ids.forEach((id) => { const e = $(`#${id}`); if (e) e.disabled = d; }); }
+
+  // =========================================================================
+  // Guided learner — absorb the ¼-tone ladder, then master ♭¼/exact/♯¼ per family
+  // =========================================================================
+  let lScore = { correct: 0, total: 0 }, lLast = null, lLadderT = null;
+  let lWheels = localStorage.getItem("pt.micro.learn.wheels") === "1";
+  let lState = lLoad();
+  function lLoad() { try { const s = JSON.parse(localStorage.getItem("pt.micro.learn")); if (s && s.fam) return s; } catch (_) {} return { pool: 1, fam: {} }; }
+  function lSave() { try { localStorage.setItem("pt.micro.learn", JSON.stringify(lState)); } catch (_) {} }
+  function famState(f) { if (!lState.fam[f.short]) lState.fam[f.short] = { studied: false, correct: 0, mastered: false }; return lState.fam[f.short]; }
+  function cueMidi(m) { const b = ctx.getBank(); if (b) b.play(PC[((Math.round(m) % 12) + 12) % 12], {}); }
+  const TUNE = { "-1": "¼ flat", "0": "exact", "1": "¼ sharp" };
+
+  function startLearn() {
+    view = "learn"; lScore = { correct: 0, total: 0 };
+    root.innerHTML = `
+      <div class="apg">
+        ${backBtn("l-back")}
+        <div class="apg-score" id="l-score">0 / 0</div>
+        <div class="apg-sub" id="l-prompt">…</div>
+        <div class="yn-answers" id="l-ans">
+          <button class="answer-btn" data-c="-1">¼ flat ⬇</button>
+          <button class="answer-btn" data-c="0">exact ✓</button>
+          <button class="answer-btn" data-c="1">¼ sharp ⬆</button>
+        </div>
+        <div class="apg-result" id="l-res"></div>
+        <div class="tune-actions">
+          <button class="ghost" id="l-ladder">🎹 ladder</button>
+          <button class="ghost" id="l-replay">replay ↺</button>
+          <button class="ghost" id="l-next" style="visibility:hidden">next →</button>
+        </div>
+        <label class="autonext"><input type="checkbox" id="l-wheels" ${lWheels ? "checked" : ""}> 🛞 training wheels</label>
+      </div>`;
+    $("#l-back").addEventListener("click", () => { view = "home"; renderHome(); });
+    $("#l-ladder").addEventListener("click", lLadder);
+    $("#l-replay").addEventListener("click", lReplay);
+    $("#l-next").addEventListener("click", lNext);
+    $("#l-wheels").addEventListener("change", (e) => { lWheels = e.target.checked; localStorage.setItem("pt.micro.learn.wheels", lWheels ? "1" : "0"); });
+    root.querySelectorAll("#l-ans [data-c]").forEach((b) => b.addEventListener("click", () => onLChoice(+b.dataset.c)));
+    lNew();
+  }
+  function lLadder() {
+    if (lLadderT) return;
+    const rt = 57; // A3, walk one octave of quarter-tones
+    for (let q = 0; q <= 24; q++) tone(centsFreq(midiFreq(rt), q * 50), q * 0.32, 0.3);
+    const sub = $("#l-prompt"); const prev = sub ? sub.textContent : "";
+    if (sub) sub.textContent = "🎹 …absorbing the ¼-tone ladder…";
+    lLadderT = setTimeout(() => { lLadderT = null; if (sub) sub.textContent = prev; }, 24 * 320 + 400);
+  }
+  function activeFamilies() { return FAMILIES.slice(0, lState.pool); }
+  function lNew() {
+    cancelAuto();
+    const fams = activeFamilies();
+    let cand = fams.filter((f) => f.short !== lLast || fams.length === 1);
+    cand.sort((a, b) => { const A = famState(a), B = famState(b); return (A.studied ? 1 : 0) - (B.studied ? 1 : 0) || A.correct - B.correct || Math.random() - 0.5; });
+    const fam = cand[0];
+    const st = famState(fam);
+    lLast = fam.short;
+    const rootMidi = 55 + Math.floor(Math.random() * 8); // G3..D4, relative task
+    $("#l-res").textContent = ""; $("#l-res").className = "apg-result";
+    setDisabled(["l-next"], false);
+    if (!st.studied) {
+      g = { game: "learn", mode: "study", fam, root: rootMidi };
+      $("#l-prompt").innerHTML = `Study the <b>${fam.name}</b> — hear ♭¼, exact, ♯¼. Tap a button to re-hear each.`;
+      setLNext(true, "test me →");
+      lStudyPlay();
+    } else {
+      const tuning = [-1, 0, 1][Math.floor(Math.random() * 3)];
+      g = { game: "learn", mode: "test", fam, root: rootMidi, tuning, done: false };
+      $("#l-prompt").innerHTML = `<b>${fam.name}</b> — was the second note ♭¼, exact, or ♯¼?`;
+      root.querySelectorAll("#l-ans [data-c]").forEach((b) => (b.disabled = false));
+      setLNext(false);
+      lPlay(g.tuning);
+    }
+    $("#l-score").textContent = `pool ${lState.pool}/${FAMILIES.length} · ${fam.short}`;
+  }
+  function setLNext(vis, label) { const e = $("#l-next"); if (e) { e.style.visibility = vis ? "visible" : "hidden"; if (label) e.textContent = label; else e.textContent = "next →"; } }
+  function topMidi(fam, c) { return g.root + (fam.qt + c) / 2; }
+  function playInterval(c, at0 = 0) {
+    const rf = midiFreq(g.root);
+    tone(rf, at0, 0.6);
+    if (lWheels) cueMidi(g.root);
+    tone(centsFreq(rf, (g.fam.qt + c) * 50), at0 + 0.9, 0.6);
+    if (lWheels && c === 0) setTimeout(() => cueMidi(topMidi(g.fam, 0)), (at0 + 0.9) * 1000); // exact top is a real note
+  }
+  function lPlay(tuning) { playInterval(tuning); }
+  function lReplay() { if (!g) return; if (g.mode === "study") lStudyPlay(); else lPlay(g.tuning); }
+  function lStudyPlay() {
+    const rf = midiFreq(g.root);
+    tone(rf, 0, 0.5); if (lWheels) cueMidi(g.root);
+    [-1, 0, 1].forEach((c, i) => {
+      const at = 0.8 + i * 0.85;
+      tone(centsFreq(rf, (g.fam.qt + c) * 50), at, 0.5);
+      if (lWheels && c === 0) setTimeout(() => cueMidi(topMidi(g.fam, 0)), at * 1000);
+    });
+  }
+  function onLChoice(c) {
+    if (!g) return;
+    if (g.mode === "test" && !g.done) { lAnswer(c); return; }
+    playInterval(c); // study preview, or post-answer comparison
+  }
+  function lNext() {
+    if (g && g.mode === "study") { famState(g.fam).studied = true; lSave(); }
+    lNew();
+  }
+  function lAnswer(c) {
+    g.done = true;
+    root.querySelectorAll("#l-ans [data-c]").forEach((b) => (b.disabled = true));
+    const st = famState(g.fam);
+    const correct = c === g.tuning;
+    lScore.total++; if (correct) lScore.correct++;
+    $("#l-score").textContent = `${lScore.correct} / ${lScore.total}`;
+    let grew = "";
+    if (correct) {
+      st.correct++;
+      if (st.correct >= FAM_MASTER && !st.mastered) {
+        st.mastered = true;
+        if (lState.pool < FAMILIES.length) { lState.pool++; grew = ` — unlocked ${FAMILIES[lState.pool - 1].name}!`; }
+      }
+    }
+    lSave();
+    $("#l-res").textContent = `${correct ? "✅" : "❌"} it was ${TUNE[String(g.tuning)]}${grew} — tap a button to compare`;
+    $("#l-res").className = "apg-result " + (correct ? "ok" : "wrong");
+    if (g.tuning === 0 && lWheels) cueMidi(topMidi(g.fam, 0));
+    setLNext(true);
+    if (correct) autoTimer = setTimeout(lNew, 1500); // auto only when right; wrong lets you explore
+  }
 
   return {
     async enter() {
