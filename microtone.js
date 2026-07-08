@@ -26,7 +26,15 @@ export function setupMicrotone(ctx) {
 
   let synth = null;
   function ensureSynth() {
-    if (!synth) synth = new Tone.Synth({ oscillator: { type: "sine" }, envelope: { attack: 0.01, decay: 0.12, sustain: 0.85, release: 0.12 } }).toDestination();
+    if (!synth) {
+      // Polyphonic so scheduled/overlapping tones don't retrigger-glitch, and a
+      // gentle sine-curve attack removes the click/buzz at note onset.
+      synth = new Tone.PolySynth(Tone.Synth, {
+        oscillator: { type: "sine" },
+        envelope: { attack: 0.03, attackCurve: "sine", decay: 0.05, sustain: 0.9, release: 0.16, releaseCurve: "linear" },
+      }).toDestination();
+      synth.volume.value = -6; // headroom so it never clips (which also buzzes)
+    }
     return synth;
   }
   function midiFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
@@ -242,7 +250,7 @@ export function setupMicrotone(ctx) {
     cancelAuto();
     const midi = 12 * (4 + Math.floor(Math.random() * 3)) + Math.floor(Math.random() * 12); // ~C3..B5
     const onNote = Math.random() < 0.5;
-    const off = onNote ? 0 : (Math.random() < 0.5 ? -1 : 1) * (25 + Math.floor(Math.random() * 26)); // ±25..50¢
+    const off = onNote ? 0 : (Math.random() < 0.5 ? -1 : 1) * 50; // exactly between two notes (±50¢ = quarter tone)
     g = { game: "onbtw", midi, onNote, off, done: false };
     $("#o-res").textContent = ""; $("#o-res").className = "apg-result";
     $("#o-next").style.visibility = "hidden";
@@ -261,7 +269,7 @@ export function setupMicrotone(ctx) {
       const bank = ctx.getBank(); if (bank) bank.play(PC[((g.midi % 12) + 12) % 12], {}); // PP-MIDI cue on an exact note
     } else {
       const lo = g.off > 0 ? g.midi : g.midi - 1;
-      $("#o-res").textContent = `${correct ? "✅" : "❌"} between ${PC[((lo % 12) + 12) % 12]} and ${PC[(((lo + 1) % 12) + 12) % 12]} (${g.off > 0 ? "+" : ""}${g.off}¢)`;
+      $("#o-res").textContent = `${correct ? "✅" : "❌"} exactly between ${PC[((lo % 12) + 12) % 12]} and ${PC[(((lo + 1) % 12) + 12) % 12]} (±50¢)`;
     }
     $("#o-res").className = "apg-result " + (correct ? "ok" : "wrong");
     $("#o-next").style.visibility = "visible";
