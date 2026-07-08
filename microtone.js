@@ -119,6 +119,7 @@ export function setupMicrotone(ctx) {
   // 2. Micro — quarter-tone interval ID on a 24-note keyboard
   // =========================================================================
   let mScore = { correct: 0, total: 0 }, mNums = false;
+  let mWheels = localStorage.getItem("pt.micro.wheels") === "1";
   function startMicro() {
     view = "micro"; mScore = { correct: 0, total: 0 };
     root.innerHTML = `
@@ -132,20 +133,27 @@ export function setupMicrotone(ctx) {
           <button class="ghost" id="m-replay">replay ↺</button>
           <button class="ghost" id="m-next" style="visibility:hidden">next →</button>
         </div>
-        <label class="autonext"><input type="checkbox" id="m-nums" ${mNums ? "checked" : ""}> show interval numbers</label>
+        <div class="apg-opts">
+          <label class="autonext"><input type="checkbox" id="m-nums" ${mNums ? "checked" : ""}> interval numbers</label>
+          <label class="autonext"><input type="checkbox" id="m-wheels" ${mWheels ? "checked" : ""}> 🛞 training wheels</label>
+        </div>
       </div>`;
     $("#m-back").addEventListener("click", () => { view = "home"; renderHome(); });
     $("#m-replay").addEventListener("click", mPlay);
     $("#m-next").addEventListener("click", mNew);
     $("#m-nums").addEventListener("change", (e) => { mNums = e.target.checked; renderKbd(); });
+    $("#m-wheels").addEventListener("change", (e) => { mWheels = e.target.checked; localStorage.setItem("pt.micro.wheels", mWheels ? "1" : "0"); });
     mNew();
   }
+  // Training wheels: PP-MIDI cue alongside any IN-TUNE (ET, even index) pitch.
+  function ppCue(q) { if (mWheels && q % 2 === 0) { const b = ctx.getBank(); if (b) b.play(PC[((q / 2) % 12 + 12) % 12], {}); } }
+  function playKey(q) { tone(centsFreq(midiFreq(M_BASE), q * 50), 0, 0.6); ppCue(q); }
   const M_BASE = 60; // fixed keyboard: C4 at the left, never shifts
   function mNew() {
     cancelAuto();
-    // ref = the given (highlighted) key; test = the one to identify. Both are
-    // absolute keys on the FIXED keyboard (quarter-tone index 0..23).
-    const ref = Math.floor(Math.random() * 24);
+    // ref = the given (highlighted) key — ALWAYS a real note (even index, never
+    // a quarter tone). test = the one to identify (any of 0..23).
+    const ref = 2 * Math.floor(Math.random() * 12);
     let test; do { test = Math.floor(Math.random() * 24); } while (test === ref);
     g = { game: "micro", ref, test, done: false, picked: -1 };
     $("#m-res").textContent = ""; $("#m-res").className = "apg-result";
@@ -156,7 +164,8 @@ export function setupMicrotone(ctx) {
   function mPlay() {
     const f0 = midiFreq(M_BASE);
     tone(centsFreq(f0, g.ref * 50), 0, 0.6);   // reference (highlighted)
-    tone(centsFreq(f0, g.test * 50), 0.9, 0.6); // test
+    ppCue(g.ref);                               // training wheels on the reference
+    tone(centsFreq(f0, g.test * 50), 0.9, 0.6); // test (pure tone — not revealed)
   }
   function etLabel(j) { return mNums ? `${j}` : PC[j]; } // fixed C..B labels
   function keyClass(q) {
@@ -176,19 +185,24 @@ export function setupMicrotone(ctx) {
       return `<button class="${keyClass(2 * j + 1)}" data-q="${2 * j + 1}" style="left:calc(${left}% - 11px)"></button>`;
     }).join("");
     kbd.innerHTML = `<div class="mkbd-et">${et}</div>${qt}`;
-    kbd.querySelectorAll("[data-q]").forEach((b) => b.addEventListener("click", () => mAnswer(+b.dataset.q)));
+    kbd.querySelectorAll("[data-q]").forEach((b) => b.addEventListener("click", () => onKey(+b.dataset.q)));
+  }
+  function onKey(q) {
+    if (!g) return;
+    playKey(q);            // every tap sounds — hear your guess, or explore freely
+    if (g.done) return;    // already answered → just exploring, don't re-grade
+    mAnswer(q);
   }
   function mAnswer(q) {
-    if (!g || g.done) return;
     g.done = true; g.picked = q;
     const correct = q === g.test;
     mScore.total++; if (correct) mScore.correct++;
     $("#m-score").textContent = `${mScore.correct} / ${mScore.total}`;
-    $("#m-res").textContent = `${correct ? "✅" : "❌"} ${qtLabel(g.test - g.ref)}`;
+    $("#m-res").textContent = `${correct ? "✅" : "❌"} ${qtLabel(g.test - g.ref)}${correct ? "" : " — tap around to compare"}`;
     $("#m-res").className = "apg-result " + (correct ? "ok" : "wrong");
     renderKbd();
     $("#m-next").style.visibility = "visible";
-    autoTimer = setTimeout(mNew, 1600);
+    if (correct) autoTimer = setTimeout(mNew, 1600); // auto-advance only when right
   }
   function qtLabel(d) {
     const dir = d >= 0 ? "up" : "down";
