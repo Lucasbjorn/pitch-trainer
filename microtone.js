@@ -294,6 +294,22 @@ export function setupMicrotone(ctx) {
 
   function setDisabled(ids, d) { ids.forEach((id) => { const e = $(`#${id}`); if (e) e.disabled = d; }); }
 
+  // ---- MIDI keyboard input ----
+  // Micro: single key = that note; two adjacent keys (played together) = the
+  // quarter-tone between them. Learn: play the exact note = "exact"; the two
+  // keys straddling it = ♭¼ (upper is the exact) / ♯¼ (lower is the exact).
+  function midiRoute(msg) {
+    if (!g) return;
+    if (g.game === "micro") {
+      if (msg.kind === "note") { const q = (msg.midi - M_BASE) * 2; if (q >= 0 && q <= 23) onKey(q); }
+      else { const q = (msg.low - M_BASE) * 2 + 1; if (q >= 1 && q <= 23) onKey(q); }
+    } else if (g.game === "learn") {
+      const exact = Math.round(topMidi(g.fam, 0));
+      if (msg.kind === "note") { if (msg.midi === exact) onLChoice(0); }
+      else { if (msg.high === exact) onLChoice(-1); else if (msg.low === exact) onLChoice(1); }
+    }
+  }
+
   // =========================================================================
   // Guided learner — absorb the ¼-tone ladder, then master ♭¼/exact/♯¼ per family
   // =========================================================================
@@ -425,8 +441,9 @@ export function setupMicrotone(ctx) {
     async enter() {
       active = true; view = "home"; renderHome();
       ctx.setStatus("Microtone");
+      if (ctx.setMidiHandler) ctx.setMidiHandler(midiRoute);
       try { await ctx.ensureSampleBank(); await Tone.start(); ready = true; } catch (_) {}
     },
-    exit() { active = false; cancelAuto(); g = null; },
+    exit() { active = false; cancelAuto(); g = null; if (ctx.clearMidiHandler) ctx.clearMidiHandler(); },
   };
 }

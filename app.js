@@ -931,6 +931,56 @@ function switchSubmode(newSubmode) {
 }
 
 // ---------------------------------------------------------------------------
+// Web MIDI input (Chrome on macOS). A module can register a handler via
+// ctx.setMidiHandler; note-ons are buffered for a short grace window so two
+// adjacent keys pressed together resolve to the quarter-tone between them.
+// When no module handler is set, a single note falls back to clicking a
+// matching pitch-class answer button in the active tab.
+// ---------------------------------------------------------------------------
+let midiHandler = null;
+const MIDI_GRACE = 180;         // ms window to detect a "simultaneous" two-key press
+let midiBuf = [];
+let midiTimer = null;
+
+function midiNoteOn(note) {
+  midiBuf.push(note);
+  if (midiTimer) clearTimeout(midiTimer);
+  midiTimer = setTimeout(resolveMidi, MIDI_GRACE);
+}
+function resolveMidi() {
+  midiTimer = null;
+  const notes = [...new Set(midiBuf)].sort((a, b) => a - b);
+  midiBuf = [];
+  if (!notes.length) return;
+  if (notes.length >= 2) {
+    for (let i = 0; i < notes.length - 1; i++) {
+      if (notes[i + 1] - notes[i] === 1) return dispatchMidi({ kind: "pair", low: notes[i], high: notes[i + 1] });
+    }
+  }
+  dispatchMidi({ kind: "note", midi: notes[notes.length - 1] });
+}
+function dispatchMidi(msg) {
+  if (midiHandler) { try { midiHandler(msg); } catch (_) {} return; }
+  if (msg.kind !== "note") return; // global fallback only handles single notes
+  const pc = ((msg.midi % 12) + 12) % 12;
+  const cont = document.querySelector("#learn.active,#apgames.active,#quiz.active,#intervals.active,#yesno.active,#microtone.active") || document.body;
+  const btn = cont.querySelector(`[data-pc="${pc}"]`) || cont.querySelector(`[data-pc="${PITCH_NAMES[pc]}"]`);
+  if (btn) btn.click();
+}
+function initMidi() {
+  if (!navigator.requestMIDIAccess) return;
+  navigator.requestMIDIAccess().then((access) => {
+    const attach = () => access.inputs.forEach((inp) => { inp.onmidimessage = onMidiMessage; });
+    attach();
+    access.onstatechange = attach;
+  }).catch(() => {});
+}
+function onMidiMessage(e) {
+  const [status, note, vel] = e.data;
+  if ((status & 0xf0) === 0x90 && vel > 0) midiNoteOn(note);
+}
+
+// ---------------------------------------------------------------------------
 // Learn + Practice modules — share audio + helpers via a small ctx object.
 // ---------------------------------------------------------------------------
 const sharedCtx = {
@@ -944,6 +994,8 @@ const sharedCtx = {
   midiToNoteName,
   midiToPc,
   setStatus,
+  setMidiHandler: (fn) => { midiHandler = fn; },
+  clearMidiHandler: () => { midiHandler = null; midiBuf = []; if (midiTimer) { clearTimeout(midiTimer); midiTimer = null; } },
 };
 const learnMod    = setupLearn(sharedCtx);
 const practiceMod = setupPractice(sharedCtx);
@@ -1022,3 +1074,6 @@ $intervalsNext.addEventListener("click", () => {
 
 // Open on the Learn tab by default.
 switchMode("learn");
+
+// Connect any MIDI keyboards (Chrome on macOS).
+initMidi();
