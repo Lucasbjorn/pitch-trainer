@@ -140,51 +140,63 @@ export function setupMicrotone(ctx) {
     $("#m-nums").addEventListener("change", (e) => { mNums = e.target.checked; renderKbd(); });
     mNew();
   }
+  const M_BASE = 60; // fixed keyboard: C4 at the left, never shifts
   function mNew() {
     cancelAuto();
-    const base = 55 + Math.floor(Math.random() * 6);  // G3..C4
-    const t = 1 + Math.floor(Math.random() * (KEYS - 1)); // 1..24 quarter-tones up
-    g = { game: "micro", base, t, done: false, picked: -1 };
+    // ref = the given (highlighted) key; test = the one to identify. Both are
+    // absolute keys on the FIXED keyboard (quarter-tone index 0..23).
+    const ref = Math.floor(Math.random() * 24);
+    let test; do { test = Math.floor(Math.random() * 24); } while (test === ref);
+    g = { game: "micro", ref, test, done: false, picked: -1 };
     $("#m-res").textContent = ""; $("#m-res").className = "apg-result";
     $("#m-next").style.visibility = "hidden";
     renderKbd();
     mPlay();
   }
   function mPlay() {
-    const bf = midiFreq(g.base);
-    tone(bf, 0, 0.6);
-    tone(centsFreq(bf, g.t * 50), 0.9, 0.6);
+    const f0 = midiFreq(M_BASE);
+    tone(centsFreq(f0, g.ref * 50), 0, 0.6);   // reference (highlighted)
+    tone(centsFreq(f0, g.test * 50), 0.9, 0.6); // test
   }
-  function keyLabel(i) {
-    if (mNums) return `${i}`;
-    return (i % 2 === 0) ? PC[(g.base + i / 2) % 12] : "·";
+  function etLabel(j) { return mNums ? `${j}` : PC[j]; } // fixed C..B labels
+  function keyClass(q) {
+    return ["mkey", q % 2 === 0 ? "et" : "qt",
+      q === g.ref ? "ref" : "",
+      g.done && q === g.test ? "correct" : "",
+      g.done && q === g.picked && q !== g.test ? "wrong" : ""].join(" ");
   }
   function renderKbd() {
     const kbd = $("#m-kbd"); if (!kbd) return;
-    kbd.innerHTML = Array.from({ length: KEYS }, (_, i) => {
-      const cls = ["mkey", i % 2 === 0 ? "et" : "qt", i === 0 ? "ref" : "",
-        g.done && i === g.t ? "correct" : "", g.done && i === g.picked && i !== g.t ? "wrong" : ""].join(" ");
-      return `<button class="${cls}" data-i="${i}">${keyLabel(i)}</button>`;
+    // Bottom row: 12 equal "white" keys (the ET notes C..B), quarter index 2j.
+    const et = Array.from({ length: 12 }, (_, j) =>
+      `<button class="${keyClass(2 * j)}" data-q="${2 * j}">${etLabel(j)}</button>`).join("");
+    // Overlay: 12 "black"-style quarter keys, straddling each ET key's right edge.
+    const qt = Array.from({ length: 12 }, (_, j) => {
+      const left = (j + 1) * (100 / 12);
+      return `<button class="${keyClass(2 * j + 1)}" data-q="${2 * j + 1}" style="left:calc(${left}% - 11px)"></button>`;
     }).join("");
-    kbd.querySelectorAll("[data-i]").forEach((b) => b.addEventListener("click", () => mAnswer(+b.dataset.i)));
+    kbd.innerHTML = `<div class="mkbd-et">${et}</div>${qt}`;
+    kbd.querySelectorAll("[data-q]").forEach((b) => b.addEventListener("click", () => mAnswer(+b.dataset.q)));
   }
-  function mAnswer(i) {
-    if (!g || g.done || i === 0) return;
-    g.done = true; g.picked = i;
-    const correct = i === g.t;
+  function mAnswer(q) {
+    if (!g || g.done) return;
+    g.done = true; g.picked = q;
+    const correct = q === g.test;
     mScore.total++; if (correct) mScore.correct++;
     $("#m-score").textContent = `${mScore.correct} / ${mScore.total}`;
-    $("#m-res").textContent = `${correct ? "✅" : "❌"} ${qtLabel(g.t)}`;
+    $("#m-res").textContent = `${correct ? "✅" : "❌"} ${qtLabel(g.test - g.ref)}`;
     $("#m-res").className = "apg-result " + (correct ? "ok" : "wrong");
     renderKbd();
     $("#m-next").style.visibility = "visible";
     autoTimer = setTimeout(mNew, 1600);
   }
-  function qtLabel(t) {
+  function qtLabel(d) {
+    const dir = d >= 0 ? "up" : "down";
+    const t = Math.abs(d);
     const semi = t / 2;
-    if (Number.isInteger(semi)) return `${IVL[semi]} (${t} quarter-tones)`;
+    if (Number.isInteger(semi)) return `${IVL[semi]} ${dir} (${t} q-tones)`;
     const lo = Math.floor(semi);
-    return `between ${IVL[lo]} and ${IVL[lo + 1]} — ¼-tone (${t} quarter-tones)`;
+    return `${dir}, between ${IVL[lo]} and ${IVL[lo + 1]} — ¼-tone (${t} q-tones)`;
   }
 
   // =========================================================================
