@@ -74,6 +74,7 @@ const SET_BUMP = 0.4;         // (legacy) per-set crutch restored on a wrong ans
 const SUPPORT_MAX     = 5;    // crutch level 0..5 (0 = clean, no crutch)
 const STAIR_DOWN      = 3;    // correct-in-a-row to lower support (3-down/1-up)
 const CLEAN_TO_MASTER = 2;    // clean (crutch-off) correct tests to master an item
+const ROTATE_AFTER    = 3;    // correct-in-a-row on an item before it rotates out (keeps the set fresh)
 const REVIEW_GAP      = 18;   // test-rounds before a mastered item is due for review
 const REVIEW_PROB     = 0.35; // chance a freed slot pulls a due review item vs a new key
 
@@ -549,7 +550,14 @@ export function setupLearn(ctx) {
     if (choice === null) {
       const fresh = [];
       for (let r = 0; r < 12; r++) { if (inUse.has(r)) continue; if (!getItem(pk, tk, r).mastered) fresh.push(r); }
-      if (fresh.length) { fresh.sort((a, b) => getItem(pk, tk, a).seen - getItem(pk, tk, b).seen || Math.random() - 0.5); choice = fresh[0]; }
+      if (fresh.length) {
+        fresh.sort((a, b) => {
+          const A = getItem(pk, tk, a), B = getItem(pk, tk, b);
+          const ad = A.dueAt > prog.discT ? 1 : 0, bd = B.dueAt > prog.discT ? 1 : 0; // not-yet-due last
+          return ad - bd || A.seen - B.seen || Math.random() - 0.5;
+        });
+        choice = fresh[0];
+      }
     }
     if (choice === null) {
       const any = [];
@@ -633,9 +641,17 @@ export function setupLearn(ctx) {
     session.done = true;
     if (correct) {
       sup.streak = (sup.streak || 0) + 1;
-      if (sup.streak >= STAIR_DOWN) { sup.L = Math.max(0, sup.L - 1); sup.streak = 0; } // 3-down
-      if (item.mastered) { item.dueAt = prog.discT + REVIEW_GAP * 2; swapSlot(pk, tk, target); } // passed a retention review
-      else if (cleanTest) { item.clean = (item.clean || 0) + 1; if (item.clean >= CLEAN_TO_MASTER) { item.mastered = true; item.dueAt = prog.discT + REVIEW_GAP; swapSlot(pk, tk, target); } }
+      if (sup.streak >= STAIR_DOWN) { sup.L = Math.max(0, sup.L - 1); sup.streak = 0; } // 3-down staircase
+      item.streak = (item.streak || 0) + 1;
+      if (cleanTest) { item.clean = (item.clean || 0) + 1; if (item.clean >= CLEAN_TO_MASTER) item.mastered = true; }
+      // Rotate the item OUT after a few correct-in-a-row (regardless of crutch)
+      // so the on-screen set keeps changing and cycles through all 12 keys.
+      // Mastered items schedule a longer review before they can return.
+      if (item.mastered || item.streak >= ROTATE_AFTER) {
+        item.dueAt = prog.discT + (item.mastered ? REVIEW_GAP * 2 : REVIEW_GAP);
+        item.streak = 0;
+        swapSlot(pk, tk, target);
+      }
       saveProg();
       setPrompt(`✅ ${LETTERS[target]} — ${D.label(root)}`);
       setScore(discScore(pk, tk, sup));
@@ -643,8 +659,8 @@ export function setupLearn(ctx) {
       session.lastTarget = target;
       showNext(true); maybeAutoNext();
     } else {
-      sup.L = Math.min(SUPPORT_MAX, sup.L + 1); sup.streak = 0; // 1-up
-      item.clean = 0; item.mastered = false; item.seen = 0;     // re-study it later (spaced)
+      sup.L = Math.min(SUPPORT_MAX, sup.L + 1); sup.streak = 0; // 1-up staircase
+      item.clean = 0; item.streak = 0; item.mastered = false; item.seen = 0; // re-study it later (spaced)
       saveProg();
       setPrompt(`❌ was ${LETTERS[target]} — ${D.label(root)}`);
       setTimeout(() => playShape(root, session.oct, session.offsets, FORCE_DB), 350); // corrective, crutch on
