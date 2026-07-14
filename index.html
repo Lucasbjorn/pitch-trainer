@@ -628,6 +628,36 @@
     .lb-score { color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums; }
     .lb-empty { color: var(--muted); text-align: center; padding: 1.5rem; }
 
+    /* Social: feed + DMs */
+    .soc { max-width: 440px; margin: 0 auto; }
+    .soc-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+    .soc-top .dg-x { font-size: 1.6rem; }
+    .soc-title { font-weight: 800; font-size: 1.2rem; }
+    .soc-new { background: var(--text); color: var(--bg); border: none; width: 2rem; height: 2rem; border-radius: 50%; font-size: 1.2rem; font-weight: 700; cursor: pointer; }
+    .soc-compose { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+    .soc-compose input { flex: 1; padding: 0.7rem 0.9rem; border-radius: 12px; border: 1px solid var(--line); background: var(--card2); color: var(--text); font-family: inherit; font-size: 0.95rem; }
+    .soc-compose button { padding: 0 1.1rem; border-radius: 12px; border: none; background: var(--accent); color: #fff; font-weight: 700; cursor: pointer; }
+    .soc-list { display: flex; flex-direction: column; gap: 0.7rem; }
+    .feed-item { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 0.9rem; }
+    .feed-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; }
+    .feed-name { font-weight: 700; }
+    .feed-ago { color: var(--muted); font-size: 0.8rem; margin-left: auto; }
+    .feed-body { font-size: 0.95rem; line-height: 1.4; }
+    .feed-cmt { margin-top: 0.5rem; background: none; border: none; color: var(--muted); font-size: 0.8rem; cursor: pointer; padding: 0; }
+    .feed-comments { margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 0.4rem; }
+    .cmt { font-size: 0.88rem; line-height: 1.35; }
+    .cmt b { color: var(--accent); }
+    .cmt-add { display: flex; gap: 0.4rem; margin-top: 0.3rem; }
+    .cmt-add input { flex: 1; padding: 0.5rem 0.7rem; border-radius: 10px; border: 1px solid var(--line); background: var(--card2); color: var(--text); font-size: 0.85rem; }
+    .cmt-add button { padding: 0 0.8rem; border-radius: 10px; border: none; background: var(--card2); color: var(--text); font-weight: 700; cursor: pointer; }
+    .dm-thread { display: flex; align-items: center; gap: 0.6rem; width: 100%; text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 0.7rem 0.9rem; color: var(--text); cursor: pointer; }
+    .dm-last { color: var(--muted); font-size: 0.85rem; margin-left: auto; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dm-msgs { display: flex; flex-direction: column; gap: 0.4rem; height: 60vh; overflow-y: auto; padding: 0.5rem 0; }
+    .bubble { max-width: 78%; padding: 0.55rem 0.8rem; border-radius: 14px; background: var(--card2); align-self: flex-start; font-size: 0.92rem; line-height: 1.35; }
+    .bubble.mine { align-self: flex-end; background: var(--accent); color: #fff; }
+    .hub-nav { display: flex; gap: 0.6rem; margin: 1rem 0 0; }
+    .hub-nav button { flex: 1; padding: 0.7rem; border-radius: 14px; border: 1px solid var(--line); background: var(--card2); color: var(--text); font-weight: 700; cursor: pointer; }
+
     /* Daily game */
     .dg { max-width: 440px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; text-align: center; }
     .dg-x { align-self: flex-start; background: none; border: none; color: var(--muted); font-size: 1.4rem; cursor: pointer; padding: 0.2rem 0.5rem; }

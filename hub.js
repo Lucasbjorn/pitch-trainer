@@ -1,7 +1,11 @@
 // Home hub (NYT-mini style) + daily games. The clean iPhone-first landing;
 // "Lucas's Lab" reveals the full trainer suite underneath.
 
-import { socialConfigured, getSession, signInGoogle, signOut, getProfile, saveProfile, submitScore, leaderboard } from "./social.js";
+import {
+  socialConfigured, getSession, signInGoogle, signOut, getProfile, saveProfile, submitScore, leaderboard,
+  myId, listProfiles, createPost, fetchFeed, fetchComments, addComment,
+  listThreads, fetchThread, sendMessage, subscribeChanges,
+} from "./social.js";
 import { DAILY_RUNNERS } from "./dailygames.js";
 
 const DAYMS = 86400000;
@@ -74,12 +78,15 @@ export function setupHub(ctx) {
         </div>
         <div class="hub-section-label">Today's puzzles</div>
         <div class="hub-cards">${cards}</div>
+        ${socialConfigured() ? `<div class="hub-nav"><button data-feed>🗞 Feed</button><button data-dms>✉️ Messages</button></div>` : ""}
         <button class="hub-lab" data-lab>🧪 Lucas's Lab — all the trainers ›</button>
         <div class="hub-foot">${socialConfigured() ? "One attempt per game per day." : "One attempt per game per day. Leaderboard coming soon."}</div>
       </div>`;
 
     home.querySelectorAll("[data-daily]").forEach((b) => b.addEventListener("click", () => ctx.goDaily(b.dataset.daily)));
     home.querySelector("[data-lab]").addEventListener("click", () => ctx.goLucas());
+    const fb = home.querySelector("[data-feed]"); if (fb) fb.addEventListener("click", () => ctx.goDaily("feed"));
+    const mb = home.querySelector("[data-dms]"); if (mb) mb.addEventListener("click", () => ctx.goDaily("dms"));
     refreshUser();
   }
 
@@ -156,6 +163,8 @@ export function setupHub(ctx) {
   }
   async function startDaily(id) {
     try { await Tone.start(); } catch (_) {}
+    if (id === "feed") return renderFeed();
+    if (id === "dms") return renderDMs();
     const rec = loadDaily(id);
     if (rec.date === todayStr()) return renderDailyDone(id, rec, false);
     if (id === "jnd") {
@@ -275,6 +284,137 @@ export function setupHub(ctx) {
         <span class="lb-score">${r.label || r.score}</span>
       </div>`;
     }).join("");
+  }
+
+  // =========================================================================
+  // SOCIAL: feed + comments + DMs
+  // =========================================================================
+  let rtChannel = null;
+  function stopRT() { if (rtChannel) { try { rtChannel.unsubscribe(); } catch (_) {} rtChannel = null; } }
+  function backHome() { stopRT(); ctx.goHome(); }
+  function ago(t) {
+    const s = Math.floor((Date.now() - new Date(t).getTime()) / 1000);
+    if (s < 60) return "just now";
+    if (s < 3600) return `${Math.floor(s / 60)}m`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h`;
+    return `${Math.floor(s / 86400)}d`;
+  }
+  function esc(s) { return (s || "").replace(/[&<>]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[m])); }
+
+  async function renderFeed() {
+    const m = await loadMe();
+    if (!m || !m.session) { requireSignIn("the feed"); return; }
+    daily.innerHTML = `
+      <div class="soc">
+        <div class="soc-top"><button class="dg-x" data-home>‹</button><div class="soc-title">Feed</div><div style="width:32px"></div></div>
+        <div class="soc-compose"><input id="feed-post" placeholder="Say something…" maxlength="240"><button id="feed-send">Post</button></div>
+        <div class="soc-list" id="feed-list">loading…</div>
+      </div>`;
+    daily.querySelector("[data-home]").addEventListener("click", backHome);
+    daily.querySelector("#feed-send").addEventListener("click", async () => {
+      const inp = daily.querySelector("#feed-post"); const v = inp.value.trim();
+      if (!v) return; inp.value = ""; await createPost(v); loadFeedList();
+    });
+    stopRT(); rtChannel = await subscribeChanges(() => loadFeedList());
+    loadFeedList();
+  }
+  async function loadFeedList() {
+    const el = daily.querySelector("#feed-list"); if (!el) return;
+    const items = await fetchFeed(40);
+    if (!items.length) { el.innerHTML = `<div class="lb-empty">No activity yet. Post something or play a game!</div>`; return; }
+    el.innerHTML = items.map((it) => {
+      const u = it.user || {};
+      const line = it.kind === "score"
+        ? `scored <b>${esc(it.label)}</b> on ${esc(gameMeta(it.game_id).title)}`
+        : `${esc(it.body)}`;
+      return `<div class="feed-item" data-tt="${it.kind}" data-ti="${it.id}">
+        <div class="feed-head">
+          ${u.avatar_url ? `<img class="lb-pic" src="${u.avatar_url}">` : `<span class="lb-pic ph"></span>`}
+          <span class="feed-name">${esc(u.username || "player")}</span>
+          <span class="feed-ago">${ago(it.t)}</span>
+        </div>
+        <div class="feed-body">${line}</div>
+        <button class="feed-cmt" data-cmt>💬 comments</button>
+        <div class="feed-comments" hidden></div>
+      </div>`;
+    }).join("");
+    el.querySelectorAll(".feed-item").forEach((item) => {
+      item.querySelector("[data-cmt]").addEventListener("click", () => toggleComments(item, item.dataset.tt, item.dataset.ti));
+    });
+  }
+  async function toggleComments(item, tt, ti) {
+    const box = item.querySelector(".feed-comments");
+    if (!box.hidden) { box.hidden = true; return; }
+    box.hidden = false; box.innerHTML = "loading…";
+    const cs = await fetchComments(tt, ti);
+    box.innerHTML = cs.map((c) => `<div class="cmt"><b>${esc((c.profiles || {}).username || "player")}</b> ${esc(c.body)}</div>`).join("")
+      + `<div class="cmt-add"><input placeholder="comment…" maxlength="200"><button>send</button></div>`;
+    const inp = box.querySelector("input"), btn = box.querySelector("button");
+    btn.addEventListener("click", async () => { const v = inp.value.trim(); if (!v) return; inp.value = ""; await addComment(tt, ti, v); toggleComments(item, tt, ti); toggleComments(item, tt, ti); });
+  }
+
+  async function renderDMs() {
+    const m = await loadMe();
+    if (!m || !m.session) { requireSignIn("messages"); return; }
+    daily.innerHTML = `
+      <div class="soc">
+        <div class="soc-top"><button class="dg-x" data-home>‹</button><div class="soc-title">Messages</div><button class="soc-new" id="dm-new">＋</button></div>
+        <div class="soc-list" id="dm-list">loading…</div>
+      </div>`;
+    daily.querySelector("[data-home]").addEventListener("click", backHome);
+    daily.querySelector("#dm-new").addEventListener("click", newDM);
+    const threads = await listThreads();
+    const el = daily.querySelector("#dm-list");
+    el.innerHTML = threads.length ? threads.map((t) => `
+      <button class="dm-thread" data-other="${t.otherId}">
+        ${(t.profile || {}).avatar_url ? `<img class="lb-pic" src="${t.profile.avatar_url}">` : `<span class="lb-pic ph"></span>`}
+        <span class="feed-name">${esc((t.profile || {}).username || "player")}</span>
+        <span class="dm-last">${esc(t.body)}</span>
+      </button>`).join("") : `<div class="lb-empty">No messages yet. Tap ＋ to start one.</div>`;
+    el.querySelectorAll(".dm-thread").forEach((b) => b.addEventListener("click", () => renderThread(b.dataset.other)));
+  }
+  async function newDM() {
+    const me2 = await myId();
+    const people = (await listProfiles()).filter((p) => p.id !== me2);
+    const el = daily.querySelector("#dm-list");
+    el.innerHTML = people.length ? people.map((p) => `
+      <button class="dm-thread" data-other="${p.id}">
+        ${p.avatar_url ? `<img class="lb-pic" src="${p.avatar_url}">` : `<span class="lb-pic ph"></span>`}
+        <span class="feed-name">${esc(p.username)}</span>
+      </button>`).join("") : `<div class="lb-empty">No other players yet.</div>`;
+    el.querySelectorAll(".dm-thread").forEach((b) => b.addEventListener("click", () => renderThread(b.dataset.other)));
+  }
+  async function renderThread(otherId) {
+    daily.innerHTML = `
+      <div class="soc">
+        <div class="soc-top"><button class="dg-x" data-back>‹</button><div class="soc-title">Chat</div><div style="width:32px"></div></div>
+        <div class="dm-msgs" id="dm-msgs">loading…</div>
+        <div class="soc-compose"><input id="dm-input" placeholder="Message…" maxlength="500"><button id="dm-send">Send</button></div>
+      </div>`;
+    daily.querySelector("[data-back]").addEventListener("click", renderDMs);
+    async function refresh() {
+      const meId = await myId();
+      const msgs = await fetchThread(otherId);
+      const el = daily.querySelector("#dm-msgs"); if (!el) return;
+      el.innerHTML = msgs.map((m) => `<div class="bubble ${m.sender === meId ? "mine" : ""}">${esc(m.body)}</div>`).join("");
+      el.scrollTop = el.scrollHeight;
+    }
+    daily.querySelector("#dm-send").addEventListener("click", async () => {
+      const inp = daily.querySelector("#dm-input"); const v = inp.value.trim(); if (!v) return; inp.value = "";
+      await sendMessage(otherId, v); refresh();
+    });
+    stopRT(); rtChannel = await subscribeChanges(() => refresh());
+    refresh();
+  }
+  function requireSignIn(what) {
+    daily.innerHTML = `
+      <div class="dg dg-result">
+        <button class="dg-x" data-home>✕</button>
+        <div class="dg-emoji">🔒</div>
+        <div class="dg-q">Sign in on the Home screen to use ${what}.</div>
+        <button class="dg-cta" data-home>Back</button>
+      </div>`;
+    daily.querySelectorAll("[data-home]").forEach((b) => b.addEventListener("click", () => ctx.goHome()));
   }
 
   return { renderHome, startDaily };

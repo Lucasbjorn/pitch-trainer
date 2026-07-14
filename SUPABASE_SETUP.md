@@ -20,6 +20,7 @@ Security (below) is what actually protects the data.
 
 ## 3. Create the tables
 Supabase → **SQL Editor** → paste all of `db/schema.sql` → **Run**.
+Then paste all of `db/social.sql` (feed, comments, DMs, realtime) → **Run**.
 
 ## 4. Turn on Google sign-in
 1. Supabase → **Authentication → Providers → Google** → enable.
@@ -35,5 +36,9 @@ Reload the site → a **Sign in** chip appears on the Home hub. Sign in with Goo
 set a username + avatar, play the daily game, and your score posts to the
 leaderboard your friends share.
 
-*(Feed, comments, and DMs are the next pass — once this core is connected and we
-can test against real data.)*
+The **Feed** and **Messages** buttons also appear on Home (once signed in):
+- Feed = live stream of friends' scores + text posts, with comments.
+- Messages = DMs between players.
+
+*(Feed/DMs code is built and gated on config; give it a shakeout once connected
+and I'll fix anything that surfaces against real data.)*
