@@ -11,6 +11,7 @@ import { setupYesNo } from "./yesno.js";
 import { setupStats } from "./stats.js";
 import { setupApGames } from "./apgames.js";
 import { setupMicrotone } from "./microtone.js";
+import { setupHub } from "./hub.js";
 
 // ---------------------------------------------------------------------------
 // CONFIG
@@ -1005,6 +1006,20 @@ const statsMod    = setupStats(sharedCtx);
 const apgamesMod  = setupApGames(sharedCtx);
 const microtoneMod = setupMicrotone(sharedCtx);
 
+// ---------------------------------------------------------------------------
+// Top-level view: Home hub / a Daily game / Lucas's Lab (the full trainer suite)
+// ---------------------------------------------------------------------------
+let lucasEntered = false;
+function setTopView(v) {
+  document.body.classList.toggle("view-home",  v === "home");
+  document.body.classList.toggle("view-daily", v === "daily");
+  document.body.classList.toggle("view-lucas", v === "lucas");
+}
+function goHome()      { setTopView("home"); hubMod.renderHome(); }
+function goDaily(id)   { setTopView("daily"); hubMod.startDaily(id); }
+function goLucas()     { setTopView("lucas"); if (!lucasEntered) { lucasEntered = true; switchMode("learn"); } }
+const hubMod = setupHub({ Tone, PITCH_NAMES, setStatus, ensureSampleBank, getBank: () => sampleBank, goHome, goDaily, goLucas });
+
 // Resume Tone's audio context on the very first user interaction, so audio is
 // unlocked regardless of which tab the app opened on (it opens on Learn, which
 // preloads audio outside a gesture and leaves the context suspended).
@@ -1022,7 +1037,7 @@ window.addEventListener("keydown", unlockAudioOnce);
 $start.addEventListener("click", () => { initPassive(); });
 
 $modeBtns.forEach((btn) => {
-  btn.addEventListener("click", () => switchMode(btn.dataset.mode));
+  btn.addEventListener("click", () => { if (btn.dataset.mode) switchMode(btn.dataset.mode); });
 });
 $submodeBtns.forEach((btn) => {
   btn.addEventListener("click", () => switchSubmode(btn.dataset.submode));
@@ -1072,8 +1087,11 @@ $intervalsNext.addEventListener("click", () => {
   skipIntervalsRound();
 });
 
-// Open on the Learn tab by default.
-switchMode("learn");
+// Home button in the Lab nav returns to the hub.
+document.querySelectorAll("[data-home]").forEach((b) => b.addEventListener("click", goHome));
+
+// Open on the clean Home hub by default.
+goHome();
 
 // Connect any MIDI keyboards (Chrome on macOS).
 initMidi();

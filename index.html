@@ -565,6 +565,65 @@
     .mkey.correct { background: var(--good) !important; color: #063 !important; border-color: var(--good) !important; }
     .mkey.wrong { background: var(--bad) !important; color: #fff !important; border-color: var(--bad) !important; }
 
+    /* =========================================================
+       Home hub + daily games (NYT-mini style overlays)
+       ========================================================= */
+    #home, #daily {
+      position: fixed; inset: 0; z-index: 60; display: none;
+      overflow-y: auto; -webkit-overflow-scrolling: touch; background: var(--bg);
+      padding: calc(env(safe-area-inset-top) + 1.2rem) 1rem calc(env(safe-area-inset-bottom) + 2rem);
+    }
+    body.view-home #home { display: block; }
+    body.view-daily #daily { display: block; }
+
+    .hub { max-width: 480px; margin: 0 auto; }
+    .hub-head { text-align: center; margin: 1.4rem 0 1.8rem; }
+    .hub-date { color: var(--muted); font-size: 0.9rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+    .hub-title { font-size: 2.4rem; font-weight: 800; letter-spacing: -0.03em; margin: 0.2rem 0 0; }
+    .hub-section-label { color: var(--muted); font-weight: 700; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0.2rem 0.7rem; }
+    .hub-cards { display: flex; flex-direction: column; gap: 0.8rem; }
+    .hub-card {
+      display: flex; align-items: center; gap: 1rem; width: 100%; text-align: left;
+      background: var(--card); border: 1px solid var(--line); border-radius: 20px;
+      padding: 1.1rem 1.2rem; cursor: pointer; color: var(--text); touch-action: manipulation;
+    }
+    .hub-card:active:not(.locked) { transform: scale(0.99); }
+    .hub-card.locked { opacity: 0.5; cursor: default; }
+    .hub-icon { width: 3rem; height: 3rem; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex: 0 0 auto; }
+    .hub-card-body { flex: 1; min-width: 0; }
+    .hub-card-title { font-weight: 800; font-size: 1.2rem; letter-spacing: -0.01em; }
+    .hub-card-sub { color: var(--muted); font-size: 0.9rem; margin-top: 0.1rem; }
+    .hub-tag { font-size: 0.78rem; font-weight: 700; padding: 0.35rem 0.8rem; border-radius: 999px; flex: 0 0 auto; }
+    .hub-tag.play { background: var(--text); color: var(--bg); }
+    .hub-tag.done { background: rgba(123,216,143,0.18); color: #7bd88f; }
+    .hub-tag.soon { background: var(--card2); color: var(--muted); }
+    .hub-lab {
+      width: 100%; margin: 1.4rem 0 0.8rem; padding: 1rem; border-radius: 16px;
+      background: var(--card2); border: 1px solid var(--line); color: var(--text);
+      font-weight: 700; font-size: 1rem; cursor: pointer; touch-action: manipulation;
+    }
+    .hub-foot { text-align: center; color: var(--muted); font-size: 0.8rem; margin-top: 1.2rem; line-height: 1.5; }
+    .home-btn { color: var(--accent) !important; border-color: transparent !important; }
+
+    /* Daily game */
+    .dg { max-width: 440px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; text-align: center; }
+    .dg-x { align-self: flex-start; background: none; border: none; color: var(--muted); font-size: 1.4rem; cursor: pointer; padding: 0.2rem 0.5rem; }
+    .dg-name { font-weight: 700; color: var(--muted); font-size: 0.95rem; margin-top: 0.5rem; }
+    .dg-lives { font-size: 1.4rem; margin: 0.5rem 0; letter-spacing: 0.15em; }
+    .dg-gap { font-size: 2.4rem; font-weight: 800; margin: 0.6rem 0; letter-spacing: -0.02em; }
+    .dg-gap span { display: block; font-size: 0.9rem; font-weight: 500; color: var(--muted); letter-spacing: 0; }
+    .dg-q { color: var(--muted); font-size: 0.95rem; margin: 0.8rem 0 1.4rem; line-height: 1.4; }
+    .dg-ans { display: flex; gap: 1rem; width: 100%; max-width: 340px; }
+    .dg-btn { flex: 1; padding: 1.1rem; font-size: 1.1rem; font-weight: 700; border-radius: 16px; border: 2px solid var(--line); background: var(--card2); color: var(--text); cursor: pointer; touch-action: manipulation; }
+    .dg-btn:active { border-color: var(--accent); }
+    .dg-replay { margin-top: 1.1rem; background: none; border: none; color: var(--muted); text-decoration: underline; font-size: 0.9rem; cursor: pointer; }
+    .dg-best { color: var(--muted); font-size: 0.85rem; margin-top: 1rem; line-height: 1.4; }
+    .dg-result { justify-content: center; padding-top: 2rem; }
+    .dg-emoji { font-size: 3.5rem; margin: 1rem 0 0.5rem; }
+    .dg-score { font-size: 3rem; font-weight: 800; color: var(--accent); letter-spacing: -0.02em; }
+    .dg-score-sub { color: var(--muted); font-size: 0.95rem; margin-top: 0.3rem; }
+    .dg-cta { margin-top: 1.6rem; padding: 1rem 2rem; border-radius: 999px; border: none; background: var(--text); color: var(--bg); font-weight: 700; font-size: 1rem; cursor: pointer; }
+
     /* ---- Status ---- */
     #status {
       position: fixed;
@@ -579,7 +638,13 @@
   </style>
 </head>
 <body>
+  <!-- Home hub (rendered by hub.js) -->
+  <div id="home"></div>
+  <!-- Daily game (rendered by hub.js) -->
+  <div id="daily"></div>
+
   <div id="mode-toggle">
+    <button class="mode-btn home-btn" data-home              type="button">‹ Home</button>
     <button class="mode-btn active" data-mode="passive"   type="button">🎤 Passive</button>
     <button class="mode-btn"        data-mode="quiz"      type="button">🎯 Quiz</button>
     <button class="mode-btn"        data-mode="intervals" type="button">🎼 Intervals</button>
