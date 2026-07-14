@@ -2,6 +2,7 @@
 // "Lucas's Lab" reveals the full trainer suite underneath.
 
 import { socialConfigured, getSession, signInGoogle, signOut, getProfile, saveProfile, submitScore, leaderboard } from "./social.js";
+import { DAILY_RUNNERS } from "./dailygames.js";
 
 const DAYMS = 86400000;
 function todayStr(d = new Date()) {
@@ -36,9 +37,12 @@ export function setupHub(ctx) {
   // =========================================================================
   const DAILIES = [
     { id: "jnd", title: "Smallest Interval", sub: "How fine is your ear today?", icon: "📏", color: "#6c8cff", live: true },
-    { id: "prog", title: "Chord Progression", sub: "Name the diatonic changes", icon: "🎹", color: "#f79f5b", live: false },
-    { id: "leap", title: "Compound Leap", sub: "Intervals octaves apart", icon: "🪃", color: "#7bd88f", live: false },
+    { id: "interval", title: "Interval Ear", sub: "Name the interval between two notes", icon: "🎼", color: "#f2c94c", live: true },
+    { id: "prog", title: "Chord Progression", sub: "Name the diatonic changes", icon: "🎹", color: "#f79f5b", live: true },
+    { id: "leap", title: "Compound Leap", sub: "Notes octaves apart", icon: "🪃", color: "#7bd88f", live: true },
+    { id: "mistuned", title: "Spot the Sour Note", sub: "Which note is out of tune?", icon: "🍋", color: "#eb5757", live: true },
   ];
+  function gameMeta(id) { return DAILIES.find((x) => x.id === id) || { title: id }; }
 
   function renderHome() {
     const d = new Date();
@@ -152,11 +156,33 @@ export function setupHub(ctx) {
   }
   async function startDaily(id) {
     try { await Tone.start(); } catch (_) {}
-    if (id !== "jnd") return;
-    const rec = loadDaily("jnd");
-    if (rec.date === todayStr()) return renderDailyDone(rec);
-    jnd = { lives: JND_LIVES, delta: JND_START, best: null, done: false };
-    jndNext();
+    const rec = loadDaily(id);
+    if (rec.date === todayStr()) return renderDailyDone(id, rec, false);
+    if (id === "jnd") {
+      jnd = { lives: JND_LIVES, delta: JND_START, best: null, done: false };
+      return jndNext();
+    }
+    if (DAILY_RUNNERS[id]) { try { await ctx.ensurePiano(); } catch (_) {} DAILY_RUNNERS[id](gameCtx(id)); }
+  }
+  // Shared game ctx for the daily runners (dailygames.js).
+  function pianoPlay(name, at = 0, dur = 0.6, vel = 0.8) {
+    const p = ctx.getPiano && ctx.getPiano();
+    if (p) { try { p.triggerAttackRelease(name, dur, Tone.now() + at, vel); } catch (_) {} }
+  }
+  function gameCtx(id) {
+    return {
+      el: daily,
+      tone: (f, at, dur) => tone(f, at, dur),
+      piano: (name, at, dur, vel) => pianoPlay(name, at, dur, vel),
+      finish: (score, label) => finishDaily(id, score, label),
+      quit: () => ctx.goHome(),
+    };
+  }
+  function finishDaily(id, score, label) {
+    const rec = { date: todayStr(), score: Math.round(score * 100) / 100, label };
+    saveDaily(id, rec);
+    submitScore(id, rec.date, rec.score, rec.label).catch(() => {});
+    renderDailyDone(id, rec, true);
   }
   function jndPlay() {
     const bf = midiFreq(52 + Math.floor(Math.random() * 17)); // random ref each round
@@ -204,19 +230,17 @@ export function setupHub(ctx) {
   function jndEnd() {
     jnd.done = true;
     const scoreCents = jnd.best == null ? JND_START * 2 : jnd.best; // never got one → worst
-    const rec = { date: todayStr(), score: Math.round(scoreCents * 100) / 100, label: fracLabel(scoreCents) };
-    saveDaily("jnd", rec);
-    submitScore("jnd", rec.date, rec.score, rec.label).catch(() => {}); // post to leaderboard if signed in
-    renderDailyDone(rec, true);
+    finishDaily("jnd", scoreCents, fracLabel(scoreCents));
   }
-  function renderDailyDone(rec, justFinished) {
+  function renderDailyDone(id, rec, justFinished) {
+    const meta = gameMeta(id);
     daily.innerHTML = `
       <div class="dg dg-result">
         <button class="dg-x" data-home>✕</button>
         <div class="dg-emoji">${justFinished ? "🎉" : "✅"}</div>
-        <div class="dg-name">Smallest Interval</div>
+        <div class="dg-name">${meta.title}</div>
         <div class="dg-score">${rec.label}</div>
-        <div class="dg-score-sub">${rec.score}¢ — ${justFinished ? "your score today" : "you've already played today"}</div>
+        <div class="dg-score-sub">${justFinished ? "your score today" : "you've already played today"}</div>
         <div class="dg-q">${justFinished ? "Nice. Come back tomorrow for a new one." : "Come back tomorrow for a new puzzle."}</div>
         ${socialConfigured() ? `<button class="dg-cta" data-lb>See leaderboard</button>` : ""}
         <button class="${socialConfigured() ? "ghost" : "dg-cta"}" data-home>Back to games</button>
@@ -224,14 +248,14 @@ export function setupHub(ctx) {
       </div>`;
     daily.querySelectorAll("[data-home]").forEach((b) => b.addEventListener("click", () => ctx.goHome()));
     const lb = daily.querySelector("[data-lb]");
-    if (lb) lb.addEventListener("click", () => showLeaderboard("jnd", rec.date));
+    if (lb) lb.addEventListener("click", () => showLeaderboard(id, rec.date));
   }
   async function showLeaderboard(gameId, date) {
     daily.innerHTML = `
       <div class="dg dg-result">
         <button class="dg-x" data-home>✕</button>
-        <div class="dg-name">Leaderboard · Smallest Interval</div>
-        <div class="dg-score-sub">${date} — smaller is better</div>
+        <div class="dg-name">Leaderboard · ${gameMeta(gameId).title}</div>
+        <div class="dg-score-sub">${date} — top of the list wins</div>
         <div class="lb" id="lb">loading…</div>
         <button class="dg-cta" data-home>Back to games</button>
       </div>`;

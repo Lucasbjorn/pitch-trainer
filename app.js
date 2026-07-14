@@ -1018,7 +1018,7 @@ function setTopView(v) {
 function goHome()      { setTopView("home"); hubMod.renderHome(); }
 function goDaily(id)   { setTopView("daily"); hubMod.startDaily(id); }
 function goLucas()     { setTopView("lucas"); if (!lucasEntered) { lucasEntered = true; switchMode("learn"); } }
-const hubMod = setupHub({ Tone, PITCH_NAMES, setStatus, ensureSampleBank, getBank: () => sampleBank, goHome, goDaily, goLucas });
+const hubMod = setupHub({ Tone, PITCH_NAMES, setStatus, ensureSampleBank, getBank: () => sampleBank, ensurePiano, getPiano: () => piano, goHome, goDaily, goLucas });
 
 // Resume Tone's audio context on the very first user interaction, so audio is
 // unlocked regardless of which tab the app opened on (it opens on Learn, which
