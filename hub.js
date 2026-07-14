@@ -1,6 +1,8 @@
 // Home hub (NYT-mini style) + daily games. The clean iPhone-first landing;
 // "Lucas's Lab" reveals the full trainer suite underneath.
 
+import { socialConfigured, getSession, signInGoogle, signOut, getProfile, saveProfile, submitScore, leaderboard } from "./social.js";
+
 const DAYMS = 86400000;
 function todayStr(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -61,6 +63,7 @@ export function setupHub(ctx) {
 
     home.innerHTML = `
       <div class="hub">
+        ${socialConfigured() ? `<button class="hub-user" id="hub-user">…</button>` : ""}
         <div class="hub-head">
           <div class="hub-date">${dateStr}</div>
           <h1 class="hub-title">Ear Games</h1>
@@ -68,11 +71,72 @@ export function setupHub(ctx) {
         <div class="hub-section-label">Today's puzzles</div>
         <div class="hub-cards">${cards}</div>
         <button class="hub-lab" data-lab>🧪 Lucas's Lab — all the trainers ›</button>
-        <div class="hub-foot">One attempt per game per day. Leaderboard coming soon.</div>
+        <div class="hub-foot">${socialConfigured() ? "One attempt per game per day." : "One attempt per game per day. Leaderboard coming soon."}</div>
       </div>`;
 
     home.querySelectorAll("[data-daily]").forEach((b) => b.addEventListener("click", () => ctx.goDaily(b.dataset.daily)));
     home.querySelector("[data-lab]").addEventListener("click", () => ctx.goLucas());
+    refreshUser();
+  }
+
+  // ---- account chip + profile ----
+  let me = null; // { session, profile }
+  async function loadMe() {
+    if (!socialConfigured()) return null;
+    const session = await getSession();
+    if (!session) { me = { session: null, profile: null }; return me; }
+    const profile = await getProfile(session.user.id);
+    me = { session, profile };
+    return me;
+  }
+  async function refreshUser() {
+    const el = document.getElementById("hub-user");
+    if (!el) return;
+    await loadMe();
+    if (!me || !me.session) { el.textContent = "Sign in"; el.onclick = () => signInGoogle(); return; }
+    if (!me.profile || !me.profile.avatar_url) { el.textContent = "Finish profile →"; el.onclick = openProfile; return; }
+    el.innerHTML = `<img src="${me.profile.avatar_url}" alt=""><span>${me.profile.username}</span>`;
+    el.onclick = openProfile;
+  }
+  function openProfile() {
+    const cur = (me && me.profile) || {};
+    home.insertAdjacentHTML("beforeend", `
+      <div class="modal" id="prof-modal">
+        <div class="modal-card">
+          <div class="modal-title">Your profile</div>
+          <label class="modal-avatar" id="prof-pic">
+            ${cur.avatar_url ? `<img src="${cur.avatar_url}">` : `<span>＋ photo</span>`}
+            <input type="file" id="prof-file" accept="image/*" hidden>
+          </label>
+          <input class="modal-input" id="prof-name" placeholder="username" value="${cur.username || ""}" maxlength="20">
+          <div class="modal-err" id="prof-err"></div>
+          <button class="dg-cta" id="prof-save">Save</button>
+          <div class="modal-actions">
+            ${me && me.session ? `<button class="ghost" id="prof-signout">sign out</button>` : ""}
+            <button class="ghost" id="prof-close">close</button>
+          </div>
+        </div>
+      </div>`);
+    let file = null;
+    const modal = document.getElementById("prof-modal");
+    const pic = document.getElementById("prof-file");
+    pic.addEventListener("change", (e) => {
+      file = e.target.files[0];
+      if (file) document.getElementById("prof-pic").innerHTML = `<img src="${URL.createObjectURL(file)}">`;
+    });
+    document.getElementById("prof-save").addEventListener("click", async () => {
+      const name = document.getElementById("prof-name").value.trim();
+      const err = document.getElementById("prof-err");
+      if (!name) { err.textContent = "Pick a username."; return; }
+      if (!cur.avatar_url && !file) { err.textContent = "A profile photo is required."; return; }
+      err.textContent = "Saving…";
+      const res = await saveProfile(me.session.user.id, name, file);
+      if (res.error) { err.textContent = res.error; return; }
+      modal.remove(); await refreshUser();
+    });
+    document.getElementById("prof-close").addEventListener("click", () => modal.remove());
+    const so = document.getElementById("prof-signout");
+    if (so) so.addEventListener("click", async () => { await signOut(); modal.remove(); await refreshUser(); });
   }
 
   // =========================================================================
@@ -142,6 +206,7 @@ export function setupHub(ctx) {
     const scoreCents = jnd.best == null ? JND_START * 2 : jnd.best; // never got one → worst
     const rec = { date: todayStr(), score: Math.round(scoreCents * 100) / 100, label: fracLabel(scoreCents) };
     saveDaily("jnd", rec);
+    submitScore("jnd", rec.date, rec.score, rec.label).catch(() => {}); // post to leaderboard if signed in
     renderDailyDone(rec, true);
   }
   function renderDailyDone(rec, justFinished) {
@@ -153,10 +218,39 @@ export function setupHub(ctx) {
         <div class="dg-score">${rec.label}</div>
         <div class="dg-score-sub">${rec.score}¢ — ${justFinished ? "your score today" : "you've already played today"}</div>
         <div class="dg-q">${justFinished ? "Nice. Come back tomorrow for a new one." : "Come back tomorrow for a new puzzle."}</div>
-        <button class="dg-cta" data-home>Back to games</button>
-        <div class="dg-best">Leaderboard coming soon — you'll be able to compare with friends.</div>
+        ${socialConfigured() ? `<button class="dg-cta" data-lb>See leaderboard</button>` : ""}
+        <button class="${socialConfigured() ? "ghost" : "dg-cta"}" data-home>Back to games</button>
+        ${socialConfigured() ? "" : `<div class="dg-best">Sign-in + friends leaderboard coming soon.</div>`}
       </div>`;
     daily.querySelectorAll("[data-home]").forEach((b) => b.addEventListener("click", () => ctx.goHome()));
+    const lb = daily.querySelector("[data-lb]");
+    if (lb) lb.addEventListener("click", () => showLeaderboard("jnd", rec.date));
+  }
+  async function showLeaderboard(gameId, date) {
+    daily.innerHTML = `
+      <div class="dg dg-result">
+        <button class="dg-x" data-home>✕</button>
+        <div class="dg-name">Leaderboard · Smallest Interval</div>
+        <div class="dg-score-sub">${date} — smaller is better</div>
+        <div class="lb" id="lb">loading…</div>
+        <button class="dg-cta" data-home>Back to games</button>
+      </div>`;
+    daily.querySelectorAll("[data-home]").forEach((b) => b.addEventListener("click", () => ctx.goHome()));
+    const me2 = await loadMe();
+    if (!me2 || !me2.session) { document.getElementById("lb").innerHTML = `<div class="lb-empty">Sign in on the Home screen to appear here.</div>`; return; }
+    const rows = await leaderboard(gameId, date);
+    const el = document.getElementById("lb");
+    if (!rows.length) { el.innerHTML = `<div class="lb-empty">No scores yet today — be the first!</div>`; return; }
+    el.innerHTML = rows.map((r, i) => {
+      const p = r.profiles || {};
+      const mine = me2.session && r.user_id === me2.session.user.id;
+      return `<div class="lb-row ${mine ? "me" : ""}">
+        <span class="lb-rank">${i + 1}</span>
+        ${p.avatar_url ? `<img class="lb-pic" src="${p.avatar_url}">` : `<span class="lb-pic ph"></span>`}
+        <span class="lb-name">${p.username || "player"}</span>
+        <span class="lb-score">${r.label || r.score}</span>
+      </div>`;
+    }).join("");
   }
 
   return { renderHome, startDaily };
