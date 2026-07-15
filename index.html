@@ -598,12 +598,14 @@
     .hub-tag.done { background: rgba(123,216,143,0.18); color: #7bd88f; }
     .hub-tag.soon { background: var(--card2); color: var(--muted); }
     .hub-lab {
-      width: 100%; margin: 1.4rem 0 0.8rem; padding: 1rem; border-radius: 16px;
-      background: var(--card2); border: 1px solid var(--line); color: var(--text);
-      font-weight: 700; font-size: 1rem; cursor: pointer; touch-action: manipulation;
+      display: block; margin: 1.6rem auto 0.4rem; padding: 0.4rem 0.9rem;
+      background: none; border: none; color: var(--muted);
+      font-weight: 600; font-size: 0.82rem; text-decoration: underline; cursor: pointer; touch-action: manipulation;
     }
     .hub-foot { text-align: center; color: var(--muted); font-size: 0.8rem; margin-top: 1.2rem; line-height: 1.5; }
     .home-btn { color: var(--accent) !important; border-color: transparent !important; }
+    /* Solo-lab: a Home card opened one Lab game — hide the rest of the Lab nav. */
+    body.solo-lab #mode-toggle .mode-btn:not(.home-btn) { display: none; }
     .hub-user { position: absolute; top: calc(env(safe-area-inset-top) + 1rem); right: 1rem; display: flex; align-items: center; gap: 0.4rem; background: var(--card2); border: 1px solid var(--line); border-radius: 999px; padding: 0.3rem 0.7rem; color: var(--text); font-size: 0.85rem; font-weight: 600; cursor: pointer; z-index: 2; }
     .hub-user img { width: 1.5rem; height: 1.5rem; border-radius: 50%; object-fit: cover; }
 

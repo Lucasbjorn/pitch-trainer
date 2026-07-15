@@ -1009,16 +1009,16 @@ const microtoneMod = setupMicrotone(sharedCtx);
 // ---------------------------------------------------------------------------
 // Top-level view: Home hub / a Daily game / Lucas's Lab (the full trainer suite)
 // ---------------------------------------------------------------------------
-let lucasEntered = false;
 function setTopView(v) {
   document.body.classList.toggle("view-home",  v === "home");
   document.body.classList.toggle("view-daily", v === "daily");
   document.body.classList.toggle("view-lucas", v === "lucas");
 }
-function goHome()      { setTopView("home"); hubMod.renderHome(); }
+function goHome()      { setTopView("home"); document.body.classList.remove("solo-lab"); hubMod.renderHome(); }
 function goDaily(id)   { setTopView("daily"); hubMod.startDaily(id); }
-function goLucas()     { setTopView("lucas"); if (!lucasEntered) { lucasEntered = true; switchMode("learn"); } }
-const hubMod = setupHub({ Tone, PITCH_NAMES, setStatus, ensureSampleBank, getBank: () => sampleBank, ensurePiano, getPiano: () => piano, goHome, goDaily, goLucas });
+function goLucas()     { setTopView("lucas"); document.body.classList.remove("solo-lab"); switchMode("learn"); } // full Lab (password-gated in hub)
+function goMicrotone() { setTopView("lucas"); document.body.classList.add("solo-lab"); if (mode === "microtone") microtoneMod.enter(); else switchMode("microtone"); } // one game, no Lab nav
+const hubMod = setupHub({ Tone, PITCH_NAMES, setStatus, ensureSampleBank, getBank: () => sampleBank, ensurePiano, getPiano: () => piano, goHome, goDaily, goLucas, goMicrotone });
 
 // Resume Tone's audio context on the very first user interaction, so audio is
 // unlocked regardless of which tab the app opened on (it opens on Learn, which

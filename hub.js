@@ -40,26 +40,39 @@ export function setupHub(ctx) {
   // HOME
   // =========================================================================
   const DAILIES = [
-    { id: "jnd", title: "Smallest Interval", sub: "How fine is your ear today?", icon: "📏", color: "#6c8cff", live: true },
-    { id: "interval", title: "Interval Ear", sub: "Name the interval between two notes", icon: "🎼", color: "#f2c94c", live: true },
-    { id: "prog", title: "Chord Progression", sub: "Name the diatonic changes", icon: "🎹", color: "#f79f5b", live: true },
-    { id: "leap", title: "Compound Leap", sub: "Notes octaves apart", icon: "🪃", color: "#7bd88f", live: true },
-    { id: "mistuned", title: "Spot the Sour Note", sub: "Which note is out of tune?", icon: "🍋", color: "#eb5757", live: true },
+    { id: "leap", title: "Compound Leap", sub: "Notes octaves apart", icon: "🪃", color: "#7bd88f", live: true, show: true },
+    { id: "microtone", title: "Microtone", sub: "Quarter-tone ear games", icon: "🔬", color: "#a78bfa", live: true, show: true, lab: true },
+    // Hidden for now — code kept, flip `show: true` to bring back.
+    { id: "jnd", title: "Smallest Interval", sub: "How fine is your ear today?", icon: "📏", color: "#6c8cff", live: true, show: false },
+    { id: "interval", title: "Interval Ear", sub: "Name the interval between two notes", icon: "🎼", color: "#f2c94c", live: true, show: false },
+    { id: "prog", title: "Chord Progression", sub: "Name the diatonic changes", icon: "🎹", color: "#f79f5b", live: true, show: false },
+    { id: "mistuned", title: "Spot the Sour Note", sub: "Which note is out of tune?", icon: "🍋", color: "#eb5757", live: true, show: false },
   ];
   function gameMeta(id) { return DAILIES.find((x) => x.id === id) || { title: id }; }
 
+  // Temp gate so friends don't wander into the dev trainers. Change LAB_PW to
+  // rotate it; once entered on a device it's remembered.
+  const LAB_PW = "temp";
+  function tryLab() {
+    if (localStorage.getItem("pt.lab.ok") === "1") return ctx.goLucas();
+    const p = window.prompt("Lab password:");
+    if (p == null) return;
+    if (p === LAB_PW) { localStorage.setItem("pt.lab.ok", "1"); ctx.goLucas(); }
+    else window.alert("Nope.");
+  }
   function renderHome() {
     const d = new Date();
     const dateStr = d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
-    const cards = DAILIES.map((game) => {
-      const rec = loadDaily(game.id);
-      const played = rec.date === todayStr();
-      let tag = "";
-      if (!game.live) tag = `<span class="hub-tag soon">soon</span>`;
+    const cards = DAILIES.filter((g) => g.show).map((game) => {
+      const rec = game.lab ? {} : loadDaily(game.id);
+      const played = !game.lab && rec.date === todayStr();
+      let tag;
+      if (game.lab) tag = `<span class="hub-tag play">Open</span>`;
       else if (played) tag = `<span class="hub-tag done">✓ ${rec.label || "done"}</span>`;
       else tag = `<span class="hub-tag play">Play</span>`;
+      const attr = game.lab ? `data-labgame="${game.id}"` : `data-daily="${game.id}"`;
       return `
-        <button class="hub-card ${game.live ? "" : "locked"}" data-daily="${game.id}" ${game.live ? "" : "disabled"}>
+        <button class="hub-card" ${attr}>
           <div class="hub-icon" style="background:${game.color}">${game.icon}</div>
           <div class="hub-card-body">
             <div class="hub-card-title">${game.title}</div>
@@ -79,12 +92,13 @@ export function setupHub(ctx) {
         <div class="hub-section-label">Today's puzzles</div>
         <div class="hub-cards">${cards}</div>
         ${socialConfigured() ? `<div class="hub-nav"><button data-feed>🗞 Feed</button><button data-dms>✉️ Messages</button></div>` : ""}
-        <button class="hub-lab" data-lab>🧪 Lucas's Lab — all the trainers ›</button>
+        <button class="hub-lab" data-lab>🔒 Lucas's Lab</button>
         <div class="hub-foot">${socialConfigured() ? "One attempt per game per day." : "One attempt per game per day. Leaderboard coming soon."}</div>
       </div>`;
 
     home.querySelectorAll("[data-daily]").forEach((b) => b.addEventListener("click", () => ctx.goDaily(b.dataset.daily)));
-    home.querySelector("[data-lab]").addEventListener("click", () => ctx.goLucas());
+    const mt = home.querySelector('[data-labgame="microtone"]'); if (mt) mt.addEventListener("click", () => ctx.goMicrotone());
+    home.querySelector("[data-lab]").addEventListener("click", tryLab);
     const fb = home.querySelector("[data-feed]"); if (fb) fb.addEventListener("click", () => ctx.goDaily("feed"));
     const mb = home.querySelector("[data-dms]"); if (mb) mb.addEventListener("click", () => ctx.goDaily("dms"));
     refreshUser();
