@@ -238,8 +238,8 @@ export function setupHub(ctx) {
   }
   function jndEnd() {
     jnd.done = true;
-    const scoreCents = jnd.best == null ? JND_START * 2 : jnd.best; // never got one → worst
-    finishDaily("jnd", scoreCents, fracLabel(scoreCents));
+    if (jnd.best == null) return finishDaily("jnd", JND_START * 2, "> 1 tone"); // never perceived a gap
+    finishDaily("jnd", jnd.best, fracLabel(jnd.best));
   }
   function renderDailyDone(id, rec, justFinished) {
     const meta = gameMeta(id);
