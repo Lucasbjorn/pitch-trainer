@@ -39,6 +39,7 @@ export function setupMicrotone(ctx) {
   const { Tone } = ctx;
   const root = document.getElementById("microtone");
   let active = false, ready = false, view = "home", g = null, autoTimer = null;
+  let publicMode = false;   // launched from the friends app → no training wheels
 
   let synth = null;
   function ensureSynth() {
@@ -144,6 +145,7 @@ export function setupMicrotone(ctx) {
   // =========================================================================
   let mScore = { correct: 0, total: 0 }, mNums = false;
   let mWheels = localStorage.getItem("pt.micro.wheels") === "1";
+  function wheelsOn() { return mWheels && !publicMode; }
   function startMicro() {
     view = "micro"; mScore = { correct: 0, total: 0 };
     root.innerHTML = `
@@ -159,18 +161,18 @@ export function setupMicrotone(ctx) {
         </div>
         <div class="apg-opts">
           <label class="autonext"><input type="checkbox" id="m-nums" ${mNums ? "checked" : ""}> interval numbers</label>
-          <label class="autonext"><input type="checkbox" id="m-wheels" ${mWheels ? "checked" : ""}> 🛞 training wheels</label>
+          ${publicMode ? "" : `<label class="autonext"><input type="checkbox" id="m-wheels" ${mWheels ? "checked" : ""}> 🛞 training wheels</label>`}
         </div>
       </div>`;
     $("#m-back").addEventListener("click", () => { view = "home"; renderHome(); });
     $("#m-replay").addEventListener("click", mPlay);
     $("#m-next").addEventListener("click", mNew);
     $("#m-nums").addEventListener("change", (e) => { mNums = e.target.checked; renderKbd(); });
-    $("#m-wheels").addEventListener("change", (e) => { mWheels = e.target.checked; localStorage.setItem("pt.micro.wheels", mWheels ? "1" : "0"); });
+    const mw = $("#m-wheels"); if (mw) mw.addEventListener("change", (e) => { mWheels = e.target.checked; localStorage.setItem("pt.micro.wheels", mWheels ? "1" : "0"); });
     mNew();
   }
   // Training wheels: PP-MIDI cue alongside any IN-TUNE (ET, even index) pitch.
-  function ppCue(q) { if (mWheels && q % 2 === 0) { const b = ctx.getBank(); if (b) b.play(PC[((q / 2) % 12 + 12) % 12], {}); } }
+  function ppCue(q) { if (wheelsOn() && q % 2 === 0) { const b = ctx.getBank(); if (b) b.play(PC[((q / 2) % 12 + 12) % 12], {}); } }
   function playKey(q) { tone(centsFreq(midiFreq(M_BASE), q * 50), 0, 0.6); ppCue(q); }
   const M_BASE = 60; // fixed keyboard: C4 at the left, never shifts
   function mNew() {
@@ -439,12 +441,12 @@ export function setupMicrotone(ctx) {
 
   return {
     async enter() {
-      active = true; view = "home"; renderHome();
+      active = true; view = "home"; publicMode = false; renderHome();
       ctx.setStatus("Microtone");
       if (ctx.setMidiHandler) ctx.setMidiHandler(midiRoute);
       try { await ctx.ensureSampleBank(); await Tone.start(); ready = true; } catch (_) {}
     },
-    openGame(id) { if (id) open(id); else renderHome(); }, // jump straight into one game
+    openGame(id, opts) { publicMode = !!(opts && opts.public); if (id) open(id); else renderHome(); }, // jump straight into one game
     exit() { active = false; cancelAuto(); g = null; if (ctx.clearMidiHandler) ctx.clearMidiHandler(); },
   };
 }

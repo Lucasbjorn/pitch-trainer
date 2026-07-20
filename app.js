@@ -1016,11 +1016,11 @@ function setTopView(v) {
 }
 function goHome()      { setTopView("home"); document.body.classList.remove("solo-lab"); hubMod.renderHome(); }
 function goDaily(id)   { setTopView("daily"); hubMod.startDaily(id); }
-function goLucas()     { setTopView("lucas"); document.body.classList.remove("solo-lab"); switchMode("learn"); } // full Lab (password-gated in hub)
+function goLucas()     { setTopView("lucas"); document.body.classList.remove("solo-lab", "show-tabs"); switchMode("learn"); } // full Lab (password-gated in hub)
 async function goMicrotone(gameId) {
-  setTopView("lucas"); document.body.classList.add("solo-lab");
+  setTopView("lucas"); document.body.classList.add("solo-lab"); document.body.classList.remove("show-tabs");
   if (mode !== "microtone") await switchMode("microtone");
-  if (gameId) microtoneMod.openGame(gameId);   // e.g. jump straight to JND / Quarter-tones
+  if (gameId) microtoneMod.openGame(gameId, { public: true });  // jump straight in, no training wheels
 } // one game, no Lab nav
 const hubMod = setupHub({ Tone, PITCH_NAMES, setStatus, ensureSampleBank, getBank: () => sampleBank, ensurePiano, getPiano: () => piano, goHome, goDaily, goLucas, goMicrotone });
 
