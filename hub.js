@@ -94,7 +94,7 @@ export function setupHub(ctx) {
         </div>
         <div class="hub-section-label">Today's puzzles</div>
         <div class="hub-cards">${cards}</div>
-        ${socialConfigured() ? `<div class="hub-nav"><button data-feed>🗞 Feed</button><button data-dms>✉️ Messages</button></div>` : ""}
+        ${socialConfigured() ? `<div class="hub-nav"><button data-board>🏆 Board</button><button data-feed>🗞 Feed</button><button data-dms>✉️ Messages</button></div>` : ""}
         <button class="hub-lab" data-lab>🔒 Lucas's Lab</button>
         <div class="hub-foot">${socialConfigured() ? "One attempt per game per day." : "One attempt per game per day. Leaderboard coming soon."}</div>
       </div>`;
@@ -102,6 +102,7 @@ export function setupHub(ctx) {
     home.querySelectorAll("[data-daily]").forEach((b) => b.addEventListener("click", () => ctx.goDaily(b.dataset.daily)));
     home.querySelectorAll("[data-micro]").forEach((b) => b.addEventListener("click", () => ctx.goMicrotone(b.dataset.micro)));
     home.querySelector("[data-lab]").addEventListener("click", tryLab);
+    const bb = home.querySelector("[data-board]"); if (bb) bb.addEventListener("click", () => ctx.goDaily("board"));
     const fb = home.querySelector("[data-feed]"); if (fb) fb.addEventListener("click", () => ctx.goDaily("feed"));
     const mb = home.querySelector("[data-dms]"); if (mb) mb.addEventListener("click", () => ctx.goDaily("dms"));
     refreshUser();
@@ -151,6 +152,14 @@ export function setupHub(ctx) {
     el.innerHTML = `<img src="${me.profile.avatar_url}" alt=""><span>${me.profile.username}</span>`;
     el.onclick = openProfile;
   }
+  function myRecentScores() {
+    const rows = DAILIES.filter((d) => d.show && !d.micro).map((d) => ({ d, rec: loadDaily(d.id) }))
+      .filter((x) => x.rec.date === todayStr());
+    if (!rows.length) return "";
+    return `<div class="prof-scores"><div class="panel-title" style="margin:0.4rem 0">Today</div>${
+      rows.map((x) => `<div class="hist-row"><span>${x.d.icon} ${x.d.title}</span><span>${x.rec.label}</span></div>`).join("")
+    }</div>`;
+  }
   function openProfile() {
     const cur = (me && me.profile) || {};
     home.insertAdjacentHTML("beforeend", `
@@ -162,6 +171,7 @@ export function setupHub(ctx) {
             <input type="file" id="prof-file" accept="image/*" hidden>
           </label>
           <input class="modal-input" id="prof-name" placeholder="username" value="${cur.username || ""}" maxlength="20">
+          ${myRecentScores()}
           <div class="modal-err" id="prof-err"></div>
           <button class="dg-cta" id="prof-save">Save</button>
           <div class="modal-actions">
@@ -207,6 +217,7 @@ export function setupHub(ctx) {
     try { await Tone.start(); } catch (_) {}
     if (id === "feed") return renderFeed();
     if (id === "dms") return renderDMs();
+    if (id === "board") return renderBoard();
     const rec = loadDaily(id);
     if (rec.date === todayStr()) return renderDailyDone(id, rec, false);
     if (id === "jnd") {
@@ -448,6 +459,38 @@ export function setupHub(ctx) {
     stopRT(); rtChannel = await subscribeChanges(() => refresh());
     refresh();
   }
+  // Standalone leaderboard page with per-game tabs.
+  let boardGame = "leap";
+  async function renderBoard() {
+    const games = DAILIES.filter((g) => g.show && !g.micro); // daily-scored games
+    if (!games.find((g) => g.id === boardGame)) boardGame = games[0] ? games[0].id : "leap";
+    const tabs = games.map((g) => `<button class="board-tab ${g.id === boardGame ? "active" : ""}" data-g="${g.id}">${g.icon} ${g.title}</button>`).join("");
+    daily.innerHTML = `
+      <div class="soc">
+        <div class="soc-top"><button class="dg-x" data-home>‹</button><div class="soc-title">🏆 Leaderboard</div><div style="width:32px"></div></div>
+        <div class="board-tabs">${tabs}</div>
+        <div class="board-sub" id="board-sub">${todayStr()}</div>
+        <div class="lb" id="board-lb">loading…</div>
+      </div>`;
+    daily.querySelector("[data-home]").addEventListener("click", () => ctx.goHome());
+    daily.querySelectorAll("[data-g]").forEach((b) => b.addEventListener("click", () => { boardGame = b.dataset.g; renderBoard(); }));
+    const me2 = await loadMe();
+    const el = daily.querySelector("#board-lb");
+    if (!me2 || !me2.session) { el.innerHTML = `<div class="lb-empty">Sign in on the Home screen to see the board.</div>`; return; }
+    const rows = await leaderboard(boardGame, todayStr());
+    if (!rows.length) { el.innerHTML = `<div class="lb-empty">No scores yet today — play and be first!</div>`; return; }
+    el.innerHTML = rows.map((r, i) => {
+      const p = r.profiles || {};
+      const mine = r.user_id === me2.session.user.id;
+      return `<div class="lb-row ${mine ? "me" : ""}">
+        <span class="lb-rank">${i + 1}</span>
+        ${p.avatar_url ? `<img class="lb-pic" src="${p.avatar_url}">` : `<span class="lb-pic ph"></span>`}
+        <span class="lb-name">${esc(p.username || "player")}</span>
+        <span class="lb-score">${esc(r.label || String(r.score))}</span>
+      </div>`;
+    }).join("");
+  }
+
   function requireSignIn(what) {
     daily.innerHTML = `
       <div class="dg dg-result">
