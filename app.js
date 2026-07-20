@@ -1022,7 +1022,11 @@ async function goMicrotone(gameId) {
   if (mode !== "microtone") await switchMode("microtone");
   if (gameId) microtoneMod.openGame(gameId, { public: true });  // jump straight in, no training wheels
 } // one game, no Lab nav
-const hubMod = setupHub({ Tone, PITCH_NAMES, setStatus, ensureSampleBank, getBank: () => sampleBank, ensurePiano, getPiano: () => piano, goHome, goDaily, goLucas, goMicrotone });
+async function goPractice() {
+  setTopView("lucas"); document.body.classList.add("solo-lab"); document.body.classList.remove("show-tabs");
+  if (mode !== "practice") await switchMode("practice");
+} // Practice routine from the Lab, standalone (Home button returns)
+const hubMod = setupHub({ Tone, PITCH_NAMES, setStatus, ensureSampleBank, getBank: () => sampleBank, ensurePiano, getPiano: () => piano, goHome, goDaily, goLucas, goMicrotone, goPractice });
 
 // Resume Tone's audio context on the very first user interaction, so audio is
 // unlocked regardless of which tab the app opened on (it opens on Learn, which

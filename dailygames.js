@@ -169,79 +169,122 @@ function runProg(g) {
   newProg();
 }
 
-// ---- Guess Who (Heardle-style: name the tune from a short clip) ----
-import { CLIPS } from "./guesswho-clips.js";
+// ---- Guess Who (full track plays; name the tune + who's on each instrument) ----
+import { PUZZLES, START_DATE } from "./guesswho-clips.js";
 function norm(s) { return (s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); }
+// Small edit distance for typo tolerance.
+function lev(a, b) {
+  const m = a.length, n = b.length;
+  if (Math.abs(m - n) > 2) return 99;
+  const d = Array.from({ length: m + 1 }, (_, i) => [i, ...Array(n).fill(0)]);
+  for (let j = 1; j <= n; j++) d[0][j] = j;
+  for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++)
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[m][n];
+}
+// "Close enough": exact, containment (≥4 chars), or ≤1-2 typos.
+function closeEnough(guess, target) {
+  const a = norm(guess), b = norm(target);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (b.length >= 4 && (a.includes(b) || b.includes(a))) return true;
+  return lev(a, b) <= (b.length > 6 ? 2 : 1);
+}
+function gwMatch(guess, field) { return [field.answer, ...(field.accept || [])].some((t) => closeEnough(guess, t)); }
+
 function runGuessWho(g) {
-  const REVEAL = [1, 2, 4, 7, 11, 16]; // seconds unlocked per guess (Heardle-style)
-  if (!CLIPS.length) {
+  const LIVES = 3;
+  // Puzzle of the day: days since START_DATE, looping through the list.
+  const dayIdx = Math.max(0, Math.floor((Date.now() - new Date(START_DATE + "T00:00:00")) / 86400000));
+  const pz = PUZZLES.length ? PUZZLES[dayIdx % PUZZLES.length] : null;
+
+  function notReady(msg) {
     g.el.innerHTML = `
       <div class="dg dg-result">
         <button class="dg-x" data-quit>✕</button>
         <div class="dg-emoji">🎧</div>
         <div class="dg-name">Guess Who</div>
-        <div class="dg-q">No clips loaded yet. Add legal audio clips to <b>guesswho-clips.js</b> (public-domain, your own files, or Spotify previews) and this lights up.</div>
+        <div class="dg-q">${msg}</div>
         <button class="dg-cta" data-quit>Back to games</button>
       </div>`;
     g.el.querySelectorAll("[data-quit]").forEach((b) => (b.onclick = g.quit));
-    return;
   }
-  const clip = CLIPS[Math.floor(Math.random() * CLIPS.length)];
-  const audio = new Audio(clip.src); audio.preload = "auto";
-  const titles = [...new Set(CLIPS.map((c) => c.title))];
-  let step = 0, done = false, stopT = null;
-  function stopAudio() { try { audio.pause(); } catch (_) {} if (stopT) { clearTimeout(stopT); stopT = null; } }
-  function playSnippet() {
-    stopAudio();
-    try { audio.currentTime = 0; audio.play(); } catch (_) {}
-    stopT = setTimeout(() => { try { audio.pause(); } catch (_) {} }, REVEAL[step] * 1000);
-  }
-  function end(win) {
+  if (!pz) return notReady("No puzzles loaded yet — check back soon.");
+
+  const fields = [{ label: "Tune name", ...pz.tune }, ...pz.fields];
+  const audio = new Audio(pz.src); audio.preload = "auto";
+  let mistakes = 0, done = false, audioBroken = false;
+  const locked = fields.map(() => false);
+  audio.addEventListener("error", () => { audioBroken = true; if (!done) notReady("Today's track isn't uploaded yet — check back soon."); });
+  audio.addEventListener("ended", () => { if (!done) end(); });   // song over = game over
+
+  function stopAudio() { try { audio.pause(); } catch (_) {} }
+  function correctCount() { return locked.filter(Boolean).length; }
+  function end() {
     done = true; stopAudio();
-    const guesses = win ? step + 1 : REVEAL.length + 1;
-    g.finish(guesses, win ? `🎧 in ${guesses}` : `✗ (${clip.title})`);
+    const c = correctCount();
+    // Reveal screen first, then submit the score (lower = better on the board).
+    g.el.innerHTML = `
+      <div class="dg dg-result">
+        <div class="dg-emoji">${c === fields.length ? "🏆" : c >= 3 ? "🎷" : "🎧"}</div>
+        <div class="dg-name">Guess Who</div>
+        <div class="dg-score">${c}/${fields.length}</div>
+        <div class="dg-score-sub">${pz.tune.answer}</div>
+        <div class="gwp-reveal">${pz.reveal}</div>
+        <button class="dg-cta" data-done>Continue</button>
+      </div>`;
+    g.el.querySelector("[data-done]").onclick = () => g.finish(fields.length - c, `${c}/${fields.length}`);
   }
+
   function render() {
-    const dots = REVEAL.map((_, i) => `<span class="gw-dot ${i < step ? "used" : i === step ? "cur" : ""}"></span>`).join("");
+    const hearts = "❤️".repeat(LIVES - mistakes) + "🖤".repeat(mistakes);
+    const rows = fields.map((f, i) => `
+      <div class="gwp-row ${locked[i] ? "ok" : ""}">
+        <span class="gwp-lbl">${f.label}</span>
+        ${locked[i]
+          ? `<span class="gwp-ans">✓ ${f.answer}</span>`
+          : `<input data-i="${i}" placeholder="…" autocomplete="off" autocapitalize="off">
+             <button class="gwp-go" data-go="${i}">✓</button>`}
+      </div>`).join("");
     g.el.innerHTML = `
       <div class="dg">
         <button class="dg-x" data-quit>✕</button>
         <div class="dg-name">Guess Who</div>
-        <div class="dg-q">Name the tune. Skip to unlock more.</div>
-        <div class="gw-dots">${dots}</div>
-        <button class="dg-cta" data-play>▶ Play ${REVEAL[step]}s</button>
-        <div class="gw-guess">
-          <input id="gw-in" list="gw-list" placeholder="Type the tune…" autocomplete="off">
-          <datalist id="gw-list">${titles.map((t) => `<option value="${t}">`).join("")}</datalist>
-        </div>
-        <div class="dg-actions">
-          <button class="dg-opt gw-skip" data-skip>Skip ⏭ (+time)</button>
-          <button class="dg-opt gw-submit" data-guess>Guess</button>
-        </div>
-        <div class="dg-result" id="gw-res"></div>
+        <div class="dg-lives">${hearts}</div>
+        <button class="dg-cta gwp-play" data-play>${audio.paused ? "▶ Play the track" : "⏸ Pause"}</button>
+        <div class="dg-q">Name the tune and who's playing what. ${LIVES} misses and it's over — and when the song ends, time's up.</div>
+        <div class="gwp-fields">${rows}</div>
+        <div class="dg-result" id="gwp-res"></div>
       </div>`;
     g.el.querySelector("[data-quit]").onclick = () => { stopAudio(); g.quit(); };
-    g.el.querySelector("[data-play]").onclick = playSnippet;
-    g.el.querySelector("[data-skip]").onclick = skip;
-    g.el.querySelector("[data-guess]").onclick = guess;
-    g.el.querySelector("#gw-in").addEventListener("keydown", (e) => { if (e.key === "Enter") guess(); });
+    g.el.querySelector("[data-play]").onclick = () => {
+      if (audioBroken) return;
+      if (audio.paused) { try { audio.play(); } catch (_) {} } else { stopAudio(); }
+      const b = g.el.querySelector("[data-play]"); if (b) b.textContent = audio.paused ? "▶ Play the track" : "⏸ Pause";
+    };
+    g.el.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => submit(parseInt(b.dataset.go, 10))));
+    g.el.querySelectorAll("input[data-i]").forEach((inp) => {
+      inp.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(parseInt(inp.dataset.i, 10)); });
+    });
   }
-  function guess() {
-    if (done) return;
-    const v = norm(g.el.querySelector("#gw-in").value);
-    if (!v) return;
-    const ok = norm(clip.title) === v || (clip.aliases || []).some((a) => norm(a) === v);
-    if (ok) return end(true);
-    const res = g.el.querySelector("#gw-res"); res.textContent = "❌ not it — skip for more, or try again"; res.className = "dg-result wrong";
-    skip();
+  function submit(i) {
+    if (done || locked[i]) return;
+    const inp = g.el.querySelector(`input[data-i="${i}"]`);
+    const v = (inp && inp.value) || "";
+    if (!norm(v)) return;
+    if (gwMatch(v, fields[i])) {
+      locked[i] = true;
+      if (correctCount() === fields.length) return end();
+      render(); // audio is a standalone JS object, so it keeps playing across re-renders
+      const res = g.el.querySelector("#gwp-res"); res.textContent = "✅ got it"; res.className = "dg-result ok";
+    } else {
+      mistakes++;
+      if (mistakes >= LIVES) return end();
+      render();
+      const res = g.el.querySelector("#gwp-res"); res.textContent = `❌ not it — ${LIVES - mistakes} left`; res.className = "dg-result wrong";
+    }
   }
-  function skip() {
-    if (done) return;
-    step++;
-    if (step >= REVEAL.length) return end(false);
-    render(); playSnippet();
-  }
-  render(); playSnippet();
+  render();
 }
 
 export const DAILY_RUNNERS = { interval: runInterval, leap: runLeap, mistuned: runMistuned, prog: runProg, guesswho: runGuessWho };

@@ -73,6 +73,33 @@ export function setupHub(ctx) {
     return s.count;
   }
 
+  // Guest profile (for players who skip Google sign-in) — stored locally.
+  function loadGuest() { try { return JSON.parse(localStorage.getItem("pt.guest")) || null; } catch (_) { return null; } }
+  function saveGuest(o) { try { localStorage.setItem("pt.guest", JSON.stringify(o)); } catch (_) {} }
+  function myName() { if (me && me.profile && me.profile.username) return me.profile.username; const g = loadGuest(); return g ? g.username : null; }
+  function myAvatar() { if (me && me.profile && me.profile.avatar_url) return me.profile.avatar_url; const g = loadGuest(); return g ? g.avatar : null; }
+  // Downscale a picked image to a small square data URL so it fits localStorage.
+  function fileToAvatar(file) {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const S = 220, c = document.createElement("canvas"); c.width = c.height = S;
+          const ctx2 = c.getContext("2d");
+          const scale = Math.max(S / img.width, S / img.height);
+          const w = img.width * scale, h = img.height * scale;
+          ctx2.drawImage(img, (S - w) / 2, (S - h) / 2, w, h);
+          resolve(c.toDataURL("image/jpeg", 0.82));
+        };
+        img.onerror = () => resolve(null);
+        img.src = reader.result;
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(file);
+    });
+  }
+
   // Temp gate so friends don't wander into the dev trainers.
   const LAB_PW = "temp";
   function tryLab() {
@@ -109,8 +136,8 @@ export function setupHub(ctx) {
     if (active === null) { document.body.classList.remove("show-tabs"); return; }
     const bar = ensureTabbar();
     bar.innerHTML = TABS.map((t) => {
-      const pic = t.k === "me" && me && me.profile && me.profile.avatar_url;
-      const inner = pic ? `<img class="tab-pic" src="${me.profile.avatar_url}">` : `<span class="tab-ic">${t.ic}</span>`;
+      const pic = t.k === "me" && myAvatar();
+      const inner = pic ? `<img class="tab-pic" src="${pic}">` : `<span class="tab-ic">${t.ic}</span>`;
       return `<button class="tab-btn ${t.k === active ? "active" : ""}" data-tab="${t.k}"><span class="tab-badge">${inner}</span><span>${t.label}</span></button>`;
     }).join("");
     bar.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => onTab(b.dataset.tab)));
@@ -164,6 +191,17 @@ export function setupHub(ctx) {
         ${signinStrip}
         <div class="hub-section-label">Today's puzzles</div>
         <div class="hub-cards">${cards}</div>
+        <div class="hub-section-label" style="margin-top:1.6rem">Need help focusing?</div>
+        <div class="hub-cards">
+          <button class="hub-card" data-practice>
+            <div class="hub-icon" style="background:#a78bfa">🧘</div>
+            <div class="hub-card-body">
+              <div class="hub-card-title">Practice</div>
+              <div class="hub-card-sub">A calm, timed routine to lock in</div>
+            </div>
+            <span class="hub-tag play">Open</span>
+          </button>
+        </div>
         <button class="hub-lab" data-lab>🔒 Lucas's Lab</button>
         <div class="hub-foot">One attempt per game, per day. Build your streak. 🎧</div>
       </div>`;
@@ -171,6 +209,8 @@ export function setupHub(ctx) {
     home.querySelectorAll("[data-daily]").forEach((b) => b.addEventListener("click", () => ctx.goDaily(b.dataset.daily)));
     home.querySelectorAll("[data-micro]").forEach((b) => b.addEventListener("click", () => ctx.goMicrotone(b.dataset.micro)));
     home.querySelector("[data-lab]").addEventListener("click", tryLab);
+    const pb = home.querySelector("[data-practice]");
+    if (pb && ctx.goPractice) pb.addEventListener("click", () => ctx.goPractice());
     const si = home.querySelector("#home-signin");
     if (si) si.addEventListener("click", () => signInGoogle());
 
@@ -207,9 +247,52 @@ export function setupHub(ctx) {
     const g = document.getElementById("ob-google");
     if (g) g.addEventListener("click", () => signInGoogle());
     document.getElementById("ob-skip").addEventListener("click", () => {
-      localStorage.setItem("pt.welcome", "1");
-      const o = document.getElementById("onboard"); if (o) o.remove();
+      // Even guests need a name + photo before playing.
+      if (loadGuest()) { localStorage.setItem("pt.welcome", "1"); const o = document.getElementById("onboard"); if (o) o.remove(); return; }
+      openGuestSetup(() => {
+        localStorage.setItem("pt.welcome", "1");
+        const o = document.getElementById("onboard"); if (o) o.remove();
+        renderHome();
+      });
     });
+  }
+
+  // Required guest profile: username + photo, saved locally. No skipping past it.
+  function openGuestSetup(onDone) {
+    const cur = loadGuest() || {};
+    document.body.insertAdjacentHTML("beforeend", `
+      <div class="modal" id="guest-modal" style="z-index:95">
+        <div class="modal-card">
+          <div class="modal-title">Pick a name &amp; photo</div>
+          <p class="welcome-p" style="margin:-0.4rem 0 1rem">Playing as a guest — you still need these so friends know who you are.</p>
+          <label class="modal-avatar" id="guest-pic">
+            ${cur.avatar ? `<img src="${cur.avatar}">` : `<span>＋ photo</span>`}
+            <input type="file" id="guest-file" accept="image/*" hidden>
+          </label>
+          <input class="modal-input" id="guest-name" placeholder="username" value="${cur.username || ""}" maxlength="20">
+          <div class="modal-err" id="guest-err"></div>
+          <button class="dg-cta" id="guest-save">Start playing</button>
+          <div class="modal-actions"><button class="ghost" id="guest-google">actually, sign in with Google</button></div>
+        </div>
+      </div>`);
+    let avatar = cur.avatar || null;
+    const modal = document.getElementById("guest-modal");
+    document.getElementById("guest-file").addEventListener("change", async (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      document.getElementById("guest-pic").innerHTML = `<span>…</span>`;
+      avatar = await fileToAvatar(f);
+      if (avatar) document.getElementById("guest-pic").innerHTML = `<img src="${avatar}">`;
+    });
+    document.getElementById("guest-save").addEventListener("click", () => {
+      const name = document.getElementById("guest-name").value.trim();
+      const err = document.getElementById("guest-err");
+      if (!name) { err.textContent = "Pick a username."; return; }
+      if (!avatar) { err.textContent = "Add a profile photo."; return; }
+      saveGuest({ username: name, avatar });
+      modal.remove();
+      if (onDone) onDone();
+    });
+    document.getElementById("guest-google").addEventListener("click", () => signInGoogle());
   }
 
   // =========================================================================
@@ -314,16 +397,27 @@ export function setupHub(ctx) {
     await loadMe();
     setTabs("me");
     if (!socialConfigured() || !me || !me.session) {
+      const guest = loadGuest();
+      const streakN = currentStreak();
+      const av = guest && guest.avatar;
       daily.innerHTML = `
         <div class="prof">
           <div class="prof-head">
-            <div class="prof-avatar ph">👤</div>
-            <div class="prof-name">Not signed in</div>
-            <div class="prof-sub">Sign in to save scores, streaks &amp; compete.</div>
+            ${av ? `<img class="prof-avatar" src="${av}">` : `<div class="prof-avatar ph">👤</div>`}
+            <div class="prof-name">${guest ? esc(guest.username) : "Not signed in"}</div>
+            <div class="prof-sub">${guest ? "playing as guest · scores stay on this device" : "Add a name &amp; photo to start."}</div>
           </div>
-          <button class="google-btn" id="p-signin"><span class="g-badge">G</span> Sign in with Google</button>
+          ${guest ? `<div class="prof-stats">
+            <div class="prof-stat"><div class="ps-big streak">${streakN}</div><div class="ps-lbl">Streak</div></div>
+            <div class="prof-stat"><div class="ps-big">${scoredGames().filter((x) => loadDaily(x.id).date === todayStr()).length}/${scoredGames().length}</div><div class="ps-lbl">Today</div></div>
+            <div class="prof-stat"><div class="ps-big">${loadStreak().count || 0}</div><div class="ps-lbl">Best run</div></div>
+          </div>` : ""}
+          <div class="signin-strip"><div class="ss-txt"><b>Join the leaderboard</b><span>Sign in to compete with friends.</span></div><button id="p-signin2">Sign in</button></div>
+          ${guest ? `<button class="prof-edit-btn" id="p-guest-edit">✏️ Edit guest profile</button>` : `<button class="google-btn" id="p-guest-new">Add name &amp; photo</button>`}
         </div>`;
-      const b = daily.querySelector("#p-signin"); if (b) b.addEventListener("click", () => signInGoogle());
+      const s2 = daily.querySelector("#p-signin2"); if (s2) s2.addEventListener("click", () => signInGoogle());
+      const ge = daily.querySelector("#p-guest-edit"); if (ge) ge.addEventListener("click", () => openGuestSetup(() => renderProfile()));
+      const gn = daily.querySelector("#p-guest-new"); if (gn) gn.addEventListener("click", () => openGuestSetup(() => renderProfile()));
       return;
     }
     const p = me.profile || {};
