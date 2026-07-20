@@ -150,7 +150,7 @@ export function setupHub(ctx) {
   async function renderHome() {
     const d = new Date();
     const dateStr = d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
-    const cards = playableGames().map((game) => {
+    const cards = scoredGames().map((game) => {
       const isDaily = !game.micro;
       const rec = isDaily ? loadDaily(game.id) : {};
       const played = isDaily && rec.date === todayStr();
@@ -198,6 +198,14 @@ export function setupHub(ctx) {
             <div class="hub-card-body">
               <div class="hub-card-title">Practice</div>
               <div class="hub-card-sub">A calm, timed routine to lock in</div>
+            </div>
+            <span class="hub-tag play">Open</span>
+          </button>
+          <button class="hub-card" data-micro="micro">
+            <div class="hub-icon" style="background:#10b981">🎛️</div>
+            <div class="hub-card-body">
+              <div class="hub-card-title">Quarter-tones</div>
+              <div class="hub-card-sub">Practice microtonal intervals</div>
             </div>
             <span class="hub-tag play">Open</span>
           </button>
