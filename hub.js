@@ -305,14 +305,20 @@ export function setupHub(ctx) {
     if (isStandalone()) return;
     if (localStorage.getItem("pt.a2hs") === "1") return;
     localStorage.setItem("pt.a2hs", "1");
-    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    const ua = navigator.userAgent;
+    const chrome = /CriOS/i.test(ua) || (/Chrome|Chromium/i.test(ua) && !/Edg|OPR/i.test(ua));
+    const iosSafari = /iphone|ipad|ipod/i.test(ua) && !/CriOS|FxiOS|EdgiOS/i.test(ua);
     const shareIcon = `<svg class="a2hs-ic" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="M8 8l4-4 4 4"/><path d="M5 12v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-7"/></svg>`;
     const plusIcon = `<svg class="a2hs-ic" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M12 8v8M8 12h8"/></svg>`;
     const phone = `<svg class="a2hs-phone" viewBox="0 0 120 120"><rect x="30" y="8" width="60" height="104" rx="12" fill="#eef4ef" stroke="#16a34a" stroke-width="2"/><rect x="40" y="22" width="40" height="40" rx="9" fill="#16a34a"/><text x="60" y="49" font-size="22" text-anchor="middle" fill="#fff">🎧</text><rect x="40" y="70" width="40" height="7" rx="3" fill="#c7d3ca"/><rect x="40" y="82" width="26" height="6" rx="3" fill="#dce7df"/><circle cx="60" cy="104" r="4" fill="#c7d3ca"/></svg>`;
-    const steps = ios
+    const steps = iosSafari
       ? `<div class="a2hs-step"><span class="a2hs-num">1</span><div class="a2hs-txt">Tap the <b>Share</b> button at the bottom of Safari</div>${shareIcon}</div>
          <div class="a2hs-step"><span class="a2hs-num">2</span><div class="a2hs-txt">Scroll down and tap <b>Add to Home Screen</b></div>${plusIcon}</div>
          <div class="a2hs-step"><span class="a2hs-num">3</span><div class="a2hs-txt">Tap <b>Add</b> — Pitches now opens like a real app 🎉</div></div>`
+      : chrome
+      ? `<div class="a2hs-step"><span class="a2hs-num">1</span><div class="a2hs-txt">Tap the <b>Share</b> button at the top</div>${shareIcon}</div>
+         <div class="a2hs-step"><span class="a2hs-num">2</span><div class="a2hs-txt">Tap <b>View more</b></div></div>
+         <div class="a2hs-step"><span class="a2hs-num">3</span><div class="a2hs-txt">Scroll down and tap <b>Add to Home Screen</b></div>${plusIcon}</div>`
       : `<div class="a2hs-step"><span class="a2hs-num">1</span><div class="a2hs-txt">Open the browser <b>⋮ menu</b> (top right)</div></div>
          <div class="a2hs-step"><span class="a2hs-num">2</span><div class="a2hs-txt">Tap <b>Install app</b> / <b>Add to Home screen</b></div>${plusIcon}</div>
          <div class="a2hs-step"><span class="a2hs-num">3</span><div class="a2hs-txt">Confirm — Pitches now opens like a real app 🎉</div></div>`;
