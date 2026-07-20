@@ -4,8 +4,7 @@
 
 import {
   socialConfigured, getSession, signInGoogle, signOut, getProfile, saveProfile, submitScore, leaderboard,
-  myId, listProfiles, createPost, fetchFeed, fetchComments, addComment,
-  listThreads, fetchThread, sendMessage, subscribeChanges,
+  fetchComments, addComment, subscribeChanges,
 } from "./social.js";
 import { DAILY_RUNNERS } from "./dailygames.js";
 
@@ -44,10 +43,9 @@ export function setupHub(ctx) {
   const DAILIES = [
     { id: "leap", title: "Compound Leap", sub: "Notes octaves apart", icon: "🪃", color: "#7bd88f", show: true },
     { id: "guesswho", title: "Guess Who", sub: "Name that jazz tune", icon: "🎧", color: "#f2994a", show: true },
-    { id: "jndm", title: "JND", sub: "Smallest gap you can hear", icon: "📏", color: "#22c55e", show: true, micro: "jnd" },
-    { id: "quarter", title: "Quarter-tones", sub: "Name the microtonal interval", icon: "🎛️", color: "#10b981", show: true, micro: "micro" },
+    { id: "jnd", title: "JND", sub: "Smallest gap you can hear", icon: "📏", color: "#22c55e", show: true },
+    { id: "quarter", title: "Quarter-tones", sub: "Practice microtonal intervals", icon: "🎛️", color: "#10b981", show: true, micro: "micro" },
     // Hidden for now — code kept, flip `show: true` to bring back.
-    { id: "jnd", title: "Smallest Interval", sub: "How fine is your ear today?", icon: "📏", color: "#22c55e", show: false },
     { id: "interval", title: "Interval Ear", sub: "Name the interval between two notes", icon: "🎼", color: "#f2c94c", show: false },
     { id: "prog", title: "Chord Progression", sub: "Name the diatonic changes", icon: "🎹", color: "#f79f5b", show: false },
     { id: "mistuned", title: "Spot the Sour Note", sub: "Which note is out of tune?", icon: "🍋", color: "#eb5757", show: false },
@@ -91,7 +89,6 @@ export function setupHub(ctx) {
   const TABS = [
     { k: "home", ic: "🏠", label: "Play" },
     { k: "board", ic: "🏆", label: "Board" },
-    { k: "social", ic: "💬", label: "Social" },
     { k: "me", ic: "👤", label: "Me" },
   ];
   let tabbar = null;
@@ -105,7 +102,6 @@ export function setupHub(ctx) {
   function onTab(k) {
     if (k === "home") return ctx.goHome();
     if (k === "board") return ctx.goDaily("board");
-    if (k === "social") return ctx.goDaily("feed");
     if (k === "me") return ctx.goDaily("profile");
   }
   // active = tab key to highlight, "" = show with none active, null = hide the bar.
@@ -366,9 +362,7 @@ export function setupHub(ctx) {
 
   async function startDaily(id) {
     try { await Tone.start(); } catch (_) {}
-    if (id === "feed") return renderFeed();
-    if (id === "dms") return renderDMs();
-    if (id === "board") return renderBoard();
+    if (id === "feed" || id === "dms" || id === "board") return renderBoard();
     if (id === "profile") return renderProfile();
     const rec = loadDaily(id);
     if (rec.date === todayStr()) return renderDailyDone(id, rec, false);
@@ -454,25 +448,7 @@ export function setupHub(ctx) {
       </div>`;
     daily.querySelectorAll("[data-home]").forEach((b) => b.addEventListener("click", () => ctx.goHome()));
     const lb = daily.querySelector("[data-lb]");
-    if (lb) lb.addEventListener("click", () => showLeaderboard(id, rec.date));
-  }
-  async function showLeaderboard(gameId, date) {
-    setTabs("board");
-    daily.innerHTML = `
-      <div class="dg dg-result">
-        <button class="dg-x" data-home>✕</button>
-        <div class="dg-name">Leaderboard · ${gameMeta(gameId).title}</div>
-        <div class="dg-score-sub">${date} — top of the list wins</div>
-        <div class="lb" id="lb">loading…</div>
-        <button class="dg-cta" data-home>Back to games</button>
-      </div>`;
-    daily.querySelectorAll("[data-home]").forEach((b) => b.addEventListener("click", () => ctx.goHome()));
-    await loadMe();
-    if (!me || !me.session) { document.getElementById("lb").innerHTML = `<div class="lb-empty">Sign in to appear here.</div>`; return; }
-    const rows = await leaderboard(gameId, date);
-    const el = document.getElementById("lb");
-    if (!rows.length) { el.innerHTML = `<div class="lb-empty">No scores yet today — be the first!</div>`; return; }
-    el.innerHTML = rows.map((r, i) => lbRow(r, i)).join("");
+    if (lb) lb.addEventListener("click", () => { boardGame = id; renderBoard(); });
   }
   function lbRow(r, i) {
     const p = r.profiles || {};
@@ -498,151 +474,101 @@ export function setupHub(ctx) {
     return `${Math.floor(s / 86400)}d`;
   }
   function esc(s) { return (s || "").replace(/[&<>]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[m])); }
-  function socSeg(active) {
-    return `<div class="soc-seg">
-      <button data-seg="feed" class="${active === "feed" ? "on" : ""}">Feed</button>
-      <button data-seg="dms" class="${active === "dms" ? "on" : ""}">Messages</button>
-    </div>`;
-  }
-  function wireSeg(container) {
-    container.querySelectorAll("[data-seg]").forEach((b) => b.addEventListener("click", () => {
-      if (b.dataset.seg === "feed") renderFeed(); else renderDMs();
-    }));
-  }
-
-  async function renderFeed() {
-    setTabs("social");
-    await loadMe();
-    if (!me || !me.session) { requireSignIn("the feed"); return; }
-    daily.innerHTML = `
-      <div class="soc">
-        <div class="soc-title-row"><div class="soc-title">Social</div></div>
-        ${socSeg("feed")}
-        <div class="soc-compose"><input id="feed-post" placeholder="Say something…" maxlength="240"><button id="feed-send">Post</button></div>
-        <div class="soc-list" id="feed-list">loading…</div>
-      </div>`;
-    wireSeg(daily);
-    daily.querySelector("#feed-send").addEventListener("click", async () => {
-      const inp = daily.querySelector("#feed-post"); const v = inp.value.trim();
-      if (!v) return; inp.value = ""; await createPost(v); loadFeedList();
-    });
-    stopRT(); rtChannel = await subscribeChanges(() => loadFeedList());
-    loadFeedList();
-  }
-  async function loadFeedList() {
-    const el = daily.querySelector("#feed-list"); if (!el) return;
-    const items = await fetchFeed(40);
-    if (!items.length) { el.innerHTML = `<div class="lb-empty">No activity yet. Post something or play a game!</div>`; return; }
-    el.innerHTML = items.map((it) => {
-      const u = it.user || {};
-      const line = it.kind === "score"
-        ? `scored <b>${esc(it.label)}</b> on ${esc(gameMeta(it.game_id).title)}`
-        : `${esc(it.body)}`;
-      return `<div class="feed-item" data-tt="${it.kind}" data-ti="${it.id}">
-        <div class="feed-head">
-          ${u.avatar_url ? `<img class="lb-pic" src="${u.avatar_url}">` : `<span class="lb-pic ph"></span>`}
-          <span class="feed-name">${esc(u.username || "player")}</span>
-          <span class="feed-ago">${ago(it.t)}</span>
-        </div>
-        <div class="feed-body">${line}</div>
-        <button class="feed-cmt" data-cmt>💬 comments</button>
-        <div class="feed-comments" hidden></div>
-      </div>`;
-    }).join("");
-    el.querySelectorAll(".feed-item").forEach((item) => {
-      item.querySelector("[data-cmt]").addEventListener("click", () => toggleComments(item, item.dataset.tt, item.dataset.ti));
-    });
-  }
-  async function toggleComments(item, tt, ti) {
-    const box = item.querySelector(".feed-comments");
-    if (!box.hidden) { box.hidden = true; return; }
-    box.hidden = false; box.innerHTML = "loading…";
-    const cs = await fetchComments(tt, ti);
-    box.innerHTML = cs.map((c) => `<div class="cmt"><b>${esc((c.profiles || {}).username || "player")}</b> ${esc(c.body)}</div>`).join("")
-      + `<div class="cmt-add"><input placeholder="comment…" maxlength="200"><button>send</button></div>`;
-    const inp = box.querySelector("input"), btn = box.querySelector("button");
-    btn.addEventListener("click", async () => { const v = inp.value.trim(); if (!v) return; inp.value = ""; await addComment(tt, ti, v); box.hidden = true; toggleComments(item, tt, ti); });
-  }
-
-  async function renderDMs() {
-    setTabs("social");
-    await loadMe();
-    if (!me || !me.session) { requireSignIn("messages"); return; }
-    daily.innerHTML = `
-      <div class="soc">
-        <div class="soc-title-row"><div class="soc-title">Social</div><button class="soc-new" id="dm-new">＋</button></div>
-        ${socSeg("dms")}
-        <div class="soc-list" id="dm-list">loading…</div>
-      </div>`;
-    wireSeg(daily);
-    daily.querySelector("#dm-new").addEventListener("click", newDM);
-    const threads = await listThreads();
-    const el = daily.querySelector("#dm-list");
-    el.innerHTML = threads.length ? threads.map((t) => `
-      <button class="dm-thread" data-other="${t.otherId}">
-        ${(t.profile || {}).avatar_url ? `<img class="lb-pic" src="${t.profile.avatar_url}">` : `<span class="lb-pic ph"></span>`}
-        <span class="feed-name">${esc((t.profile || {}).username || "player")}</span>
-        <span class="dm-last">${esc(t.body)}</span>
-      </button>`).join("") : `<div class="lb-empty">No messages yet. Tap ＋ to start one.</div>`;
-    el.querySelectorAll(".dm-thread").forEach((b) => b.addEventListener("click", () => renderThread(b.dataset.other)));
-  }
-  async function newDM() {
-    const meId = await myId();
-    const people = (await listProfiles()).filter((p) => p.id !== meId);
-    const el = daily.querySelector("#dm-list");
-    el.innerHTML = people.length ? people.map((p) => `
-      <button class="dm-thread" data-other="${p.id}">
-        ${p.avatar_url ? `<img class="lb-pic" src="${p.avatar_url}">` : `<span class="lb-pic ph"></span>`}
-        <span class="feed-name">${esc(p.username)}</span>
-      </button>`).join("") : `<div class="lb-empty">No other players yet.</div>`;
-    el.querySelectorAll(".dm-thread").forEach((b) => b.addEventListener("click", () => renderThread(b.dataset.other)));
-  }
-  async function renderThread(otherId) {
-    setTabs("social");
-    daily.innerHTML = `
-      <div class="soc">
-        <div class="soc-title-row"><button class="dg-x" data-back>‹</button><div class="soc-title">Chat</div><div style="width:32px"></div></div>
-        <div class="dm-msgs" id="dm-msgs">loading…</div>
-        <div class="soc-compose"><input id="dm-input" placeholder="Message…" maxlength="500"><button id="dm-send">Send</button></div>
-      </div>`;
-    daily.querySelector("[data-back]").addEventListener("click", renderDMs);
-    async function refresh() {
-      const meId = await myId();
-      const msgs = await fetchThread(otherId);
-      const el = daily.querySelector("#dm-msgs"); if (!el) return;
-      el.innerHTML = msgs.map((m) => `<div class="bubble ${m.sender === meId ? "mine" : ""}">${esc(m.body)}</div>`).join("");
-      el.scrollTop = el.scrollHeight;
-    }
-    daily.querySelector("#dm-send").addEventListener("click", async () => {
-      const inp = daily.querySelector("#dm-input"); const v = inp.value.trim(); if (!v) return; inp.value = "";
-      await sendMessage(otherId, v); refresh();
-    });
-    stopRT(); rtChannel = await subscribeChanges(() => refresh());
-    refresh();
-  }
-
-  // Leaderboard page with per-game tabs (the "Board" tab)
-  let boardGame = "leap";
+  // =========================================================================
+  // BOARD — Overall + per-game leaderboards + a daily comment thread.
+  // (Feed + DMs removed for simplicity; social.js keeps the API if we return.)
+  // =========================================================================
+  let boardGame = "overall";
   async function renderBoard() {
     setTabs("board");
     stopRT();
     const games = scoredGames();
-    if (!games.find((g) => g.id === boardGame)) boardGame = games[0] ? games[0].id : "leap";
-    const tabs = games.map((g) => `<button class="board-tab ${g.id === boardGame ? "active" : ""}" data-g="${g.id}">${g.icon} ${g.title}</button>`).join("");
+    if (boardGame !== "overall" && !games.find((g) => g.id === boardGame)) boardGame = "overall";
+    const tabs = [`<button class="board-tab ${boardGame === "overall" ? "active" : ""}" data-g="overall">⭐ Overall</button>`]
+      .concat(games.map((g) => `<button class="board-tab ${g.id === boardGame ? "active" : ""}" data-g="${g.id}">${g.icon} ${g.title}</button>`)).join("");
+    const dateNice = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
     daily.innerHTML = `
       <div class="soc">
         <div class="soc-title-row"><div class="soc-title">🏆 Leaderboard</div></div>
         <div class="board-tabs">${tabs}</div>
-        <div class="board-sub" id="board-sub">${todayStr()}</div>
+        <div class="board-sub">${dateNice}</div>
         <div class="lb" id="board-lb">loading…</div>
+        <div class="board-cmts" id="board-cmts"></div>
       </div>`;
     daily.querySelectorAll("[data-g]").forEach((b) => b.addEventListener("click", () => { boardGame = b.dataset.g; renderBoard(); }));
     await loadMe();
     const el = daily.querySelector("#board-lb");
-    if (!me || !me.session) { el.innerHTML = `<div class="lb-empty">Sign in to see the board.</div>`; return; }
-    const rows = await leaderboard(boardGame, todayStr());
+    if (!me || !me.session) {
+      el.innerHTML = `<div class="lb-empty">Sign in to see the board.</div>
+        <button class="google-btn" id="bd-signin"><span class="g-badge">G</span> Sign in with Google</button>`;
+      el.querySelector("#bd-signin").addEventListener("click", () => signInGoogle());
+      return;
+    }
+    if (boardGame === "overall") await renderOverall(el); else await renderGameBoard(el, boardGame);
+    renderBoardComments();
+    stopRT(); rtChannel = await subscribeChanges(() => { if (boardGame) refreshBoardLive(); });
+  }
+  async function refreshBoardLive() {
+    const el = daily.querySelector("#board-lb"); if (!el) return;
+    if (boardGame === "overall") await renderOverall(el); else await renderGameBoard(el, boardGame);
+    loadBoardComments();
+  }
+  async function renderGameBoard(el, gameId) {
+    const rows = await leaderboard(gameId, todayStr());
     if (!rows.length) { el.innerHTML = `<div class="lb-empty">No scores yet today — play and be first!</div>`; return; }
     el.innerHTML = rows.map((r, i) => lbRow(r, i)).join("");
+  }
+  // Overall = average rank across today's games (lower is better). Playing more
+  // games never hurts you vs someone with the same avg; ties break on games played.
+  async function renderOverall(el) {
+    const games = scoredGames();
+    const boards = await Promise.all(games.map((g) => leaderboard(g.id, todayStr())));
+    const players = new Map(); // uid -> { profile, ranks: [], uid }
+    boards.forEach((rows) => rows.forEach((r, i) => {
+      if (!players.has(r.user_id)) players.set(r.user_id, { uid: r.user_id, profile: r.profiles || {}, ranks: [] });
+      players.get(r.user_id).ranks.push(i + 1);
+    }));
+    const list = [...players.values()].map((p) => ({
+      ...p,
+      avg: p.ranks.reduce((a, b) => a + b, 0) / p.ranks.length,
+      n: p.ranks.length,
+    })).sort((a, b) => a.avg - b.avg || b.n - a.n);
+    if (!list.length) { el.innerHTML = `<div class="lb-empty">No scores yet today — play and be first!</div>`; return; }
+    el.innerHTML = list.map((p, i) => {
+      const mine = me && me.session && p.uid === me.session.user.id;
+      return `<div class="lb-row ${mine ? "me" : ""}">
+        <span class="lb-rank">${i + 1}</span>
+        ${p.profile.avatar_url ? `<img class="lb-pic" src="${p.profile.avatar_url}">` : `<span class="lb-pic ph"></span>`}
+        <span class="lb-name">${esc(p.profile.username || "player")}</span>
+        <span class="lb-score">avg #${p.avg.toFixed(1)} · ${p.n}/${scoredGames().length}</span>
+      </div>`;
+    }).join("");
+  }
+  // Daily comment thread per board tab (target: "board", "<tab>:<date>").
+  function boardThreadId() { return `${boardGame}:${todayStr()}`; }
+  function renderBoardComments() {
+    const box = daily.querySelector("#board-cmts"); if (!box) return;
+    if (!me || !me.session) { box.innerHTML = ""; return; }
+    box.innerHTML = `
+      <div class="panel-title" style="margin:1.1rem 0 0.5rem">💬 Trash talk</div>
+      <div id="bc-list" class="bc-list">loading…</div>
+      <div class="cmt-add"><input id="bc-input" placeholder="Say something…" maxlength="200"><button id="bc-send">Send</button></div>`;
+    daily.querySelector("#bc-send").addEventListener("click", sendBoardComment);
+    daily.querySelector("#bc-input").addEventListener("keydown", (e) => { if (e.key === "Enter") sendBoardComment(); });
+    loadBoardComments();
+  }
+  async function sendBoardComment() {
+    const inp = daily.querySelector("#bc-input"); if (!inp) return;
+    const v = inp.value.trim(); if (!v) return; inp.value = "";
+    await addComment("board", boardThreadId(), v);
+    loadBoardComments();
+  }
+  async function loadBoardComments() {
+    const el = daily.querySelector("#bc-list"); if (!el) return;
+    const cs = await fetchComments("board", boardThreadId());
+    el.innerHTML = cs.length
+      ? cs.map((c) => `<div class="cmt"><b>${esc((c.profiles || {}).username || "player")}</b> ${esc(c.body)} <span class="feed-ago">${ago(c.created_at)}</span></div>`).join("")
+      : `<div class="lb-empty" style="padding:0.6rem">No comments yet — start the trash talk.</div>`;
   }
 
   function requireSignIn(what) {
