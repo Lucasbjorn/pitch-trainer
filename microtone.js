@@ -444,6 +444,7 @@ export function setupMicrotone(ctx) {
       if (ctx.setMidiHandler) ctx.setMidiHandler(midiRoute);
       try { await ctx.ensureSampleBank(); await Tone.start(); ready = true; } catch (_) {}
     },
+    openGame(id) { if (id) open(id); else renderHome(); }, // jump straight into one game
     exit() { active = false; cancelAuto(); g = null; if (ctx.clearMidiHandler) ctx.clearMidiHandler(); },
   };
 }

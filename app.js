@@ -1017,7 +1017,11 @@ function setTopView(v) {
 function goHome()      { setTopView("home"); document.body.classList.remove("solo-lab"); hubMod.renderHome(); }
 function goDaily(id)   { setTopView("daily"); hubMod.startDaily(id); }
 function goLucas()     { setTopView("lucas"); document.body.classList.remove("solo-lab"); switchMode("learn"); } // full Lab (password-gated in hub)
-function goMicrotone() { setTopView("lucas"); document.body.classList.add("solo-lab"); if (mode === "microtone") microtoneMod.enter(); else switchMode("microtone"); } // one game, no Lab nav
+async function goMicrotone(gameId) {
+  setTopView("lucas"); document.body.classList.add("solo-lab");
+  if (mode !== "microtone") await switchMode("microtone");
+  if (gameId) microtoneMod.openGame(gameId);   // e.g. jump straight to JND / Quarter-tones
+} // one game, no Lab nav
 const hubMod = setupHub({ Tone, PITCH_NAMES, setStatus, ensureSampleBank, getBank: () => sampleBank, ensurePiano, getPiano: () => piano, goHome, goDaily, goLucas, goMicrotone });
 
 // Resume Tone's audio context on the very first user interaction, so audio is

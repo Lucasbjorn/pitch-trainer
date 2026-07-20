@@ -3,8 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#111111" />
-  <title>Pitch Trainer</title>
+  <meta name="theme-color" content="#0e0f13" />
+  <link rel="manifest" href="manifest.json" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Ear Games" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <title>Ear Games</title>
   <style>
     :root { color-scheme: dark; }
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -618,6 +623,9 @@
     .modal-input { width: 100%; padding: 0.8rem 1rem; border-radius: 12px; border: 1px solid var(--line); background: var(--card2); color: var(--text); font-size: 1rem; font-family: inherit; text-align: center; }
     .modal-err { color: var(--muted); font-size: 0.85rem; min-height: 1.3em; margin: 0.6rem 0; }
     .modal-actions { display: flex; justify-content: center; gap: 1.2rem; margin-top: 0.8rem; }
+    .welcome-p { color: var(--muted); font-size: 0.95rem; line-height: 1.5; margin: 0 0 1rem; }
+    .welcome-tip { background: var(--card2); border: 1px solid var(--line); border-radius: 12px; padding: 0.8rem; font-size: 0.9rem; line-height: 1.5; color: var(--text); margin-bottom: 1rem; }
+    .welcome-tip b { color: var(--accent); }
 
     /* Leaderboard */
     .lb { width: 100%; max-width: 380px; margin: 1rem auto; }
@@ -695,6 +703,13 @@
     .prog-slot { min-width: 3rem; padding: 0.5rem 0.3rem; border-radius: 10px; background: var(--card2); border: 1px solid var(--line); color: var(--muted); font-weight: 700; }
     .prog-slot.cur { border-color: var(--accent); color: var(--accent); }
     .prog-slot.past { color: var(--good); }
+    .gw-dots { display: flex; gap: 0.4rem; justify-content: center; margin: 1rem 0; }
+    .gw-dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: var(--card2); border: 1px solid var(--line); }
+    .gw-dot.used { background: var(--bad); }
+    .gw-dot.cur { background: var(--accent); }
+    .gw-guess { width: 100%; max-width: 360px; margin: 0.5rem auto; }
+    .gw-guess input { width: 100%; padding: 0.9rem 1rem; border-radius: 12px; border: 1px solid var(--line); background: var(--card2); color: var(--text); font-size: 1rem; font-family: inherit; }
+    .gw-submit { background: var(--accent) !important; color: #fff !important; border-color: var(--accent) !important; }
 
     /* ---- Status ---- */
     #status {

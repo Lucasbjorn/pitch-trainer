@@ -40,13 +40,15 @@ export function setupHub(ctx) {
   // HOME
   // =========================================================================
   const DAILIES = [
-    { id: "leap", title: "Compound Leap", sub: "Notes octaves apart", icon: "🪃", color: "#7bd88f", live: true, show: true },
-    { id: "microtone", title: "Microtone", sub: "Quarter-tone ear games", icon: "🔬", color: "#a78bfa", live: true, show: true, lab: true },
+    { id: "leap", title: "Compound Leap", sub: "Notes octaves apart", icon: "🪃", color: "#7bd88f", show: true },
+    { id: "guesswho", title: "Guess Who", sub: "Name that jazz tune", icon: "🎧", color: "#f2994a", show: true },
+    { id: "jndm", title: "JND", sub: "Smallest gap you can hear", icon: "📏", color: "#6c8cff", show: true, micro: "jnd" },
+    { id: "quarter", title: "Quarter-tones", sub: "Name the microtonal interval", icon: "🎛️", color: "#a78bfa", show: true, micro: "micro" },
     // Hidden for now — code kept, flip `show: true` to bring back.
-    { id: "jnd", title: "Smallest Interval", sub: "How fine is your ear today?", icon: "📏", color: "#6c8cff", live: true, show: false },
-    { id: "interval", title: "Interval Ear", sub: "Name the interval between two notes", icon: "🎼", color: "#f2c94c", live: true, show: false },
-    { id: "prog", title: "Chord Progression", sub: "Name the diatonic changes", icon: "🎹", color: "#f79f5b", live: true, show: false },
-    { id: "mistuned", title: "Spot the Sour Note", sub: "Which note is out of tune?", icon: "🍋", color: "#eb5757", live: true, show: false },
+    { id: "jnd", title: "Smallest Interval", sub: "How fine is your ear today?", icon: "📏", color: "#6c8cff", show: false },
+    { id: "interval", title: "Interval Ear", sub: "Name the interval between two notes", icon: "🎼", color: "#f2c94c", show: false },
+    { id: "prog", title: "Chord Progression", sub: "Name the diatonic changes", icon: "🎹", color: "#f79f5b", show: false },
+    { id: "mistuned", title: "Spot the Sour Note", sub: "Which note is out of tune?", icon: "🍋", color: "#eb5757", show: false },
   ];
   function gameMeta(id) { return DAILIES.find((x) => x.id === id) || { title: id }; }
 
@@ -64,13 +66,14 @@ export function setupHub(ctx) {
     const d = new Date();
     const dateStr = d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
     const cards = DAILIES.filter((g) => g.show).map((game) => {
-      const rec = game.lab ? {} : loadDaily(game.id);
-      const played = !game.lab && rec.date === todayStr();
+      const daily = !game.micro;
+      const rec = daily ? loadDaily(game.id) : {};
+      const played = daily && rec.date === todayStr();
       let tag;
-      if (game.lab) tag = `<span class="hub-tag play">Open</span>`;
+      if (!daily) tag = `<span class="hub-tag play">Open</span>`;
       else if (played) tag = `<span class="hub-tag done">✓ ${rec.label || "done"}</span>`;
       else tag = `<span class="hub-tag play">Play</span>`;
-      const attr = game.lab ? `data-labgame="${game.id}"` : `data-daily="${game.id}"`;
+      const attr = game.micro ? `data-micro="${game.micro}"` : `data-daily="${game.id}"`;
       return `
         <button class="hub-card" ${attr}>
           <div class="hub-icon" style="background:${game.color}">${game.icon}</div>
@@ -97,11 +100,36 @@ export function setupHub(ctx) {
       </div>`;
 
     home.querySelectorAll("[data-daily]").forEach((b) => b.addEventListener("click", () => ctx.goDaily(b.dataset.daily)));
-    const mt = home.querySelector('[data-labgame="microtone"]'); if (mt) mt.addEventListener("click", () => ctx.goMicrotone());
+    home.querySelectorAll("[data-micro]").forEach((b) => b.addEventListener("click", () => ctx.goMicrotone(b.dataset.micro)));
     home.querySelector("[data-lab]").addEventListener("click", tryLab);
     const fb = home.querySelector("[data-feed]"); if (fb) fb.addEventListener("click", () => ctx.goDaily("feed"));
     const mb = home.querySelector("[data-dms]"); if (mb) mb.addEventListener("click", () => ctx.goDaily("dms"));
     refreshUser();
+    maybeWelcome();
+  }
+
+  // First-visit welcome + add-to-home-screen tip.
+  function maybeWelcome() {
+    if (localStorage.getItem("pt.welcome") === "1") return;
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    home.insertAdjacentHTML("beforeend", `
+      <div class="modal" id="welcome">
+        <div class="modal-card">
+          <div class="modal-title">🎧 Welcome to Ear Games</div>
+          <p class="welcome-p">A little set of daily ear-training puzzles to play with friends. One shot per game each day — try to beat everyone.</p>
+          <div class="welcome-tip">
+            <b>Add it to your home screen</b> so it opens like an app:
+            ${ios
+              ? `tap the <b>Share</b> button, then <b>Add to Home Screen</b>.`
+              : `open the browser menu, then <b>Install app</b> / <b>Add to Home screen</b>.`}
+          </div>
+          <button class="dg-cta" id="welcome-ok">Let's play</button>
+        </div>
+      </div>`);
+    home.querySelector("#welcome-ok").addEventListener("click", () => {
+      localStorage.setItem("pt.welcome", "1");
+      const w = home.querySelector("#welcome"); if (w) w.remove();
+    });
   }
 
   // ---- account chip + profile ----
