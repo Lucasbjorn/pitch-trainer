@@ -1014,7 +1014,8 @@ function setTopView(v) {
   document.body.classList.toggle("view-daily", v === "daily");
   document.body.classList.toggle("view-lucas", v === "lucas");
 }
-function goHome()      { setTopView("home"); document.body.classList.remove("solo-lab"); hubMod.renderHome(); }
+function goHome()      { setTopView("home"); document.body.classList.remove("solo-lab", "show-tabs"); hubMod.renderHome(); }
+sharedCtx.goHome = goHome;   // let the microtone module return to the app home
 function goDaily(id)   { setTopView("daily"); hubMod.startDaily(id); }
 function goLucas()     { setTopView("lucas"); document.body.classList.remove("solo-lab", "show-tabs"); switchMode("learn"); } // full Lab (password-gated in hub)
 async function goMicrotone(gameId) {

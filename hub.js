@@ -59,7 +59,8 @@ export function setupHub(ctx) {
     { id: "leap", title: "Compound Leap", sub: "Name the interval octaves apart", icon: "🪃", color: "#7bd88f", cardColor: "#bfe9cf", show: true },
     { id: "guesswho", title: "Guess Who", sub: "Name the tune & who's playing", icon: "🎧", color: "#f2994a", cardColor: "#ffe1a6", show: true },
     { id: "jnd", title: "JND", sub: "The smallest gap you can hear", icon: "📏", color: "#22c55e", cardColor: "#c8d8ff", show: true },
-    { id: "quarter", title: "Quarter-tones", sub: "Practice microtonal intervals", icon: "🎛️", color: "#10b981", cardColor: "#d7f0e2", show: true, micro: "micro" },
+    { id: "quarter", title: "Quarter-tones", sub: "Name intervals on the microtonal keyboard", icon: "🎛️", color: "#10b981", cardColor: "#d7f0e2", show: true, micro: "micro" },
+    { id: "onbtw", title: "On or Between", sub: "On a note, or wedged between two?", icon: "🎯", color: "#a78bfa", cardColor: "#ffd9e6", show: true, micro: "onbtw" },
     // Hidden for now — code kept, flip `show: true` to bring back.
     { id: "interval", title: "Interval Ear", sub: "Name the interval between two notes", icon: "🎼", color: "#f2c94c", show: false },
     { id: "prog", title: "Chord Progression", sub: "Name the diatonic changes", icon: "🎹", color: "#f79f5b", show: false },
@@ -193,7 +194,7 @@ export function setupHub(ctx) {
   async function renderHome() {
     const d = new Date();
     const dateStr = d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
-    const cards = scoredGames().map((game) => gameCard(game, "Daily puzzle")).join("");
+    const cards = playableGames().map((game) => gameCard(game, game.micro ? "Practice" : "Daily puzzle")).join("");
 
     await loadMe();
     const streakN = currentStreak();
@@ -220,7 +221,6 @@ export function setupHub(ctx) {
         <div class="hub-section-label" style="margin-top:1.6rem">Need help focusing?</div>
         <div class="hub-cards">
           ${gameCard({ id: "practice", title: "Practice", sub: "A calm, timed routine to lock in", icon: "🧘", cardColor: "#e6dbff", action: "data-practice" }, "Focus")}
-          ${gameCard(gameMeta("quarter"), "Practice")}
         </div>
         <button class="hub-lab" data-lab>🔒 Lucas's Lab</button>
         <div class="hub-foot">One attempt per game, per day. Build your streak. 🎧</div>
@@ -601,7 +601,31 @@ export function setupHub(ctx) {
     if (jnd.best == null) return finishDaily("jnd", JND_START * 2, "> 1 tone");
     finishDaily("jnd", jnd.best, fracLabel(jnd.best));
   }
-  // Month activity calendar — filled cell = you played that day.
+  // Grade a single game result 0..1 (1 = best) from its label, for the calendar
+  // heat colors. Handles "X/Y" accuracy (leap, guesswho) and "1/N tone" (jnd).
+  function gradeOne(label) {
+    if (!label) return null;
+    let m = label.match(/^(\d+)\s*\/\s*(\d+)$/);
+    if (m) return +m[1] / Math.max(1, +m[2]);
+    m = label.match(/1\/(\d+)\s*tone/i);
+    if (m) return Math.min(1, Math.log2(+m[1]) / 8);   // 1/256 tone → 1.0
+    if (/>\s*1\s*tone/i.test(label)) return 0;
+    return null;
+  }
+  function dayGrade(day) {
+    const gs = Object.values(day || {}).map((e) => gradeOne(e.label)).filter((v) => v != null);
+    if (!gs.length) return null;                       // played but ungraded
+    return gs.reduce((a, b) => a + b, 0) / gs.length;
+  }
+  function gradeClass(g) {
+    if (g == null) return "g4";                        // played, no grade → green
+    if (g >= 0.85) return "g4";                        // green
+    if (g >= 0.6) return "g3";                         // yellow
+    if (g >= 0.35) return "g2";                        // orange
+    return "g1";                                       // red
+  }
+  // Month activity calendar — filled cell = you played that day, colored by how
+  // well you did; tap a filled day to see that day's scores.
   function calendarHtml() {
     const now = new Date();
     const y = now.getFullYear(), m = now.getMonth(), todayD = now.getDate();
@@ -614,11 +638,32 @@ export function setupHub(ctx) {
     for (let i = 0; i < firstDow; i++) cells += `<div class="cal-cell empty"></div>`;
     for (let d = 1; d <= days; d++) {
       const ds = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-      const played = !!log[ds];
-      const cls = ["cal-cell", played ? "played" : "", d === todayD ? "today" : "", d > todayD ? "future" : ""].filter(Boolean).join(" ");
-      cells += `<div class="${cls}">${d}</div>`;
+      const day = log[ds];
+      const cls = ["cal-cell", day ? "played" : "", day ? gradeClass(dayGrade(day)) : "", d === todayD ? "today" : "", d > todayD ? "future" : ""].filter(Boolean).join(" ");
+      cells += `<div class="${cls}"${day ? ` data-day="${ds}"` : ""}>${d}</div>`;
     }
-    return `<div class="cal-wrap"><div class="cal-title">${monthName}</div><div class="cal-grid">${dow}${cells}</div></div>`;
+    return `<div class="cal-wrap"><div class="cal-title">${monthName}</div><div class="cal-grid">${dow}${cells}</div>
+      <div class="cal-legend"><span class="cal-leg g1"></span><span class="cal-leg g2"></span><span class="cal-leg g3"></span><span class="cal-leg g4"></span><span class="cal-leg-txt">tap a day for scores</span></div></div>`;
+  }
+  function wireCalendar(container) {
+    container.querySelectorAll(".cal-cell[data-day]").forEach((c) => c.addEventListener("click", () => showDayDetail(c.dataset.day)));
+  }
+  function showDayDetail(ds) {
+    const day = loadLog()[ds]; if (!day) return;
+    const nice = new Date(ds + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+    const rows = scoredGames().filter((g) => day[g.id]).map((g) =>
+      `<div class="cal-score-row"><span>${g.icon} ${esc(g.title)}</span><b>${esc(day[g.id].label)}</b></div>`).join("");
+    document.body.insertAdjacentHTML("beforeend", `
+      <div class="modal" id="daymodal" style="z-index:90">
+        <div class="modal-card" style="max-width:320px">
+          <div class="modal-title">${nice}</div>
+          ${rows || `<div class="lb-empty">No games that day.</div>`}
+          <button class="dg-cta" id="daymodal-ok" style="width:100%;margin-top:1.1rem">Close</button>
+        </div>
+      </div>`);
+    const m = document.getElementById("daymodal");
+    document.getElementById("daymodal-ok").onclick = () => m.remove();
+    m.addEventListener("click", (e) => { if (e.target.id === "daymodal") m.remove(); });
   }
   function todayScoresHtml() {
     const rows = scoredGames().map((g) => ({ g, rec: loadDaily(g.id) })).filter((x) => x.rec.date === todayStr());
@@ -646,13 +691,14 @@ export function setupHub(ctx) {
         <button class="${socialConfigured() ? "ghost" : "dg-cta"}" data-home>Back to games</button>
       </div>`;
     daily.querySelectorAll("[data-home]").forEach((b) => b.addEventListener("click", () => ctx.goHome()));
+    wireCalendar(daily);
     const lb = daily.querySelector("[data-lb]");
     if (lb) lb.addEventListener("click", () => { boardGame = id; renderBoard(); });
     if (socialConfigured()) {
       const box = daily.querySelector("#done-lb");
       try {
         const { rows } = await friendsGameBoard(id, rec.date);
-        if (box) box.innerHTML = rows.length ? rows.map((r, i) => friendRow(r, i)).join("") : `<div class="lb-empty">No players yet.</div>`;
+        if (box) box.innerHTML = rows.length ? rows.map((r) => friendRow(r)).join("") : `<div class="lb-empty">No players yet.</div>`;
       } catch (_) { if (box) box.innerHTML = `<div class="lb-empty">Couldn't load the board.</div>`; }
     }
   }
@@ -665,6 +711,13 @@ export function setupHub(ctx) {
     return n;
   }
   function mine(uid) { return me && me.session && uid === me.session.user.id; }
+  // Standard competition ranking (1,1,3): items already sorted best-first;
+  // equal keys share a rank, the next distinct key jumps to its position.
+  function withRanks(items, keyFn) {
+    let rank = 0, prev;
+    items.forEach((it, i) => { const k = keyFn(it); if (i === 0 || k !== prev) rank = i + 1; it.rank = rank; prev = k; });
+    return items;
+  }
 
   // =========================================================================
   // SOCIAL: feed + comments + DMs + leaderboard (all under one Social tab)
@@ -721,15 +774,16 @@ export function setupHub(ctx) {
   async function friendsGameBoard(gameId, date) {
     const [profiles, rows] = await Promise.all([listProfiles(), leaderboard(gameId, date)]);
     const playedIds = new Set(rows.map((r) => r.user_id));
-    const played = rows.map((r) => ({ uid: r.user_id, profile: r.profiles || {}, label: r.label, played: true }));
+    const played = rows.map((r) => ({ uid: r.user_id, profile: r.profiles || {}, label: r.label, score: r.score, played: true }));
+    withRanks(played, (x) => x.score);
     const rest = profiles.filter((p) => !playedIds.has(p.id))
       .map((p) => ({ uid: p.id, profile: { username: p.username, avatar_url: p.avatar_url }, played: false }));
     return { rows: [...played, ...rest], anyPlayed: played.length > 0 };
   }
-  function friendRow(row, i) {
+  function friendRow(row) {
     const av = row.profile.avatar_url;
     return `<div class="lb-row ${mine(row.uid) ? "me" : ""} ${row.played ? "" : "nop"}">
-      <span class="lb-rank">${row.played ? i + 1 : ""}</span>
+      <span class="lb-rank">${row.played ? row.rank : ""}</span>
       ${av ? `<img class="lb-pic" src="${av}">` : `<span class="lb-pic ph"></span>`}
       <span class="lb-name">${esc(row.profile.username || "player")}</span>
       <span class="lb-score">${row.played ? esc(row.label || "") : "—"}</span>
@@ -739,7 +793,7 @@ export function setupHub(ctx) {
     const { rows, anyPlayed } = await friendsGameBoard(gameId, todayStr());
     if (!rows.length) { el.innerHTML = `<div class="lb-empty">No players yet.</div>`; return; }
     const note = anyPlayed ? "" : `<div class="lb-empty" style="padding:0.8rem">Nobody's played yet today — be first!</div>`;
-    el.innerHTML = note + rows.map((r, i) => friendRow(r, i)).join("");
+    el.innerHTML = note + rows.map((r) => friendRow(r)).join("");
   }
   // Overall = cumulative "season" points that only build up. Each game each day,
   // you earn (players that day − your rank) points, so winning and just showing
@@ -758,29 +812,30 @@ export function setupHub(ctx) {
       const n = rows.length;
       rows.forEach((r, i) => { points[r.user_id] = (points[r.user_id] || 0) + (n - i); });
     });
-    return profiles.map((p) => ({
+    const list = profiles.map((p) => ({
       uid: p.id,
       profile: { username: p.username, avatar_url: p.avatar_url },
       points: points[p.id] || 0,
       streak: streakFromDates([...(dates[p.id] || [])]),
     })).sort((a, b) => b.points - a.points || b.streak - a.streak);
+    return withRanks(list, (x) => x.points);  // ties share a place (1,1,3)
   }
   async function renderOverall(el) {
     const list = await computeOverall();
     if (!list.length) { el.innerHTML = `<div class="lb-empty">No players yet.</div>`; return; }
-    el.innerHTML = list.map((p, i) => {
+    el.innerHTML = list.map((p) => {
       const av = p.profile.avatar_url;
       const streak = p.streak > 0 ? `<span class="lb-streak">🔥${p.streak}</span>` : "";
       return `<div class="lb-row ${mine(p.uid) ? "me" : ""} ${p.points ? "" : "nop"}">
-        <span class="lb-rank">${i + 1}</span>
+        <span class="lb-rank">${p.rank}</span>
         ${av ? `<img class="lb-pic" src="${av}">` : `<span class="lb-pic ph"></span>`}
         <span class="lb-name">${esc(p.profile.username || "player")} ${streak}</span>
         <span class="lb-score">${p.points} pts</span>
       </div>`;
     }).join("");
   }
-  // Daily comment thread per board tab (target: "board", "<tab>:<date>").
-  function boardThreadId() { return `${boardGame}:${todayStr()}`; }
+  // Overall keeps ONE permanent thread (grouped by day); per-game tabs are daily.
+  function boardThreadId() { return boardGame === "overall" ? "overall" : `${boardGame}:${todayStr()}`; }
   function renderBoardComments() {
     const box = daily.querySelector("#board-cmts"); if (!box) return;
     if (!me || !me.session) { box.innerHTML = ""; return; }
@@ -798,12 +853,21 @@ export function setupHub(ctx) {
     await addComment("board", boardThreadId(), v);
     loadBoardComments();
   }
+  function cmtHtml(c) {
+    return `<div class="cmt"><b>${esc((c.profiles || {}).username || "player")}</b> ${esc(c.body)} <span class="feed-ago">${ago(c.created_at)}</span></div>`;
+  }
   async function loadBoardComments() {
     const el = daily.querySelector("#bc-list"); if (!el) return;
     const cs = await fetchComments("board", boardThreadId());
-    el.innerHTML = cs.length
-      ? cs.map((c) => `<div class="cmt"><b>${esc((c.profiles || {}).username || "player")}</b> ${esc(c.body)} <span class="feed-ago">${ago(c.created_at)}</span></div>`).join("")
-      : `<div class="lb-empty" style="padding:0.6rem">No comments yet — start the trash talk.</div>`;
+    if (!cs.length) { el.innerHTML = `<div class="lb-empty" style="padding:0.6rem">No comments yet — start the trash talk.</div>`; return; }
+    if (boardGame !== "overall") { el.innerHTML = cs.map(cmtHtml).join(""); return; }
+    // Permanent Overall thread: group by calendar day with a date separator.
+    const groups = {};
+    cs.forEach((c) => { const k = todayStr(new Date(c.created_at)); (groups[k] = groups[k] || []).push(c); });
+    el.innerHTML = Object.keys(groups).sort().map((k) => {
+      const nice = new Date(k + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+      return `<div class="bc-date">${nice}</div>` + groups[k].map(cmtHtml).join("");
+    }).join("");
   }
 
   function requireSignIn(what) {

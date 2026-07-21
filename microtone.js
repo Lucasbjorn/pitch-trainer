@@ -14,7 +14,6 @@ const KMIN = 1, KMAX = 9;        // JND difficulty: gap = 100/2^k cents (50¢ �
 const KEYS = 25;                 // Micro keyboard: 0..24 quarter-tones (one octave)
 
 const GAMES = [
-  { id: "learn", icon: "🎓", name: "Learn Microtones", blurb: "Guided: absorb the ¼-tone ladder, then master each interval's ♭¼ / exact / ♯¼." },
   { id: "jnd",   icon: "📏", name: "JND",         blurb: "Just-noticeable difference — the gap halves as you keep getting it right." },
   { id: "micro", icon: "🎛️", name: "Quarter-tones", blurb: "Name microtonal intervals on a 24-note keyboard." },
   { id: "onbtw", icon: "🎯", name: "On or Between", blurb: "Is this pitch exactly a note, or wedged between two?" },
@@ -80,6 +79,9 @@ export function setupMicrotone(ctx) {
     root.querySelectorAll("[data-game]").forEach((b) => b.addEventListener("click", () => open(b.dataset.game)));
   }
   function open(id) { cancelAuto(); if (id === "learn") startLearn(); else if (id === "jnd") startJnd(); else if (id === "micro") startMicro(); else startOnBtw(); }
+  // Back from a game: to the main app home when launched from the friends app,
+  // otherwise to the microtone menu (Lab).
+  function goBack() { cancelAuto(); if (publicMode && ctx.goHome) return ctx.goHome(); view = "home"; renderHome(); }
 
   // =========================================================================
   // 1. JND — adaptive staircase on pitch difference
@@ -100,7 +102,7 @@ export function setupMicrotone(ctx) {
         <div class="apg-result" id="j-res"></div>
         <div class="tune-actions"><button class="ghost" id="j-replay">replay ↺</button><button class="ghost" id="j-next" style="visibility:hidden">next →</button></div>
       </div>`;
-    $("#j-back").addEventListener("click", () => { view = "home"; renderHome(); });
+    $("#j-back").addEventListener("click", goBack);
     $("#j-up").addEventListener("click", () => jAnswer(true));
     $("#j-dn").addEventListener("click", () => jAnswer(false));
     $("#j-replay").addEventListener("click", jPlay);
@@ -159,16 +161,11 @@ export function setupMicrotone(ctx) {
           <button class="ghost" id="m-replay">replay ↺</button>
           <button class="ghost" id="m-next" style="visibility:hidden">next →</button>
         </div>
-        <div class="apg-opts">
-          <label class="autonext"><input type="checkbox" id="m-nums" ${mNums ? "checked" : ""}> interval numbers</label>
-          ${publicMode ? "" : `<label class="autonext"><input type="checkbox" id="m-wheels" ${mWheels ? "checked" : ""}> 🛞 training wheels</label>`}
-        </div>
       </div>`;
-    $("#m-back").addEventListener("click", () => { view = "home"; renderHome(); });
+    mNums = false;   // interval-number labels removed
+    $("#m-back").addEventListener("click", goBack);
     $("#m-replay").addEventListener("click", mPlay);
     $("#m-next").addEventListener("click", mNew);
-    $("#m-nums").addEventListener("change", (e) => { mNums = e.target.checked; renderKbd(); });
-    const mw = $("#m-wheels"); if (mw) mw.addEventListener("change", (e) => { mWheels = e.target.checked; localStorage.setItem("pt.micro.wheels", mWheels ? "1" : "0"); });
     mNew();
   }
   // Training wheels: PP-MIDI cue alongside any IN-TUNE (ET, even index) pitch.
@@ -257,7 +254,7 @@ export function setupMicrotone(ctx) {
         <div class="apg-result" id="o-res"></div>
         <div class="tune-actions"><button class="ghost" id="o-replay">replay ↺</button><button class="ghost" id="o-next" style="visibility:hidden">next →</button></div>
       </div>`;
-    $("#o-back").addEventListener("click", () => { view = "home"; renderHome(); });
+    $("#o-back").addEventListener("click", goBack);
     $("#o-on").addEventListener("click", () => oAnswer(true));
     $("#o-btw").addEventListener("click", () => oAnswer(false));
     $("#o-replay").addEventListener("click", oPlay);
