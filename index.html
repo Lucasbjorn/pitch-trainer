@@ -833,6 +833,17 @@
     .signin-strip .ss-txt span { color: var(--muted); }
     .signin-strip button { flex: 0 0 auto; background: linear-gradient(135deg,#16a34a,#22c55e); color: #fff; border: none; border-radius: 12px; padding: 0.6rem 1rem; font-weight: 800; font-size: 0.85rem; cursor: pointer; }
 
+    /* Toast (streak / welcome-back notifications) */
+    .toast {
+      position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 5.4rem);
+      transform: translateX(-50%) translateY(16px); z-index: 96;
+      background: var(--text); color: #fff; font-weight: 800; font-size: 0.9rem;
+      padding: 0.75rem 1.15rem; border-radius: 999px; box-shadow: 0 10px 28px rgba(20,40,26,0.28);
+      opacity: 0; pointer-events: none; transition: opacity 0.28s ease, transform 0.28s ease;
+      max-width: 92vw; text-align: center; white-space: nowrap;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
     /* ---- Status ---- */
     #status {
       position: fixed;

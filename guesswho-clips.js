@@ -26,6 +26,18 @@ export const PUZZLES = [
     ],
     reveal: "John Coltrane — tenor sax & vocals · McCoy Tyner — piano · Jimmy Garrison — double bass · Elvin Jones — drums & percussion",
   },
+  {
+    src: "clips/after-youve-gone.mp3",
+    tune: { answer: "After You've Gone", accept: ["after you've gone", "after youve gone", "after you have gone"] },
+    fields: [
+      { label: "Piano", answer: "Emmet Cohen", accept: ["emmet cohen", "cohen", "emmett cohen", "emmet"] },
+      { label: "Trumpet", answer: "Bruce Harris", accept: ["bruce harris", "harris", "bruce"] },
+      { label: "Alto saxophone", answer: "Patrick Bartley", accept: ["patrick bartley", "bartley", "patrick"] },
+      { label: "Bass", answer: "Russell Hall", accept: ["russell hall", "hall", "russell"] },
+      { label: "Drums", answer: "Joe Saylor", accept: ["joe saylor", "saylor", "joe"] },
+    ],
+    reveal: "Emmet Cohen — piano · Bruce Harris — trumpet · Patrick Bartley — alto sax · Russell Hall — bass · Joe Saylor — drums",
+  },
 ];
 
 // Legacy Heardle-style clip list (unused by the current game; kept for reference).

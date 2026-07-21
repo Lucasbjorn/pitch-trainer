@@ -37,6 +37,11 @@ export function setupHub(ctx) {
   function loadDaily(id) { try { return JSON.parse(localStorage.getItem(`pt.daily.${id}`)) || {}; } catch (_) { return {}; } }
   function saveDaily(id, o) { try { localStorage.setItem(`pt.daily.${id}`, JSON.stringify(o)); } catch (_) {} }
 
+  // Bump when a daily puzzle is swapped mid-day, so it can be replayed. Clears
+  // today's local record for Guess Who once per new version.
+  const GW_VER = "2026-07-21";
+  try { if (localStorage.getItem("pt.gw.ver") !== GW_VER) { localStorage.removeItem("pt.daily.guesswho"); localStorage.setItem("pt.gw.ver", GW_VER); } } catch (_) {}
+
   // =========================================================================
   // GAME CATALOG
   // =========================================================================
@@ -215,15 +220,17 @@ export function setupHub(ctx) {
     setTabs("home");
     // Force profile completion once signed in.
     if (me && me.session && (!me.profile || !me.profile.avatar_url)) openProfile();
-    maybeOnboard();
+    if (!maybeOnboard()) {
+      if (!maybeWhatsNew()) maybeStreakToast();
+    }
   }
 
   // =========================================================================
   // ONBOARDING — welcome + Google sign-in
   // =========================================================================
   function maybeOnboard() {
-    if (localStorage.getItem("pt.welcome") === "1") return;
-    if (me && me.session) { localStorage.setItem("pt.welcome", "1"); return; }
+    if (localStorage.getItem("pt.welcome") === "1") return false;
+    if (me && me.session) { localStorage.setItem("pt.welcome", "1"); return false; }
     const canGoogle = socialConfigured();
     document.body.insertAdjacentHTML("beforeend", `
       <div class="onboard" id="onboard">
@@ -253,6 +260,55 @@ export function setupHub(ctx) {
         renderHome();
       });
     });
+    return true;
+  }
+
+  // ---- What's-new modal + streak toast (returning players) ----
+  const WHATSNEW_VER = "2";
+  function maybeWhatsNew() {
+    if (localStorage.getItem("pt.whatsnew") === WHATSNEW_VER) return false;
+    localStorage.setItem("pt.whatsnew", WHATSNEW_VER);
+    document.body.insertAdjacentHTML("beforeend", `
+      <div class="modal" id="whatsnew" style="z-index:88">
+        <div class="modal-card" style="max-width:360px">
+          <div class="modal-title">✨ Fresh coat of paint</div>
+          <p class="welcome-p" style="margin:-0.3rem 0 1rem">Pitches got a cleaner look. What's new:</p>
+          <div class="onboard-rules" style="margin-bottom:1.2rem">
+            <div class="onboard-rule"><span class="r-ic">🎴</span><div>Bold new game cards + a bottom tab bar</div></div>
+            <div class="onboard-rule"><span class="r-ic">🏆</span><div><b>Board</b> now has an Overall rank + trash-talk comments</div></div>
+            <div class="onboard-rule"><span class="r-ic">🎧</span><div>New <b>Guess Who</b> — name the tune <i>and</i> the whole band</div></div>
+            <div class="onboard-rule"><span class="r-ic">🔥</span><div>Daily <b>streaks</b> — come back every day to grow yours</div></div>
+          </div>
+          <button class="dg-cta" id="whatsnew-ok" style="width:100%">Let's go</button>
+        </div>
+      </div>`);
+    document.getElementById("whatsnew-ok").addEventListener("click", () => {
+      const m = document.getElementById("whatsnew"); if (m) m.remove();
+      maybeStreakToast();
+    });
+    return true;
+  }
+  let toastT = null;
+  function showToast(html, ms = 4600) {
+    let t = document.getElementById("pt-toast");
+    if (!t) { t = document.createElement("div"); t.id = "pt-toast"; t.className = "toast"; document.body.appendChild(t); }
+    t.innerHTML = html;
+    // force reflow so re-adding .show re-animates
+    void t.offsetWidth; t.classList.add("show");
+    if (toastT) clearTimeout(toastT);
+    toastT = setTimeout(() => t.classList.remove("show"), ms);
+  }
+  function maybeStreakToast() {
+    const today = todayStr();
+    if (localStorage.getItem("pt.seenday") === today) return;
+    localStorage.setItem("pt.seenday", today);
+    const s = currentStreak();
+    const playedToday = scoredGames().some((g) => loadDaily(g.id).date === today);
+    let msg;
+    if (s > 0 && !playedToday) msg = `🔥 ${s}-day streak! Play today to keep it alive.`;
+    else if (s > 0) msg = `🔥 ${s}-day streak going strong!`;
+    else msg = `👋 Welcome back — play a game to start a streak!`;
+    showToast(msg);
   }
 
   // Required guest profile: username + photo, saved locally. No skipping past it.
