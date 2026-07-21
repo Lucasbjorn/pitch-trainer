@@ -212,6 +212,8 @@ function runGuessWho(g) {
   if (!pz) return notReady("No puzzles loaded yet — check back soon.");
 
   const fields = [{ label: "Tune name", ...pz.tune }, ...pz.fields];
+  const hints = pz.hints || [];
+  const revealed = [];            // hints unlocked so far (one per wrong guess)
   const audio = new Audio(pz.src); audio.preload = "auto";
   let mistakes = 0, done = false, audioBroken = false;
   const locked = fields.map(() => false);
@@ -231,6 +233,7 @@ function runGuessWho(g) {
         <div class="dg-score">${c}/${fields.length}</div>
         <div class="dg-score-sub">${pz.tune.answer}</div>
         <div class="gwp-reveal">${pz.reveal}</div>
+        ${hints.length ? `<div class="gwp-hints" style="margin-top:0.9rem;text-align:left">${hints.map((h) => `<div class="gwp-hint">💡 ${h}</div>`).join("")}</div>` : ""}
         <button class="dg-cta" data-done>Continue</button>
       </div>`;
     g.el.querySelector("[data-done]").onclick = () => g.finish(fields.length - c, `${c}/${fields.length}`);
@@ -253,6 +256,7 @@ function runGuessWho(g) {
         <div class="dg-lives">${hearts}</div>
         <button class="dg-cta gwp-play" data-play>${audio.paused ? "▶ Play the track" : "⏸ Pause"}</button>
         <div class="dg-q">Name the tune and who's playing what. ${LIVES} misses and it's over — and when the song ends, time's up.</div>
+        ${revealed.length ? `<div class="gwp-hints">${revealed.map((h) => `<div class="gwp-hint">💡 ${h}</div>`).join("")}</div>` : ""}
         <div class="gwp-fields">${rows}</div>
         <div class="dg-result" id="gwp-res"></div>
       </div>`;
@@ -279,9 +283,13 @@ function runGuessWho(g) {
       const res = g.el.querySelector("#gwp-res"); res.textContent = "✅ got it"; res.className = "dg-result ok";
     } else {
       mistakes++;
+      const gotHint = hints[mistakes - 1] != null;
+      if (gotHint) revealed.push(hints[mistakes - 1]);   // reveal a fact on each wrong guess
       if (mistakes >= LIVES) return end();
       render();
-      const res = g.el.querySelector("#gwp-res"); res.textContent = `❌ not it — ${LIVES - mistakes} left`; res.className = "dg-result wrong";
+      const res = g.el.querySelector("#gwp-res");
+      res.textContent = gotHint ? "❌ not it — here's a hint 💡" : `❌ not it — ${LIVES - mistakes} left`;
+      res.className = "dg-result wrong";
     }
   }
   render();

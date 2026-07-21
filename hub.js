@@ -194,7 +194,8 @@ export function setupHub(ctx) {
   async function renderHome() {
     const d = new Date();
     const dateStr = d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
-    const cards = playableGames().map((game) => gameCard(game, game.micro ? "Practice" : "Daily puzzle")).join("");
+    const pickCards = scoredGames().map((game) => gameCard(game, "Daily puzzle")).join("");
+    const otherCards = DAILIES.filter((g) => g.show && g.micro).map((game) => gameCard(game, "Practice")).join("");
 
     await loadMe();
     const streakN = currentStreak();
@@ -216,12 +217,14 @@ export function setupHub(ctx) {
           ${streakHtml}
         </div>
         ${signinStrip}
-        <div class="hub-section-label">Today's puzzles</div>
-        <div class="hub-cards">${cards}</div>
+        <div class="hub-section-label">Today's picks</div>
+        <div class="hub-cards">${pickCards}</div>
         <div class="hub-section-label" style="margin-top:1.6rem">Need help focusing?</div>
         <div class="hub-cards">
           ${gameCard({ id: "practice", title: "Practice", sub: "A calm, timed routine to lock in", icon: "🧘", cardColor: "#e6dbff", action: "data-practice" }, "Focus")}
         </div>
+        <div class="hub-section-label" style="margin-top:1.6rem">Other games</div>
+        <div class="hub-cards">${otherCards}</div>
         <button class="hub-lab" data-lab>🔒 Lucas's Lab</button>
         <div class="hub-foot">One attempt per game, per day. Build your streak. 🎧</div>
       </div>`;

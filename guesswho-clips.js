@@ -25,6 +25,11 @@ export const PUZZLES = [
       { label: "Drums", answer: "Elvin Jones", accept: ["elvin jones", "elvin", "jones"] },
     ],
     reveal: "John Coltrane — tenor sax & vocals · McCoy Tyner — piano · Jimmy Garrison — double bass · Elvin Jones — drums & percussion",
+    hints: [
+      "Recorded in December 1964, released early 1965 on the Impulse! label.",
+      "The whole album is a four-part devotional suite — this is Part I.",
+      "Part I is titled “Acknowledgement” — the one with the chanted four-note bass motif.",
+    ],
   },
   {
     src: "clips/after-youve-gone.mp3",
@@ -37,6 +42,11 @@ export const PUZZLES = [
       { label: "Drums", answer: "Joe Saylor", accept: ["joe saylor", "saylor", "joe"] },
     ],
     reveal: "Emmet Cohen — piano · Bruce Harris — trumpet · Patrick Bartley — alto sax · Russell Hall — bass · Joe Saylor — drums",
+    hints: [
+      "The tune is a 1918 standard by Turner Layton & Henry Creamer.",
+      "It's a live take from pianist Emmet Cohen's “Emmet's Place” livestream series.",
+      "The leader's trio is joined by a trumpet and an alto sax out front.",
+    ],
   },
 ];
 
