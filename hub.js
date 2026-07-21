@@ -4,7 +4,7 @@
 
 import {
   socialConfigured, getSession, signInGoogle, signOut, getProfile, saveProfile, submitScore, leaderboard,
-  fetchComments, addComment, subscribeChanges,
+  listProfiles, allScores, fetchComments, addComment, subscribeChanges,
 } from "./social.js";
 import { DAILY_RUNNERS } from "./dailygames.js";
 
@@ -37,6 +37,16 @@ export function setupHub(ctx) {
   function loadDaily(id) { try { return JSON.parse(localStorage.getItem(`pt.daily.${id}`)) || {}; } catch (_) { return {}; } }
   function saveDaily(id, o) { try { localStorage.setItem(`pt.daily.${id}`, JSON.stringify(o)); } catch (_) {} }
 
+  // Long-term history: { "YYYY-MM-DD": { gameId: { score, label } } } — powers
+  // the activity calendar and continuity over time.
+  function loadLog() { try { return JSON.parse(localStorage.getItem("pt.log")) || {}; } catch (_) { return {}; } }
+  function logResult(gameId, rec) {
+    const log = loadLog();
+    if (!log[rec.date]) log[rec.date] = {};
+    log[rec.date][gameId] = { score: rec.score, label: rec.label };
+    try { localStorage.setItem("pt.log", JSON.stringify(log)); } catch (_) {}
+  }
+
   // Bump when a daily puzzle is swapped mid-day, so it can be replayed. Clears
   // today's local record for Guess Who once per new version.
   const GW_VER = "2026-07-21";
@@ -62,20 +72,27 @@ export function setupHub(ctx) {
   // =========================================================================
   // STREAKS  (a "day" counts once you finish any game that day)
   // =========================================================================
-  function loadStreak() { try { return JSON.parse(localStorage.getItem("pt.streak")) || { count: 0, last: null }; } catch (_) { return { count: 0, last: null }; } }
+  // Streak is derived straight from the activity log so it always matches the
+  // calendar. A day counts once you finish any game that day.
+  function dkey(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
   function currentStreak() {
-    const s = loadStreak();
-    if (s.last === todayStr() || s.last === yesterdayStr()) return s.count;
-    return 0;
+    const log = loadLog();
+    const cur = new Date();
+    if (!log[dkey(cur)]) { cur.setDate(cur.getDate() - 1); if (!log[dkey(cur)]) return 0; }
+    let count = 0;
+    while (log[dkey(cur)]) { count++; cur.setDate(cur.getDate() - 1); }
+    return count;
   }
-  function bumpStreak() {
-    const s = loadStreak();
-    const t = todayStr();
-    if (s.last === t) return s.count;               // already counted today
-    s.count = (s.last === yesterdayStr() ? s.count : 0) + 1;
-    s.last = t;
-    try { localStorage.setItem("pt.streak", JSON.stringify(s)); } catch (_) {}
-    return s.count;
+  function bestStreak() {
+    const days = Object.keys(loadLog()).sort();
+    let best = 0, run = 0, prev = null;
+    for (const d of days) {
+      const t = new Date(d + "T00:00:00").getTime();
+      run = (prev != null && t - prev === 86400000) ? run + 1 : 1;
+      if (run > best) best = run;
+      prev = t;
+    }
+    return best;
   }
 
   // Guest profile (for players who skip Google sign-in) — stored locally.
@@ -470,7 +487,7 @@ export function setupHub(ctx) {
           ${guest ? `<div class="prof-stats">
             <div class="prof-stat"><div class="ps-big streak">${streakN}</div><div class="ps-lbl">Streak</div></div>
             <div class="prof-stat"><div class="ps-big">${scoredGames().filter((x) => loadDaily(x.id).date === todayStr()).length}/${scoredGames().length}</div><div class="ps-lbl">Today</div></div>
-            <div class="prof-stat"><div class="ps-big">${loadStreak().count || 0}</div><div class="ps-lbl">Best run</div></div>
+            <div class="prof-stat"><div class="ps-big">${bestStreak()}</div><div class="ps-lbl">Best run</div></div>
           </div>` : ""}
           <div class="signin-strip"><div class="ss-txt"><b>Join the leaderboard</b><span>Sign in to compete with friends.</span></div><button id="p-signin2">Sign in</button></div>
           ${guest ? `<button class="prof-edit-btn" id="p-guest-edit">✏️ Edit guest profile</button>` : `<button class="google-btn" id="p-guest-new">Add name &amp; photo</button>`}
@@ -493,7 +510,7 @@ export function setupHub(ctx) {
         <div class="prof-stats">
           <div class="prof-stat"><div class="ps-big streak">${streakN}</div><div class="ps-lbl">Streak</div></div>
           <div class="prof-stat"><div class="ps-big">${playedToday}/${scoredGames().length}</div><div class="ps-lbl">Today</div></div>
-          <div class="prof-stat"><div class="ps-big">${loadStreak().count || 0}</div><div class="ps-lbl">Best run</div></div>
+          <div class="prof-stat"><div class="ps-big">${bestStreak()}</div><div class="ps-lbl">Best run</div></div>
         </div>
         <div class="panel">
           <div class="panel-title">Today's scores</div>
@@ -540,7 +557,7 @@ export function setupHub(ctx) {
   function finishDaily(id, score, label) {
     const rec = { date: todayStr(), score: Math.round(score * 100) / 100, label };
     saveDaily(id, rec);
-    bumpStreak();
+    logResult(id, rec);
     submitScore(id, rec.date, rec.score, rec.label).catch(() => {});
     renderDailyDone(id, rec, true);
     maybeA2HS();
@@ -584,7 +601,32 @@ export function setupHub(ctx) {
     if (jnd.best == null) return finishDaily("jnd", JND_START * 2, "> 1 tone");
     finishDaily("jnd", jnd.best, fracLabel(jnd.best));
   }
-  function renderDailyDone(id, rec, justFinished) {
+  // Month activity calendar — filled cell = you played that day.
+  function calendarHtml() {
+    const now = new Date();
+    const y = now.getFullYear(), m = now.getMonth(), todayD = now.getDate();
+    const firstDow = new Date(y, m, 1).getDay();
+    const days = new Date(y, m + 1, 0).getDate();
+    const log = loadLog();
+    const monthName = now.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+    const dow = ["S", "M", "T", "W", "T", "F", "S"].map((d) => `<div class="cal-dow">${d}</div>`).join("");
+    let cells = "";
+    for (let i = 0; i < firstDow; i++) cells += `<div class="cal-cell empty"></div>`;
+    for (let d = 1; d <= days; d++) {
+      const ds = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      const played = !!log[ds];
+      const cls = ["cal-cell", played ? "played" : "", d === todayD ? "today" : "", d > todayD ? "future" : ""].filter(Boolean).join(" ");
+      cells += `<div class="${cls}">${d}</div>`;
+    }
+    return `<div class="cal-wrap"><div class="cal-title">${monthName}</div><div class="cal-grid">${dow}${cells}</div></div>`;
+  }
+  function todayScoresHtml() {
+    const rows = scoredGames().map((g) => ({ g, rec: loadDaily(g.id) })).filter((x) => x.rec.date === todayStr());
+    if (!rows.length) return "";
+    return `<div class="cal-today">${rows.map((x) => `<div class="cal-score-row"><span>${x.g.icon} ${esc(x.g.title)}</span><b>${esc(x.rec.label)}</b></div>`).join("")}</div>`;
+  }
+
+  async function renderDailyDone(id, rec, justFinished) {
     setTabs("");
     const meta = gameMeta(id);
     const streakN = currentStreak();
@@ -595,25 +637,34 @@ export function setupHub(ctx) {
         <div class="dg-name">${meta.title}</div>
         <div class="dg-score">${rec.label}</div>
         <div class="dg-score-sub">${justFinished ? "your score today" : "you've already played today"}</div>
-        ${justFinished && streakN > 1 ? `<div style="margin-top:0.8rem"><span class="hub-streak">🔥 ${streakN} day streak</span></div>` : ""}
-        <div class="dg-q">${justFinished ? "Nice. Come back tomorrow for a new one." : "Come back tomorrow for a new puzzle."}</div>
-        ${socialConfigured() ? `<button class="dg-cta" data-lb>See leaderboard</button>` : ""}
+        ${streakN > 0 ? `<div style="margin-top:0.8rem"><span class="hub-streak">🔥 ${streakN} day streak</span></div>` : ""}
+        ${socialConfigured() ? `<div class="done-board"><div class="done-board-title">How your friends did today</div><div class="lb" id="done-lb">loading…</div></div>` : ""}
+        ${calendarHtml()}
+        ${todayScoresHtml()}
+        <div class="dg-q">Come back tomorrow to build your streak 🔥</div>
+        ${socialConfigured() ? `<button class="dg-cta" data-lb>Full leaderboard</button>` : ""}
         <button class="${socialConfigured() ? "ghost" : "dg-cta"}" data-home>Back to games</button>
       </div>`;
     daily.querySelectorAll("[data-home]").forEach((b) => b.addEventListener("click", () => ctx.goHome()));
     const lb = daily.querySelector("[data-lb]");
     if (lb) lb.addEventListener("click", () => { boardGame = id; renderBoard(); });
+    if (socialConfigured()) {
+      const box = daily.querySelector("#done-lb");
+      try {
+        const { rows } = await friendsGameBoard(id, rec.date);
+        if (box) box.innerHTML = rows.length ? rows.map((r, i) => friendRow(r, i)).join("") : `<div class="lb-empty">No players yet.</div>`;
+      } catch (_) { if (box) box.innerHTML = `<div class="lb-empty">Couldn't load the board.</div>`; }
+    }
   }
-  function lbRow(r, i) {
-    const p = r.profiles || {};
-    const mine = me && me.session && r.user_id === me.session.user.id;
-    return `<div class="lb-row ${mine ? "me" : ""}">
-      <span class="lb-rank">${i + 1}</span>
-      ${p.avatar_url ? `<img class="lb-pic" src="${p.avatar_url}">` : `<span class="lb-pic ph"></span>`}
-      <span class="lb-name">${esc(p.username || "player")}</span>
-      <span class="lb-score">${esc(r.label || String(r.score))}</span>
-    </div>`;
+  // Consecutive days (ending today or yesterday) present in a set of date strings.
+  function streakFromDates(dates) {
+    const set = new Set(dates);
+    const cur = new Date();
+    if (!set.has(dkey(cur))) { cur.setDate(cur.getDate() - 1); if (!set.has(dkey(cur))) return 0; }
+    let n = 0; while (set.has(dkey(cur))) { n++; cur.setDate(cur.getDate() - 1); }
+    return n;
   }
+  function mine(uid) { return me && me.session && uid === me.session.user.id; }
 
   // =========================================================================
   // SOCIAL: feed + comments + DMs + leaderboard (all under one Social tab)
@@ -645,20 +696,18 @@ export function setupHub(ctx) {
       <div class="soc">
         <div class="soc-title-row"><div class="soc-title">🏆 Leaderboard</div></div>
         <div class="board-tabs">${tabs}</div>
-        <div class="board-sub">${dateNice}</div>
+        <div class="board-sub">${boardGame === "overall" ? "Season standings · all your friends" : `${dateNice} · your friends`}</div>
         <div class="lb" id="board-lb">loading…</div>
         <div class="board-cmts" id="board-cmts"></div>
       </div>`;
     daily.querySelectorAll("[data-g]").forEach((b) => b.addEventListener("click", () => { boardGame = b.dataset.g; renderBoard(); }));
     await loadMe();
     const el = daily.querySelector("#board-lb");
-    if (!me || !me.session) {
-      el.innerHTML = `<div class="lb-empty">Sign in to see the board.</div>
-        <button class="google-btn" id="bd-signin"><span class="g-badge">G</span> Sign in with Google</button>`;
-      el.querySelector("#bd-signin").addEventListener("click", () => signInGoogle());
-      return;
-    }
     if (boardGame === "overall") await renderOverall(el); else await renderGameBoard(el, boardGame);
+    if (!me || !me.session) {
+      el.insertAdjacentHTML("beforeend", `<button class="google-btn" id="bd-signin" style="margin-top:1rem"><span class="g-badge">G</span> Sign in to join the board</button>`);
+      el.querySelector("#bd-signin").addEventListener("click", () => signInGoogle());
+    }
     renderBoardComments();
     stopRT(); rtChannel = await subscribeChanges(() => { if (boardGame) refreshBoardLive(); });
   }
@@ -667,34 +716,66 @@ export function setupHub(ctx) {
     if (boardGame === "overall") await renderOverall(el); else await renderGameBoard(el, boardGame);
     loadBoardComments();
   }
-  async function renderGameBoard(el, gameId) {
-    const rows = await leaderboard(gameId, todayStr());
-    if (!rows.length) { el.innerHTML = `<div class="lb-empty">No scores yet today — play and be first!</div>`; return; }
-    el.innerHTML = rows.map((r, i) => lbRow(r, i)).join("");
+  // Per-game board for a given day: EVERY account listed. Players who played are
+  // ranked by score (best first); everyone else sits blank at the bottom.
+  async function friendsGameBoard(gameId, date) {
+    const [profiles, rows] = await Promise.all([listProfiles(), leaderboard(gameId, date)]);
+    const playedIds = new Set(rows.map((r) => r.user_id));
+    const played = rows.map((r) => ({ uid: r.user_id, profile: r.profiles || {}, label: r.label, played: true }));
+    const rest = profiles.filter((p) => !playedIds.has(p.id))
+      .map((p) => ({ uid: p.id, profile: { username: p.username, avatar_url: p.avatar_url }, played: false }));
+    return { rows: [...played, ...rest], anyPlayed: played.length > 0 };
   }
-  // Overall = average rank across today's games (lower is better). Playing more
-  // games never hurts you vs someone with the same avg; ties break on games played.
+  function friendRow(row, i) {
+    const av = row.profile.avatar_url;
+    return `<div class="lb-row ${mine(row.uid) ? "me" : ""} ${row.played ? "" : "nop"}">
+      <span class="lb-rank">${row.played ? i + 1 : ""}</span>
+      ${av ? `<img class="lb-pic" src="${av}">` : `<span class="lb-pic ph"></span>`}
+      <span class="lb-name">${esc(row.profile.username || "player")}</span>
+      <span class="lb-score">${row.played ? esc(row.label || "") : "—"}</span>
+    </div>`;
+  }
+  async function renderGameBoard(el, gameId) {
+    const { rows, anyPlayed } = await friendsGameBoard(gameId, todayStr());
+    if (!rows.length) { el.innerHTML = `<div class="lb-empty">No players yet.</div>`; return; }
+    const note = anyPlayed ? "" : `<div class="lb-empty" style="padding:0.8rem">Nobody's played yet today — be first!</div>`;
+    el.innerHTML = note + rows.map((r, i) => friendRow(r, i)).join("");
+  }
+  // Overall = cumulative "season" points that only build up. Each game each day,
+  // you earn (players that day − your rank) points, so winning and just showing
+  // up both add. Streak shown next to the name. Everyone is listed.
+  async function computeOverall() {
+    const [profiles, scores] = await Promise.all([listProfiles(), allScores()]);
+    const points = {};   // uid -> total
+    const dates = {};    // uid -> Set(date)
+    const groups = {};   // game|date -> rows
+    scores.forEach((s) => {
+      (groups[`${s.game_id}|${s.date}`] = groups[`${s.game_id}|${s.date}`] || []).push(s);
+      (dates[s.user_id] = dates[s.user_id] || new Set()).add(s.date);
+    });
+    Object.values(groups).forEach((rows) => {
+      rows.sort((a, b) => a.score - b.score); // lower score = better
+      const n = rows.length;
+      rows.forEach((r, i) => { points[r.user_id] = (points[r.user_id] || 0) + (n - i); });
+    });
+    return profiles.map((p) => ({
+      uid: p.id,
+      profile: { username: p.username, avatar_url: p.avatar_url },
+      points: points[p.id] || 0,
+      streak: streakFromDates([...(dates[p.id] || [])]),
+    })).sort((a, b) => b.points - a.points || b.streak - a.streak);
+  }
   async function renderOverall(el) {
-    const games = scoredGames();
-    const boards = await Promise.all(games.map((g) => leaderboard(g.id, todayStr())));
-    const players = new Map(); // uid -> { profile, ranks: [], uid }
-    boards.forEach((rows) => rows.forEach((r, i) => {
-      if (!players.has(r.user_id)) players.set(r.user_id, { uid: r.user_id, profile: r.profiles || {}, ranks: [] });
-      players.get(r.user_id).ranks.push(i + 1);
-    }));
-    const list = [...players.values()].map((p) => ({
-      ...p,
-      avg: p.ranks.reduce((a, b) => a + b, 0) / p.ranks.length,
-      n: p.ranks.length,
-    })).sort((a, b) => a.avg - b.avg || b.n - a.n);
-    if (!list.length) { el.innerHTML = `<div class="lb-empty">No scores yet today — play and be first!</div>`; return; }
+    const list = await computeOverall();
+    if (!list.length) { el.innerHTML = `<div class="lb-empty">No players yet.</div>`; return; }
     el.innerHTML = list.map((p, i) => {
-      const mine = me && me.session && p.uid === me.session.user.id;
-      return `<div class="lb-row ${mine ? "me" : ""}">
+      const av = p.profile.avatar_url;
+      const streak = p.streak > 0 ? `<span class="lb-streak">🔥${p.streak}</span>` : "";
+      return `<div class="lb-row ${mine(p.uid) ? "me" : ""} ${p.points ? "" : "nop"}">
         <span class="lb-rank">${i + 1}</span>
-        ${p.profile.avatar_url ? `<img class="lb-pic" src="${p.profile.avatar_url}">` : `<span class="lb-pic ph"></span>`}
-        <span class="lb-name">${esc(p.profile.username || "player")}</span>
-        <span class="lb-score">avg #${p.avg.toFixed(1)} · ${p.n}/${scoredGames().length}</span>
+        ${av ? `<img class="lb-pic" src="${av}">` : `<span class="lb-pic ph"></span>`}
+        <span class="lb-name">${esc(p.profile.username || "player")} ${streak}</span>
+        <span class="lb-score">${p.points} pts</span>
       </div>`;
     }).join("");
   }

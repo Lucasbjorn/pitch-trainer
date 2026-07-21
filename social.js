@@ -65,6 +65,13 @@ export async function leaderboard(gameId, date) {
 }
 export async function myId() { const s = await getSession(); return s ? s.user.id : null; }
 
+// Every score row ever (for the cumulative Overall board + per-user streaks).
+export async function allScores() {
+  const c = await client(); if (!c) return [];
+  const { data } = await c.from("scores").select("game_id,date,score,label,user_id").limit(5000);
+  return data || [];
+}
+
 // ---- feed + posts + comments ----
 export async function listProfiles() {
   const c = await client(); if (!c) return [];
