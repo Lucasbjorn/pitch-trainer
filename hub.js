@@ -41,10 +41,10 @@ export function setupHub(ctx) {
   // GAME CATALOG
   // =========================================================================
   const DAILIES = [
-    { id: "leap", title: "Compound Leap", sub: "Notes octaves apart", icon: "🪃", color: "#7bd88f", show: true },
-    { id: "guesswho", title: "Guess Who", sub: "Name that jazz tune", icon: "🎧", color: "#f2994a", show: true },
-    { id: "jnd", title: "JND", sub: "Smallest gap you can hear", icon: "📏", color: "#22c55e", show: true },
-    { id: "quarter", title: "Quarter-tones", sub: "Practice microtonal intervals", icon: "🎛️", color: "#10b981", show: true, micro: "micro" },
+    { id: "leap", title: "Compound Leap", sub: "Name the interval octaves apart", icon: "🪃", color: "#7bd88f", cardColor: "#bfe9cf", show: true },
+    { id: "guesswho", title: "Guess Who", sub: "Name the tune & who's playing", icon: "🎧", color: "#f2994a", cardColor: "#ffe1a6", show: true },
+    { id: "jnd", title: "JND", sub: "The smallest gap you can hear", icon: "📏", color: "#22c55e", cardColor: "#c8d8ff", show: true },
+    { id: "quarter", title: "Quarter-tones", sub: "Practice microtonal intervals", icon: "🎛️", color: "#10b981", cardColor: "#d7f0e2", show: true, micro: "micro" },
     // Hidden for now — code kept, flip `show: true` to bring back.
     { id: "interval", title: "Interval Ear", sub: "Name the interval between two notes", icon: "🎼", color: "#f2c94c", show: false },
     { id: "prog", title: "Chord Progression", sub: "Name the diatonic changes", icon: "🎹", color: "#f79f5b", show: false },
@@ -114,9 +114,9 @@ export function setupHub(ctx) {
   // BOTTOM TAB BAR
   // =========================================================================
   const TABS = [
-    { k: "home", ic: "🏠", label: "Play" },
-    { k: "board", ic: "🏆", label: "Board" },
-    { k: "me", ic: "👤", label: "Me" },
+    { k: "home", label: "Play", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="3" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2"/></svg>` },
+    { k: "board", label: "Board", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M7 6H4v1a3 3 0 0 0 3 3M17 6h3v1a3 3 0 0 1-3 3"/><path d="M9.5 15.5h5M8 20h8M12 15.5V20"/></svg>` },
+    { k: "me", label: "Me", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/></svg>` },
   ];
   let tabbar = null;
   function ensureTabbar() {
@@ -137,7 +137,7 @@ export function setupHub(ctx) {
     const bar = ensureTabbar();
     bar.innerHTML = TABS.map((t) => {
       const pic = t.k === "me" && myAvatar();
-      const inner = pic ? `<img class="tab-pic" src="${pic}">` : `<span class="tab-ic">${t.ic}</span>`;
+      const inner = pic ? `<img class="tab-pic" src="${pic}">` : `<span class="tab-ic">${t.svg}</span>`;
       return `<button class="tab-btn ${t.k === active ? "active" : ""}" data-tab="${t.k}"><span class="tab-badge">${inner}</span><span>${t.label}</span></button>`;
     }).join("");
     bar.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => onTab(b.dataset.tab)));
@@ -147,28 +147,31 @@ export function setupHub(ctx) {
   // =========================================================================
   // HOME
   // =========================================================================
+  // A big NYT-style color block card. `game` may be a DAILIES entry or an
+  // ad-hoc { id, title, sub, icon, cardColor, action } for non-scored tiles.
+  function gameCard(game, note) {
+    const isDaily = !game.micro && !game.action;
+    const rec = isDaily ? loadDaily(game.id) : {};
+    const played = isDaily && rec.date === todayStr();
+    const foot = played
+      ? `<span class="hub-foot-tag done">✓ ${rec.label || "done"}</span>`
+      : `<span class="hub-foot-tag">▶ ${isDaily ? "Play" : "Open"}</span>`;
+    const attr = game.micro ? `data-micro="${game.micro}"` : game.action ? game.action : `data-daily="${game.id}"`;
+    return `
+      <button class="hub-card" ${attr} style="background:${game.cardColor || "#eef4ef"}">
+        <span class="hub-emoji">${game.icon}</span>
+        <div class="hub-card-top">
+          <div class="hub-card-title">${game.title}</div>
+          <div class="hub-card-sub">${game.sub}</div>
+        </div>
+        <div class="hub-card-foot">${foot}<span class="hub-foot-note">${note}</span></div>
+      </button>`;
+  }
+
   async function renderHome() {
     const d = new Date();
     const dateStr = d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
-    const cards = scoredGames().map((game) => {
-      const isDaily = !game.micro;
-      const rec = isDaily ? loadDaily(game.id) : {};
-      const played = isDaily && rec.date === todayStr();
-      let tag;
-      if (!isDaily) tag = `<span class="hub-tag play">Play</span>`;
-      else if (played) tag = `<span class="hub-tag done">✓ ${rec.label || "done"}</span>`;
-      else tag = `<span class="hub-tag play">Play</span>`;
-      const attr = game.micro ? `data-micro="${game.micro}"` : `data-daily="${game.id}"`;
-      return `
-        <button class="hub-card" ${attr}>
-          <div class="hub-icon" style="background:${game.color}">${game.icon}</div>
-          <div class="hub-card-body">
-            <div class="hub-card-title">${game.title}</div>
-            <div class="hub-card-sub">${game.sub}</div>
-          </div>
-          ${tag}
-        </button>`;
-    }).join("");
+    const cards = scoredGames().map((game) => gameCard(game, "Daily puzzle")).join("");
 
     await loadMe();
     const streakN = currentStreak();
@@ -186,6 +189,7 @@ export function setupHub(ctx) {
         <div class="hub-head">
           <div class="hub-date">${dateStr}</div>
           <h1 class="hub-title">Pitches</h1>
+          ${myName() ? `<div class="hub-hello">Hey ${esc(myName())} 👋</div>` : `<div class="hub-hello">Your daily music mini-games</div>`}
           ${streakHtml}
         </div>
         ${signinStrip}
@@ -193,22 +197,8 @@ export function setupHub(ctx) {
         <div class="hub-cards">${cards}</div>
         <div class="hub-section-label" style="margin-top:1.6rem">Need help focusing?</div>
         <div class="hub-cards">
-          <button class="hub-card" data-practice>
-            <div class="hub-icon" style="background:#a78bfa">🧘</div>
-            <div class="hub-card-body">
-              <div class="hub-card-title">Practice</div>
-              <div class="hub-card-sub">A calm, timed routine to lock in</div>
-            </div>
-            <span class="hub-tag play">Open</span>
-          </button>
-          <button class="hub-card" data-micro="micro">
-            <div class="hub-icon" style="background:#10b981">🎛️</div>
-            <div class="hub-card-body">
-              <div class="hub-card-title">Quarter-tones</div>
-              <div class="hub-card-sub">Practice microtonal intervals</div>
-            </div>
-            <span class="hub-tag play">Open</span>
-          </button>
+          ${gameCard({ id: "practice", title: "Practice", sub: "A calm, timed routine to lock in", icon: "🧘", cardColor: "#e6dbff", action: "data-practice" }, "Focus")}
+          ${gameCard(gameMeta("quarter"), "Practice")}
         </div>
         <button class="hub-lab" data-lab>🔒 Lucas's Lab</button>
         <div class="hub-foot">One attempt per game, per day. Build your streak. 🎧</div>

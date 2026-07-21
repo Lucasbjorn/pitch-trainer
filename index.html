@@ -588,24 +588,26 @@
     .hub-head { text-align: center; margin: 1.4rem 0 1.8rem; }
     .hub-date { color: var(--muted); font-size: 0.9rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
     .hub-title { font-size: 2.4rem; font-weight: 800; letter-spacing: -0.03em; margin: 0.2rem 0 0; }
+    .hub-hello { color: var(--muted); font-size: 0.98rem; font-weight: 600; margin-top: 0.4rem; }
     .hub-section-label { color: var(--muted); font-weight: 700; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0.2rem 0.7rem; }
-    .hub-cards { display: flex; flex-direction: column; gap: 0.8rem; }
+    .hub-cards { display: flex; flex-direction: column; gap: 0.9rem; }
     .hub-card {
-      display: flex; align-items: center; gap: 1rem; width: 100%; text-align: left;
-      background: var(--card); border: 1px solid var(--line); border-radius: 20px;
-      padding: 1.1rem 1.2rem; cursor: pointer; color: var(--text); touch-action: manipulation;
-      box-shadow: var(--shadow); transition: transform 0.12s;
+      position: relative; display: flex; flex-direction: column; justify-content: space-between;
+      min-height: 128px; width: 100%; text-align: left;
+      border: none; border-radius: 24px; padding: 1.25rem 1.35rem;
+      color: #14241a; cursor: pointer; touch-action: manipulation;
+      box-shadow: 0 6px 18px rgba(20,40,26,0.08); transition: transform 0.12s; overflow: hidden;
     }
-    .hub-card:active:not(.locked) { transform: scale(0.985); }
+    .hub-card:active:not(.locked) { transform: scale(0.98); }
     .hub-card.locked { opacity: 0.5; cursor: default; }
-    .hub-icon { width: 3rem; height: 3rem; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex: 0 0 auto; }
-    .hub-card-body { flex: 1; min-width: 0; }
-    .hub-card-title { font-weight: 800; font-size: 1.2rem; letter-spacing: -0.01em; }
-    .hub-card-sub { color: var(--muted); font-size: 0.9rem; margin-top: 0.1rem; }
-    .hub-tag { font-size: 0.78rem; font-weight: 700; padding: 0.35rem 0.8rem; border-radius: 999px; flex: 0 0 auto; }
-    .hub-tag.play { background: var(--text); color: var(--bg); }
-    .hub-tag.done { background: rgba(123,216,143,0.18); color: #7bd88f; }
-    .hub-tag.soon { background: var(--card2); color: var(--muted); }
+    .hub-emoji { position: absolute; top: 1.15rem; right: 1.2rem; font-size: 2.5rem; line-height: 1; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.12)); }
+    .hub-card-top { padding-right: 3.4rem; }
+    .hub-card-title { font-weight: 800; font-size: 1.45rem; letter-spacing: -0.02em; line-height: 1.08; }
+    .hub-card-sub { color: rgba(20,40,26,0.6); font-size: 0.92rem; margin-top: 0.3rem; line-height: 1.3; }
+    .hub-card-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 1.1rem; }
+    .hub-foot-tag { font-weight: 800; font-size: 0.92rem; }
+    .hub-foot-tag.done { color: #15803d; }
+    .hub-foot-note { font-size: 0.68rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(20,40,26,0.42); }
     .hub-lab {
       display: block; margin: 1.6rem auto 0.4rem; padding: 0.4rem 0.9rem;
       background: none; border: none; color: var(--muted);
@@ -758,6 +760,7 @@
       padding: 0.35rem 0; border-radius: 12px;
     }
     .tab-btn .tab-ic { font-size: 1.35rem; line-height: 1; }
+    .tab-btn .tab-ic svg { width: 25px; height: 25px; display: block; }
     .tab-btn.active { color: var(--accent); }
     .tab-btn .tab-badge { position: relative; }
     .tab-btn .tab-pic { width: 1.55rem; height: 1.55rem; border-radius: 50%; object-fit: cover; border: 2px solid transparent; }
