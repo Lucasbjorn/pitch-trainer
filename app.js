@@ -11,6 +11,7 @@ import { setupYesNo } from "./yesno.js";
 import { setupStats } from "./stats.js";
 import { setupApGames } from "./apgames.js";
 import { setupMicrotone } from "./microtone.js";
+import { setupBattery } from "./battery.js";
 import { setupHub } from "./hub.js";
 
 // ---------------------------------------------------------------------------
@@ -156,6 +157,7 @@ const $yesno    = document.getElementById("yesno");
 const $stats    = document.getElementById("stats");
 const $apgames  = document.getElementById("apgames");
 const $microtone = document.getElementById("microtone");
+const $battery  = document.getElementById("battery");
 
 // ---------------------------------------------------------------------------
 // Shared sample bank (lazy; created on first mode init)
@@ -819,6 +821,7 @@ async function switchMode(newMode) {
   document.body.classList.toggle("mode-stats", newMode === "stats");
   document.body.classList.toggle("mode-apgames", newMode === "apgames");
   document.body.classList.toggle("mode-microtone", newMode === "microtone");
+  document.body.classList.toggle("mode-battery", newMode === "battery");
 
   $modeBtns.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.mode === newMode);
@@ -832,6 +835,7 @@ async function switchMode(newMode) {
   if (oldMode === "stats")    statsMod.exit();
   if (oldMode === "apgames")  apgamesMod.exit();
   if (oldMode === "microtone") microtoneMod.exit();
+  if (oldMode === "battery")  batteryMod.exit();
 
   // Common teardown of any non-passive UI.
   cancelAutoAdvance();
@@ -846,6 +850,7 @@ async function switchMode(newMode) {
   $stats.classList.remove("active");
   $apgames.classList.remove("active");
   $microtone.classList.remove("active");
+  $battery.classList.remove("active");
   hideAllAnswerGroups();
   $followup.classList.remove("active");
 
@@ -913,6 +918,12 @@ async function switchMode(newMode) {
     hideStartButton();
     $microtone.classList.add("active");
     await microtoneMod.enter();
+  } else if (newMode === "battery") {
+    await cleanupPassive();
+    hideStartButton();
+    $battery.classList.add("active");
+    await batteryMod.enter(batteryEnterOpts);
+    batteryEnterOpts = null;
   }
 }
 
@@ -1005,6 +1016,8 @@ const yesnoMod    = setupYesNo(sharedCtx);
 const statsMod    = setupStats(sharedCtx);
 const apgamesMod  = setupApGames(sharedCtx);
 const microtoneMod = setupMicrotone(sharedCtx);
+const batteryMod  = setupBattery(sharedCtx);
+let batteryEnterOpts = null;   // set by the deep-link handler below
 
 // ---------------------------------------------------------------------------
 // Top-level view: Home hub / a Daily game / Lucas's Lab (the full trainer suite)
@@ -1099,8 +1112,31 @@ $intervalsNext.addEventListener("click", () => {
 // Home button in the Lab nav returns to the hub.
 document.querySelectorAll("[data-home]").forEach((b) => b.addEventListener("click", goHome));
 
-// Open on the clean Home hub by default.
-goHome();
+// Deep links for the Testing Battery. During a 48-hour experiment the app has
+// to open straight into the right screen from a bookmark — no hub, no Lab
+// password, nothing to click through wrong at 4am.
+//   ?battery=1  (or #battery)       → the battery
+//   ?battery=1&admin=1 (or #battery-admin) → the results dashboard
+async function goBattery(opts) {
+  setTopView("lucas");
+  document.body.classList.add("solo-lab");
+  document.body.classList.remove("show-tabs");
+  batteryEnterOpts = opts || null;
+  if (mode !== "battery") await switchMode("battery");
+  else await batteryMod.enter(batteryEnterOpts);
+}
+
+function batteryDeepLink() {
+  const q = new URLSearchParams(location.search);
+  const hash = (location.hash || "").replace(/^#/, "").toLowerCase();
+  const wants = q.get("battery") === "1" || hash === "battery" || hash === "battery-admin";
+  if (!wants) return false;
+  goBattery({ admin: q.get("admin") === "1" || hash === "battery-admin" });
+  return true;
+}
+
+// Open on the clean Home hub by default, unless a deep link says otherwise.
+if (!batteryDeepLink()) goHome();
 
 // Connect any MIDI keyboards (Chrome on macOS).
 initMidi();
