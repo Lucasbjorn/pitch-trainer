@@ -13,7 +13,7 @@
 import * as A from "./battery-audio.js";
 import {
   BATTERY_VERSION, makeRng, store, uid, envInfo, download, stamp,
-  toCsv, flattenTrial, flattenSession,
+  toCsv, flattenTrial, flattenSession, requestPersistentStorage, storageEstimate,
 } from "./battery-core.js";
 import { CORE_MODULES, OPTIONAL_MODULES, MODULES, modulesFor, PC_NAMES } from "./battery-tasks.js";
 import { renderResults } from "./battery-results.js";
@@ -381,10 +381,30 @@ export function setupBattery(ctx) {
         <p class="bt-note" id="bt-audioinfo">—</p>
       </div>
 
+      <div class="bt-panel">
+        <div class="bt-panel-t">4 · Storage</div>
+        <p class="bt-note" id="bt-storage">Checking…</p>
+      </div>
+
       <button class="bt-btn primary wide" id="bt-next">${next === "meta" ? "Continue to session details" : "Save and go back"}</button>
     `);
 
     $("#bt-back").addEventListener("click", renderHome);
+
+    // Ask once per setup visit; Chrome grants silently for bookmarked sites.
+    (async () => {
+      const p = await requestPersistentStorage();
+      const est = await storageEstimate();
+      const used = est && est.usage_bytes != null ? ` · ${(est.usage_bytes / 1048576).toFixed(1)} MB stored` : "";
+      const el = $("#bt-storage");
+      if (!el) return;
+      el.innerHTML = p === true
+        ? `Data is stored in this browser and is <b>protected from automatic cleanup</b>${used}. A backup file also downloads after every session — keep those.`
+        : p === false
+          ? `⚠️ The browser would <b>not</b> guarantee this data against automatic cleanup${used}. It is very unlikely to be dropped, but the per-session backup files in your Downloads are the copy that matters. Do not clear site data for this address.`
+          : `Data is stored in this browser${used}. A backup file downloads after every session — keep those, and do not clear site data for this address.`;
+    })();
+
     const persist = () => {
       localStorage.setItem(LS.device, $("#bt-dev").value.trim());
       localStorage.setItem(LS.phones, $("#bt-ph").value.trim());
@@ -532,6 +552,7 @@ export function setupBattery(ctx) {
   // =========================================================================
   async function startSession({ label, meta, practice, moduleIds }) {
     await A.ensureEngine();
+    const persisted = await requestPersistentStorage();
     const mods = practice && moduleIds.length === 1
       ? MODULES.filter((m) => m.id === moduleIds[0])
       : modulesFor(moduleIds);
@@ -549,7 +570,7 @@ export function setupBattery(ctx) {
       module_ids: mods.map((m) => m.id),
       meta,
       calibration: A.audioConfig(),
-      env: envInfo(),
+      env: Object.assign(envInfo(), { origin: location.origin, storage_persisted: persisted }),
       progress: { module_index: 0, trial_index: 0, module_state: null },
       summary: {},
       modules_completed: [],

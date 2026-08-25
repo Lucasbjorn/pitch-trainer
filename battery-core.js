@@ -216,6 +216,29 @@ function tx(store, mode, fn) {
   }));
 }
 
+/**
+ * Ask the browser to exempt this origin from automatic storage eviction.
+ * Chrome grants it silently for bookmarked / high-engagement sites. Worth
+ * asking for: a 48-hour experiment cannot be re-run, and the default policy
+ * lets a browser clear IndexedDB under disk pressure without warning.
+ * Returns true (persisted), false (refused) or null (not supported).
+ */
+export async function requestPersistentStorage() {
+  try {
+    if (!navigator.storage || !navigator.storage.persist) return null;
+    if (await navigator.storage.persisted()) return true;
+    return await navigator.storage.persist();
+  } catch (_) { return null; }
+}
+
+export async function storageEstimate() {
+  try {
+    if (!navigator.storage || !navigator.storage.estimate) return null;
+    const e = await navigator.storage.estimate();
+    return { usage_bytes: e.usage ?? null, quota_bytes: e.quota ?? null };
+  } catch (_) { return null; }
+}
+
 export const store = {
   putSession(sess) { return tx("sessions", "readwrite", (s) => s.put(sess)); },
   getSession(id) { return tx("sessions", "readonly", (s) => s.get(id)); },

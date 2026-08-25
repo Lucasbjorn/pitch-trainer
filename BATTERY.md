@@ -10,13 +10,39 @@ It lives as a tab inside the existing Pitch Trainer app and reuses its module/ta
 
 | What | Where |
 | --- | --- |
-| The battery | `?battery=1` — bookmark this |
-| Results dashboard | `?battery=1&admin=1`, or type `admin` on the battery home screen |
+| **The battery** | **https://pitch-trainer-rho.vercel.app/?battery=1** — bookmark exactly this |
+| Results dashboard | `https://pitch-trainer-rho.vercel.app/?battery=1&admin=1`, or type `admin` on the battery home screen |
 | From inside the app | Lab → 🧪 Testing Battery |
 
 The deep link skips the home hub and the Lab password. Use it. At 4am on day two, nobody should be clicking through three screens to get to the right place.
 
 The results dashboard is deliberately hard to reach by accident. **Do not open it during the experiment.**
+
+---
+
+## Where the data lives
+
+**No login. No account. Nothing leaves the machine.** The battery never touches the app's Supabase backend — sessions and trials go into the browser's own IndexedDB on the machine you run them on.
+
+That has one consequence that matters more than everything else in this document:
+
+> ### Use the same URL, browser, and computer for every single session.
+>
+> Browser storage is scoped to the exact origin. `pitch-trainer-rho.vercel.app` and `localhost:8777` are two different, unconnected databases — and so is every per-deploy Vercel URL like `pitch-trainer-ju92ijwdl-…vercel.app`. Run baseline on one and hour 24 on another and the sessions will not be in the same place.
+>
+> `https://pitch-trainer-rho.vercel.app` is the stable alias. It survives redeploys. Bookmark it; don't retype it.
+
+**Use Chrome**, not Safari. Two reasons: Web MIDI only exists in Chrome, and Safari's tracking prevention can evict script-writable storage after 7 days without interaction — which is inside the window if you do a post-vision follow-up.
+
+Other ways to lose the data: clearing site data or "browsing data" for that address, running sessions in a private/incognito window, or a different browser profile.
+
+### The three copies
+
+1. **IndexedDB** — written the instant each trial completes. A refresh or crash costs one trial, never a session.
+2. **Automatic JSON backup** — a file drops into Downloads at the end of every real session. This is the copy that survives anything. Keep them; don't tidy the folder mid-experiment.
+3. **Manual export** — CSV and JSON of everything, from the dashboard, after the experiment.
+
+The setup screen also asks the browser to exempt the site from automatic storage cleanup and tells you whether it agreed. Bookmarking the page makes Chrome much more likely to grant it. Whether it was granted is recorded with each session as `env_storage_persisted`, so you can check afterwards.
 
 ---
 
@@ -181,6 +207,7 @@ One `AudioContext` for the whole battery, forced to 48 kHz where the device allo
 
 ## Things that will quietly ruin the data
 
+- **Running a session from a different URL.** The single easiest way to lose data — see [Where the data lives](#where-the-data-lives).
 - **Changing the volume mid-experiment.** Set it at baseline and never touch it. The rig fields exist so you can catch this afterwards.
 - **Different headphones or a different machine.** The cocktail-party module depends on channel behaviour; the rest depend on level.
 - **Looking at results between sessions.** Knowing you improved 18% at hour 12 changes how you attack hour 24. This is why the dashboard is hidden.
