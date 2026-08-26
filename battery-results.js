@@ -201,7 +201,7 @@ export async function renderResults(root, { onBack, exportCsv, exportJson }) {
           </div>
         </div>
         <div class="rs-tabs">
-          ${["overview", "modules", "confounds", "sessions", "raw"].map((t) =>
+          ${["overview", "modules", "sessions", "raw"].map((t) =>
             `<button class="rs-tab ${tab === t ? "on" : ""}" data-tab="${t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("")}
           <label class="rs-xtoggle"><input type="checkbox" id="rs-xmode" ${xMode === "hours" ? "checked" : ""}> x-axis: hours blindfolded</label>
         </div>
@@ -220,7 +220,6 @@ export async function renderResults(root, { onBack, exportCsv, exportJson }) {
   function bodyFor(t, xs) {
     if (t === "overview") return overview(xs);
     if (t === "modules") return modulesTab(xs);
-    if (t === "confounds") return confounds(xs);
     if (t === "sessions") return sessionsTab();
     return rawTab();
   }
@@ -232,7 +231,7 @@ export async function renderResults(root, { onBack, exportCsv, exportJson }) {
       { id: "harmonicity", label: "Harmonicity threshold", path: "harmonicity.threshold_jitter_percent", unit: "% jitter", lower: true },
       { id: "wmlevel", label: "n-back level cleared", path: "workmem.max_level_cleared", unit: "back", lower: false },
       { id: "workmem", label: "Working memory (mean d′)", path: "workmem.mean_d_prime", unit: "d′", lower: false },
-      { id: "masking", label: "Spatial release", path: "masking.spatial_release_db", unit: "dB", lower: false },
+      { id: "masking", label: "Cocktail-party threshold", path: "masking.colocated_tmr_db", unit: "dB", lower: true },
       { id: "tagging", label: "Note naming", path: "tagging.accuracy", unit: "correct", lower: false, pct: true },
       { id: "chords", label: "Biggest chord solved", path: "chords.max_size_solved", unit: "notes", lower: false },
     ].filter((c) => sessions.some((s) => get(s.summary || {}, c.path) != null));
@@ -272,12 +271,9 @@ export async function renderResults(root, { onBack, exportCsv, exportJson }) {
           series: [{ name: "mean d′", color: C.amber, points: seriesFrom(sessions, "workmem.mean_d_prime") }],
           xLabels: xs, yLabel: "d′", yZero: true, height: 220,
         })}`)}
-      ${panel("Cocktail party", "Target-to-masker ratio threshold in each spatial condition, and the release from masking that separation buys.", lineChart({
-        series: [
-          { name: "co-located", color: C.slate, points: seriesFrom(sessions, "masking.colocated_tmr_db") },
-          { name: "separated", color: C.cyan, points: seriesFrom(sessions, "masking.separated_tmr_db") },
-          { name: "spatial release", color: C.green, points: seriesFrom(sessions, "masking.spatial_release_db") },
-        ], xLabels: xs, yLabel: "dB", lowerBetter: false,
+      ${panel("Cocktail party", "The quietest the target melody can be relative to the competing tones and still be followed. Lower is better.", lineChart({
+        series: [{ name: "TMR threshold", color: C.cyan, points: seriesFrom(sessions, "masking.colocated_tmr_db") }],
+        xLabels: xs, yLabel: "dB", lowerBetter: true,
       }))}
       ${panel("Note naming", "Accuracy against a 8.3% chance line, plus decision time from tone onset to the space bar.", `
         ${lineChart({
@@ -363,34 +359,6 @@ export async function renderResults(root, { onBack, exportCsv, exportJson }) {
           points: seriesFrom(sessions, `chords.by_size.size${n}.note_accuracy`),
         })), xLabels: xs, yLabel: "note accuracy", pctAxis: true, yZero: true,
       })) : ""}
-    `;
-  }
-
-  // ---- Confounds ----
-  function confounds(xs) {
-    const m = (k) => sessions.map((s, i) => ({ i, y: s.meta ? s.meta[k] ?? null : null }));
-    return `
-      ${panel("Self-report across sessions", "Before reading anything into a dip, check whether it tracks one of these. A bad hour-12 score that lines up with a fatigue spike is a fatigue result, not a hearing result.", lineChart({
-        series: [
-          { name: "fatigue", color: C.red, points: m("fatigue") },
-          { name: "focus", color: C.green, points: m("focus") },
-          { name: "stress", color: C.amber, points: m("stress") },
-          { name: "sleep quality", color: C.blue, points: m("sleep_quality") },
-        ], xLabels: xs, yLabel: "1–10", yZero: true,
-      }))}
-      ${panel("Sleep and caffeine", "", lineChart({
-        series: [
-          { name: "hours slept", color: C.cyan, points: m("hours_slept") },
-          { name: "caffeine (mg ÷ 10)", color: C.magenta, points: sessions.map((s, i) => ({ i, y: s.meta && s.meta.caffeine_mg != null ? s.meta.caffeine_mg / 10 : null })) },
-        ], xLabels: xs, yLabel: "hours / mg÷10", yZero: true, height: 220,
-      }))}
-      ${panel("Rig consistency", "Any row that differs from the others is a candidate explanation for that session being an outlier.", `
-        <table class="rs-table"><thead><tr><th>Session</th><th>Device</th><th>Headphones</th><th>Volume</th><th>Sample rate</th><th>Output latency</th></tr></thead><tbody>
-        ${sessions.map((s) => `<tr>
-          <td>${esc(s.label)}</td><td>${esc(s.meta && s.meta.device)}</td><td>${esc(s.meta && s.meta.headphones)}</td>
-          <td>${esc(s.meta && s.meta.volume_setting)}</td><td>${esc(get(s, "calibration.sample_rate"))} Hz</td>
-          <td>${fmt((get(s, "calibration.output_latency_s") || 0) * 1000, 1)} ms</td></tr>`).join("")}
-        </tbody></table>`)}
     `;
   }
 

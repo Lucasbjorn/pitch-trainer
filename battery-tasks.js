@@ -72,9 +72,9 @@ const PROBE_LABELS = { f: "song_reference", g: "immediate_feel", h: "guess", j: 
 export function buildTaggingPlan(rng, practice) {
   const plan = [];
   if (practice) {
-    for (let i = 0; i < 6; i++) plan.push({ pc: rng.int(12), reg: rng.int(3), timbre: rng.pick(A.TIMBRES), probe: false });
+    for (let i = 0; i < 4; i++) plan.push({ pc: rng.int(12), reg: rng.int(3), timbre: rng.pick(A.TIMBRES), probe: false });
   } else {
-    for (let r = 0; r < 4; r++) {
+    for (let r = 0; r < 1; r++) {
       for (let pc = 0; pc < 12; pc++) {
         plan.push({ pc, reg: (pc + r) % 3, timbre: A.TIMBRES[(pc + 2 * r) % 3], probe: false });
       }
@@ -102,7 +102,7 @@ const tagging = {
     "If you are unsure, give your best guess. Do not leave a trial blank.",
     "Sometimes you will then be asked how you knew.",
   ],
-  count: (practice) => (practice ? 6 : 48),
+  count: (practice) => (practice ? 4 : 12),
 
   make({ rng, practice, io }) {
     const order = buildTaggingPlan(rng, practice);
@@ -288,17 +288,17 @@ const discrim = {
     "Press F for lower, J for higher. Those are the two keys with the little bumps.",
     "The difference gets very small. Guess when you are not sure.",
   ],
-  count: (practice) => (practice ? 8 : 42),
+  count: (practice) => (practice ? 6 : 20),
 
   make({ rng, practice, io }) {
     const zest = makeZest({ min: 0.2, max: 120, priorMode: 12, ...ZEST_ROBUST });
 
     const plan = [];
     if (practice) {
-      [60, 40, 25, 25, 15, 15, 10, 10].forEach((c) => plan.push({ kind: "anchor", cents: c }));
+      [60, 30, 15, 15, 8, 8].forEach((c) => plan.push({ kind: "anchor", cents: c }));
     } else {
-      for (let k = 0; k < 34; k++) plan.push({ kind: "adapt" });
-      for (const c of ANCHOR_CENTS) for (let r = 0; r < 2; r++) plan.push({ kind: "anchor", cents: c });
+      for (let k = 0; k < 16; k++) plan.push({ kind: "adapt" });
+      for (const c of ANCHOR_CENTS) plan.push({ kind: "anchor", cents: c });
     }
     const order = practice ? plan : shuffled(plan, rng);
 
@@ -410,17 +410,17 @@ const harmonicity = {
   // The headline measure: Landry, Shiller & Champoux (2013) found harmonicity
   // discrimination improved after only 90 minutes of visual deprivation, so
   // this module gets the most trials and the tightest threshold estimate.
-  count: (practice) => (practice ? 8 : 44),
+  count: (practice) => (practice ? 6 : 20),
 
   make({ rng, practice, io }) {
     const zest = makeZest({ min: 0.0015, max: 0.6, priorMode: 0.08, ...ZEST_ROBUST });
 
     const plan = [];
     if (practice) {
-      [0.45, 0.45, 0.28, 0.28, 0.15, 0.15, 0.08, 0.08].forEach((j) => plan.push({ kind: "anchor", jitter: j }));
+      [0.45, 0.28, 0.28, 0.15, 0.15, 0.08].forEach((j) => plan.push({ kind: "anchor", jitter: j }));
     } else {
-      for (let k = 0; k < 36; k++) plan.push({ kind: "adapt" });
-      for (const j of HARM_ANCHORS) for (let r = 0; r < 2; r++) plan.push({ kind: "anchor", jitter: j });
+      for (let k = 0; k < 16; k++) plan.push({ kind: "adapt" });
+      for (const j of HARM_ANCHORS) plan.push({ kind: "anchor", jitter: j });
     }
     const order = practice ? plan : shuffled(plan, rng);
 
@@ -925,11 +925,11 @@ const workmem = {
     "If you get a block nearly perfect, the next one goes one step deeper. If you struggle, it steps back. So it should always feel hard — that is working as intended.",
     "Do nothing when it is not a match.",
   ],
-  count: (practice) => (practice ? 24 : 88),
+  count: (practice) => (practice ? 20 : 40),
 
   make({ rng, practice, io }) {
-    const nBlocks = practice ? 2 : 4;
-    const blockLen = practice ? 12 : 22;
+    const nBlocks = 2;
+    const blockLen = practice ? 10 : 20;
     const built = [];                    // blocks are built lazily: n depends on how the previous one went
     let level = NB_START_LEVEL;
     const levelLog = [];
@@ -1120,7 +1120,6 @@ const masking = {
     "You will hear a short melody hidden inside a cloud of competing tones.",
     "The melody is the one that moves smoothly. Decide whether it went up or down overall.",
     "Press F if it fell, J if it rose.",
-    "On some trials the competing tones will sound like they come from your right. The melody always stays in the middle.",
     "Headphones are required for this test.",
   ],
   // The headline output here is a *difference* between two thresholds, so its
@@ -1128,10 +1127,13 @@ const masking = {
   // spatial release (~4.6 dB) is the same size as the effect being looked for
   // (typically 5-10 dB), which would make the measure useless. 24 trials per
   // condition brings it down to roughly 3.8 dB.
-  count: (practice) => (practice ? 8 : 52),
+  count: (practice) => (practice ? 6 : 16),
 
   make({ rng, practice, io }) {
-    const conds = ["colocated", "separated"];
+    // One condition only. Spatial release is a difference of two thresholds,
+    // and at the trial count a 10-minute battery allows its noise would be
+    // larger than the effect — a number that misleads is worse than none.
+    const conds = ["colocated"];
     const zests = {};
     // ZEST variable is masker-to-target amplitude ratio: bigger = harder.
     // Threshold converts to target-to-masker ratio in dB as -20*log10(x).
@@ -1139,10 +1141,10 @@ const masking = {
 
     const plan = [];
     if (practice) {
-      conds.forEach((c) => [0.3, 0.6, 1.0, 1.6].forEach((x) => plan.push({ kind: "anchor", cond: c, x })));
+      conds.forEach((c) => [0.4, 0.7, 1.0, 1.5, 0.55, 1.2].forEach((x) => plan.push({ kind: "anchor", cond: c, x })));
     } else {
       for (const c of conds) {
-        for (let k = 0; k < 24; k++) plan.push({ kind: "adapt", cond: c });
+        for (let k = 0; k < 14; k++) plan.push({ kind: "adapt", cond: c });
         for (const x of [0.63, 1.58]) plan.push({ kind: "anchor", cond: c, x });   // TMR +4 / -4 dB
       }
     }
@@ -1271,7 +1273,7 @@ const masking = {
 
       summary(trials) {
         const out = {};
-        for (const c of ["colocated", "separated"]) {
+        for (const c of conds) {
           const est = zests[c].estimate();
           const ts = trials.filter((t) => t.block === c && t.correct != null);
           const anchors = {};
@@ -1292,11 +1294,10 @@ const masking = {
         }
         return {
           n: trials.length,
-          colocated_tmr_db: out.colocated.tmr_threshold_db,
-          separated_tmr_db: out.separated.tmr_threshold_db,
-          // Positive = separation helped: he tolerated a worse target-to-masker
-          // ratio when the masker was lateralised away.
-          spatial_release_db: +(out.colocated.tmr_threshold_db - out.separated.tmr_threshold_db).toFixed(3),
+          colocated_tmr_db: out.colocated ? out.colocated.tmr_threshold_db : null,
+          separated_tmr_db: out.separated ? out.separated.tmr_threshold_db : null,
+          spatial_release_db: out.colocated && out.separated
+            ? +(out.colocated.tmr_threshold_db - out.separated.tmr_threshold_db).toFixed(3) : null,
           by_condition: out,
           overall_accuracy: pctCorrect(trials),
           ...rangeFlags(pctCorrect(trials), 0.5),

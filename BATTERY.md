@@ -48,14 +48,15 @@ The setup screen also asks the browser to exempt the site from automatic storage
 
 ## Running a session
 
-1. **Audio setup** — reference tone, left/right channel check, and the rig fields (device, headphones, volume). Takes 30 seconds and gets stored with the session.
-2. **Session details** — label (`Baseline`, `Hour 12`, `Post Vision`, …), hours since blindfold, sleep, caffeine, and 1–10 ratings for fatigue, focus, stress.
-3. **Five modules**, fixed order, with a break between each.
-4. **"Session complete. Data saved."** — and a JSON backup file drops into Downloads automatically.
+1. **Run a session** → type a label (`Baseline`, `Hour 12`, …) and hours since blindfold. That's the whole form.
+2. **Five modules**, fixed order, with a break between each.
+3. **"Session complete. Data saved."** — and a JSON backup file drops into Downloads automatically.
+
+Do **Audio setup** once at the start of the experiment (reference tone, left/right check, headphones and volume). It is its own card on the battery home and is not part of the per-session flow.
 
 No scores, no accuracy, no feedback of any kind until the experiment is over.
 
-**Total: about 26 minutes**, 274 trials.
+**Total: about 10 minutes**, 108 trials.
 
 ### Keys
 
@@ -78,13 +79,13 @@ Spoken instructions are **off** by default (toggle on the setup screen).
 
 Chosen for evidence at this timescale and for producing continuous, well-powered measures. Two more (pitch memory, chord segregation) ship but are **off by default** — see [Optional modules](#optional-modules).
 
-### 1. Note Naming — 48 trials
+### 1. Note Naming — 12 trials
 
 Single isolated notes; you name the pitch class. Not an absolute-pitch test — the question is whether tagging gets easier.
 
 **No time pressure.** Take as long as you want. Press `H` to hear the note twice more (2 hints per trial), press space when you've decided, then say it. Reaction time and hint use are both still recorded — filter on `x_hints_used == 0` for a clean RT measure.
 
-- 12 pitch classes × 4 repetitions. Register and timbre assigned by orthogonal modular rules, so each appears exactly 16 times and **every pitch class is heard in every register and every timbre**.
+- One pass through all 12 pitch classes. Register and timbre are balanced 4/4/4 across the set.
 - A burst of random microtonal tones runs before every trial. Without it, trial N+1 gets answered by comparing against trial N, and the whole thing becomes a relative-pitch test.
 - Two-stage response: `Space` when decided, then say the note and your friend enters it. Decision time is measured without friend-reaction contamination, but nothing asks you to hurry.
 - A "how did you know?" probe fires on a third of trials — song reference / it just felt like that note / guessed / other.
@@ -93,16 +94,16 @@ Single isolated notes; you name the pitch class. Not an absolute-pitch test — 
 
 > Raw accuracy here is the weakest-powered number in the battery — at ~20% correct, 48 trials still leaves a standard error near 5.8%. Decision RT and semitone error are continuous and far more sensitive. Read those first.
 
-### 2. Fine Pitch Discrimination — 42 trials
+### 2. Fine Pitch Discrimination — 20 trials
 
 Two tones; is the second higher or lower? Adaptive.
 
 - Base frequency roves every trial (300–700 Hz) so no long-term reference can build up. Level roves ±2 dB so loudness can't stand in for pitch.
-- 34 adaptive trials (ZEST) + 8 fixed-difficulty anchor trials at 25/12/6/3 cents.
+- 16 adaptive trials (ZEST) + 4 fixed-difficulty anchor trials at 25/12/6/3 cents.
 
 **Measures:** threshold in cents with a 68% credible interval, plus model-free accuracy at each anchor level.
 
-### 3. Harmonicity — 44 trials
+### 3. Harmonicity — 20 trials
 
 Two complex tones at the same pitch; one has its partials mistuned. Which one?
 
@@ -115,11 +116,11 @@ This is the headline measure. Landry, Shiller & Champoux (2013) found harmonicit
 
 **Measures:** threshold as % mistuning of F0, credible interval, anchor accuracy.
 
-### 4. Auditory Working Memory — 88 tones
+### 4. Auditory Working Memory — 40 tones
 
 **Adaptive n-back** on microtonal tones. Press `Space` on a match.
 
-Starts at 2-back every session, then climbs: clear a block with ≤2 errors and the next goes a step deeper (up to 6-back); make ≥5 errors and it steps back. It should always feel hard — that's the point. Headline number is **deepest level cleared**; d′ per level is recorded alongside.
+Two blocks. Starts at 2-back every session; clear one with ≤2 errors and the next goes a step deeper, make ≥5 errors and it steps back. It should always feel hard — that's the point. Headline number is **deepest level cleared**; d′ per level is recorded alongside.
 
 - Tones sit on a **137-cent grid** with a randomly roved base, so they have no note names to rehearse verbally. This was the specific failure mode to avoid for a trained musician.
 - Controlled lures (matches at n−1 and n+1 back) prevent answering on bare familiarity.
@@ -129,19 +130,17 @@ Starts at 2-back every session, then climbs: clear a block with ≤2 errors and 
 
 > d′ rather than a span score: span is an integer that bounces around too much to read a trend from five sessions. d′ is continuous and separates sensitivity from response bias, so a session where you simply pressed more often doesn't masquerade as improvement.
 
-### 5. Cocktail Party — 52 trials
+### 5. Cocktail Party — 16 trials
 
 A target melody rises or falls inside a cloud of competing tones. Adaptive on target-to-masker ratio.
 
 - Tonal informational masking, not speech: browser TTS varies by OS and can't be routed through Web Audio at a controlled SNR, so a speech version wouldn't be comparable between sessions or machines.
 - Maskers are redrawn every burst from 250–4500 Hz, excluding a protected band around the target.
-- Two conditions, 24 adaptive trials each:
-  - **co-located** — target and masker both diotic, fused at the centre
-  - **separated** — masker given a 700 µs ITD (34 whole samples at 48 kHz) plus an 8 dB ILD, so it lateralises right while the target stays centred
+- One condition (target and masker both centred), 14 adaptive trials + 2 anchors.
 
-**Measures:** TMR threshold in dB per condition, and **spatial release from masking** = the difference.
+**Measures:** target-to-masker ratio threshold in dB. Lower is better.
 
-> ⚠️ Spatial release is the least precise number in the battery: ~4.4–5.0 dB of measurement noise against a typical effect of 5–10 dB. Treat a single-session value with suspicion; the two individual thresholds (~3.2 dB noise each) are more trustworthy. Requires headphones.
+> The spatial-separation condition was cut for the 10-minute budget. Spatial release is a *difference* of two thresholds, so its noise would have been far larger than the effect at this trial count — a misleading number is worse than none. Still requires headphones.
 
 ---
 
@@ -149,13 +148,9 @@ A target melody rises or falls inside a cloud of competing tones. Adaptive on ta
 
 Measured by simulation, not guessed. These are the smallest **session-to-session** changes that clear measurement noise:
 
-| Measure | Noise (CV) | Detectable change |
-| --- | --- | --- |
-| Pitch discrimination threshold | 0.26–0.28 | ~36–38% |
-| Harmonicity threshold | 0.28–0.30 | ~38–42% |
-| Spatial release from masking | ±4.4–5.0 dB | large effects only |
+At 10 minutes the thresholds carry roughly 35–40% measurement noise per session, and note naming's 12 trials give raw accuracy a standard error near 11%.
 
-Anything smaller than that in a single pair of sessions is noise. The way around it is the **trend across all five sessions**, not any one comparison — which is why the dashboard plots time courses with error bars rather than showing you pairwise deltas.
+**So do not read any single pair of sessions.** Only the trend across all of them means anything, which is why the dashboard plots time courses with error bars instead of pairwise deltas. This is the price of a 10-minute battery, and it was the right trade — a 26-minute battery you stop repeating at hour 24 yields nothing at all.
 
 The adaptive estimator was tuned for this specifically: assumed slope β=1.0 with a wide prior (SD 1.2 log units). Sharper settings give a slightly tighter estimate but introduce *level-dependent* shrinkage, which would distort the shape of the change over time. Measured bias flatness across the operating range is 1.077 — essentially a constant offset, which cancels when comparing sessions.
 

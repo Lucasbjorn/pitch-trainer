@@ -324,7 +324,7 @@ export function setupBattery(ctx) {
         <div class="bt-cards">
           <button class="bt-card go" id="bt-start">
             <div class="bt-card-t">Run a session</div>
-            <div class="bt-card-b">The full battery. ~25 minutes. No feedback until it is over.</div>
+            <div class="bt-card-b">The full battery. About 10 minutes. No feedback until it is over.</div>
           </button>
           <button class="bt-card" id="bt-practice">
             <div class="bt-card-t">Practice</div>
@@ -337,9 +337,9 @@ export function setupBattery(ctx) {
         </div>
         <div class="bt-foot">Keys: <b>F</b> and <b>J</b> for two-choice answers · <b>space</b> for "I know it" · <b>P</b> pauses · <b>R</b> replays where allowed.</div>
       `);
-      $("#bt-start").addEventListener("click", () => renderSetup("meta"));
+      $("#bt-start").addEventListener("click", renderMeta);
       $("#bt-practice").addEventListener("click", renderPracticeMenu);
-      $("#bt-setup").addEventListener("click", () => renderSetup("home"));
+      $("#bt-setup").addEventListener("click", renderSetup);
       if (open) {
         $("#bt-resume").addEventListener("click", () => resumeSession(open));
         $("#bt-abandon").addEventListener("click", async () => {
@@ -363,7 +363,7 @@ export function setupBattery(ctx) {
   }
 
   // ---- audio setup / calibration ----
-  function renderSetup(next) {
+  function renderSetup() {
     view = "setup";
     const dev = localStorage.getItem(LS.device) || "";
     const ph = localStorage.getItem(LS.phones) || "";
@@ -406,7 +406,7 @@ export function setupBattery(ctx) {
         <p class="bt-note" id="bt-storage">Checking…</p>
       </div>
 
-      <button class="bt-btn primary wide" id="bt-next">${next === "meta" ? "Continue to session details" : "Save and go back"}</button>
+      <button class="bt-btn primary wide" id="bt-next">Save and go back</button>
     `);
 
     $("#bt-back").addEventListener("click", renderHome);
@@ -460,71 +460,38 @@ export function setupBattery(ctx) {
     $("#bt-next").addEventListener("click", async () => {
       persist();
       await A.ensureEngine();
-      if (next === "meta") renderMeta(); else renderHome();
+      renderHome();
     });
   }
 
   // ---- session metadata ----
+  // Deliberately tiny. A questionnaire before every run is friction, and
+  // friction is what stops a battery actually getting repeated.
   function renderMeta() {
     view = "meta";
-    const savedMods = JSON.parse(localStorage.getItem(LS.modules) || "null");
-    const activeIds = new Set(savedMods && savedMods.length ? savedMods : CORE_MODULES.map((m) => m.id));
-    const optRows = OPTIONAL_MODULES.map((m) => `
-      <label class="bt-check"><input type="checkbox" class="bt-opt" value="${m.id}" ${activeIds.has(m.id) ? "checked" : ""}> Also run <b>${m.title}</b> — ${m.blurb}</label>`).join("");
-
     shell(`
       <button class="bt-back" id="bt-back">‹ Battery</button>
-      <h1 class="bt-title">Session details</h1>
-      <p class="bt-sub">Thirty seconds of context. These are the variables that explain a bad hour-12 score that has nothing to do with hearing.</p>
+      <h1 class="bt-title">New session</h1>
+      <p class="bt-sub">Name it, then go. About 10 minutes.</p>
 
       <div class="bt-panel">
-        <div class="bt-panel-t">Label</div>
         <div class="bt-chips" id="bt-chips">${SESSION_LABELS.map((l) => `<button class="bt-chip" data-l="${l}">${l}</button>`).join("")}</div>
         <input id="bt-label" class="bt-input" placeholder="Session label">
-      </div>
-
-      <div class="bt-panel">
-        <div class="bt-panel-t">State</div>
-        <div class="bt-fields">
+        <div class="bt-fields" style="margin-top:0.8rem">
           <label>Hours since blindfold went on<input id="bt-hours" type="number" step="0.5" placeholder="0"></label>
-          <label>Currently<select id="bt-blind"><option value="1">Blindfolded</option><option value="0">Vision restored</option></select></label>
-          <label>Hours slept last night<input id="bt-slept" type="number" step="0.5" placeholder="7"></label>
-          <label>Caffeine since waking (mg)<input id="bt-caff" type="number" step="10" placeholder="0"></label>
         </div>
-        ${slider("sleepq", "Sleep quality", 5)}
-        ${slider("fatigue", "Fatigue", 5)}
-        ${slider("focus", "Focus", 5)}
-        ${slider("stress", "Stress", 5)}
-        <label class="bt-field-wide">Notes<textarea id="bt-notes" rows="2" placeholder="Anything unusual — headache, noisy room, took the blindfold off briefly…"></textarea></label>
+        <label class="bt-field-wide">Notes (optional)<textarea id="bt-notes" rows="2" placeholder="Anything unusual"></textarea></label>
       </div>
 
-      <div class="bt-panel">
-        <div class="bt-panel-t">Modules</div>
-        <p class="bt-note">Five core tests run every session. Changing this set between sessions breaks comparability — decide once, before baseline, and leave it.</p>
-        ${optRows}
-      </div>
-
-      <button class="bt-btn primary wide" id="bt-go">Begin session</button>
+      <button class="bt-btn primary wide" id="bt-go">Start</button>
     `);
-
     $("#bt-back").addEventListener("click", renderHome);
     root.querySelectorAll("#bt-chips .bt-chip").forEach((b) =>
       b.addEventListener("click", () => { $("#bt-label").value = b.dataset.l; }));
-    root.querySelectorAll(".bt-slider input").forEach((i) =>
-      i.addEventListener("input", () => { i.parentElement.querySelector("output").textContent = i.value; }));
     $("#bt-go").addEventListener("click", () => {
-      const ids = [...CORE_MODULES.map((m) => m.id),
-        ...[...root.querySelectorAll(".bt-opt")].filter((c) => c.checked).map((c) => c.value)];
-      localStorage.setItem(LS.modules, JSON.stringify(ids));
+      const ids = CORE_MODULES.map((m) => m.id);
       const meta = {
         hours_since_blindfold: numOrNull($("#bt-hours").value),
-        blindfolded: $("#bt-blind").value === "1",
-        hours_slept: numOrNull($("#bt-slept").value),
-        caffeine_mg: numOrNull($("#bt-caff").value),
-        sleep_quality: +$("#bt-sleepq").value,
-        fatigue: +$("#bt-fatigue").value,
-        focus: +$("#bt-focus").value,
-        stress: +$("#bt-stress").value,
         device: localStorage.getItem(LS.device) || "",
         headphones: localStorage.getItem(LS.phones) || "",
         volume_setting: localStorage.getItem(LS.volume) || "",
@@ -534,10 +501,6 @@ export function setupBattery(ctx) {
     });
   }
 
-  function slider(id, label, def) {
-    return `<div class="bt-slider"><span>${label}</span>
-      <input id="bt-${id}" type="range" min="1" max="10" value="${def}"><output>${def}</output></div>`;
-  }
   function numOrNull(v) { const n = parseFloat(v); return isFinite(n) ? n : null; }
   function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 
@@ -811,7 +774,7 @@ export function setupBattery(ctx) {
         if (!session.is_practice) await store.putTrial(trial);
         updateProgress();
         await saveProgress();
-        await A.sleep(session.is_practice ? 900 : 550);   // inter-trial interval
+        await A.sleep(session.is_practice ? 900 : 400);   // inter-trial interval
       }
 
       // Module finished.
