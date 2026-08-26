@@ -63,7 +63,7 @@ No scores, no accuracy, no feedback of any kind until the experiment is over.
 | Key | Does |
 | --- | --- |
 | `F` / `J` | The two answers in any two-choice test (also `←` / `→` or `↑` / `↓`) |
-| `Space` | "I've decided" in note naming · "match" in n-back · continue everywhere else |
+| `Space` | "match" in n-back · continue everywhere else |
 | `H` | Hear the note again in note naming (2 per trial) |
 | `R` | Replay, where a module allows it |
 | `P` | Pause (takes effect at the next safe point) |
@@ -83,11 +83,10 @@ Chosen for evidence at this timescale and for producing continuous, well-powered
 
 Single isolated notes; you name the pitch class. Not an absolute-pitch test — the question is whether tagging gets easier.
 
-**No time pressure.** Take as long as you want. Press `H` to hear the note twice more (2 hints per trial), press space when you've decided, then say it. Reaction time and hint use are both still recorded — filter on `x_hints_used == 0` for a clean RT measure.
+**No time pressure and no keypress.** The note plays, you say it, your friend clicks it. `H` replays it twice more, twice per trial. Time-to-answer and hint use are still logged, but the time includes your friend entering it, so treat it as rough.
 
 - One pass through all 12 pitch classes. Register and timbre are balanced 4/4/4 across the set.
 - A burst of random microtonal tones runs before every trial. Without it, trial N+1 gets answered by comparing against trial N, and the whole thing becomes a relative-pitch test.
-- Two-stage response: `Space` when decided, then say the note and your friend enters it. Decision time is measured without friend-reaction contamination, but nothing asks you to hurry.
 - A "how did you know?" probe fires on a third of trials — song reference / it just felt like that note / guessed / other.
 
 **Measures:** accuracy vs. 8.3% chance, median decision RT, signed and absolute semitone error, per-pitch-class accuracy, confusion matrix, strategy-vs-accuracy breakdown.

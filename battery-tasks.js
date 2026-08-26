@@ -92,13 +92,13 @@ const tagging = {
   id: "tagging",
   title: "Note Naming",
   blurb: "Name the pitch class of single isolated notes.",
-  keysHint: "H hears it again (2 max) · SPACE when decided · then say the note",
+  keysHint: "Say the note — friend clicks it. H hears it again (2 max).",
   instructions: [
     "Note naming.",
     "You will hear a burst of scrambled tones, then one single note.",
-    "Take as long as you like. This is not a speed test — accuracy is the only thing that counts here, so think it through.",
-    "If you want to hear the note again, press H. That plays it twice more. You get two of those per trial.",
-    "When you have decided, press the space bar, then say the note out loud and your friend will enter it.",
+    "Take as long as you like. This is not a speed test — accuracy is the only thing that counts.",
+    "Say the note out loud and your friend clicks it. That is the whole trial.",
+    "Want to hear it again? Say so and your friend presses H. That plays it twice more, twice per trial.",
     "If you are unsure, give your best guess. Do not leave a trial blank.",
     "Sometimes you will then be asked how you knew.",
   ],
@@ -128,7 +128,7 @@ const tagging = {
         const tone = A.renderTone({ freq, durMs, timbre: p.timbre, rms: roveLevel(rng, 1.5) });
         io.status("LISTEN");
         const h = A.playMono(tone.data, A.nextSlot());
-        io.status("TAKE YOUR TIME");
+        io.status("WHICH NOTE?");
 
         // Hint = the note played twice more, up to HINT_MAX times per trial.
         // Hint use is logged rather than penalised: whether he needs a second
@@ -144,24 +144,18 @@ const tagging = {
           return HINT_MAX - hints;
         };
 
-        // Two-stage response, but with no time pressure: he decides at leisure,
-        // presses space, and only then says the note. The space press keeps
-        // decision time free of the friend's own reaction time; the identity is
-        // entered afterwards so accuracy is never limited by interface speed.
-        const dec = await io.awaitDecision({
+        // One step: he says the note, his friend clicks it. There is no
+        // decision-time keypress, because this task is not measuring speed and
+        // an extra button to press would only add a way to get it wrong. Time
+        // to answer is still recorded, but it includes the friend entering it,
+        // so treat it as rough.
+        const res = await io.awaitPitchClasses(1, {
           onsetPerf: h.onsetPerf, timeoutMs: 180000, onHint, hintsLeft: HINT_MAX,
         });
         io.receipt();
 
-        let chosen = dec.pc;
-        let entry = { method: dec.method, timedOut: dec.timedOut };
-        if (chosen == null && !dec.timedOut) {
-          io.status("WHICH NOTE?");
-          const res = await io.awaitPitchClasses(1, { timeoutMs: 120000, noRt: true });
-          chosen = res.pcs.length ? res.pcs[0] : null;
-          entry = { method: res.method, timedOut: res.timedOut };
-        }
-
+        const chosen = res.pcs.length ? res.pcs[0] : null;
+        const entry = { method: res.method, timedOut: res.timedOut };
         const correct = chosen == null ? null : chosen === p.pc;
         const err = chosen == null ? null : pcError(chosen, p.pc);
 
@@ -191,17 +185,16 @@ const tagging = {
           response: chosen == null ? null : PC_NAMES[chosen],
           response_pc: chosen,
           correct,
-          // Decision time, tone onset -> space bar. Recorded, but NOT something
-          // the task asks him to optimise. Trials with hints have inflated RT by
-          // construction, so filter on hints_used == 0 for a clean RT measure.
-          rt_ms: dec.rtMs,
+          // Tone onset -> the answer being entered. Includes the friend's own
+          // time, so it is a rough measure, not a reaction time. Filter on
+          // hints_used == 0 before reading anything into it.
+          rt_ms: res.rtMs,
           input_method: entry.method,
-          timed_out: dec.timedOut || entry.timedOut,
+          timed_out: entry.timedOut,
           extra: {
             semitone_error_signed: err,
             semitone_error_abs: err == null ? null : Math.min(Math.abs(err), 12 - Math.abs(err)),
             probe_asked: p.probe, probe_response: probeAns,
-            decision_method: dec.method,
             hints_used: hints, n_plays: 1 + hints * 2, unaided: hints === 0,
           },
         };
@@ -233,7 +226,7 @@ const tagging = {
           n: scored.length,
           accuracy: pctCorrect(scored),
           chance: 1 / 12,
-          // RT only means anything on trials where he did not ask to re-hear it.
+          // Rough time-to-answer, and only on trials he did not re-hear.
           median_rt_ms: median(unaided.map((t) => t.rt_ms)),
           median_rt_ms_all: median(scored.map((t) => t.rt_ms)),
           mean_abs_semitone_error: mean(scored.map((t) => t.extra.semitone_error_abs)),

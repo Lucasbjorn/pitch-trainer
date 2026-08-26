@@ -72,23 +72,13 @@ export function setupBattery(ctx) {
       return false;
     }
 
-    if (pending.kind === "decision") {
-      if (ev.kind === "midi") {
-        const p = pending; pending = null;
-        p.done({ pc: ev.pc, rtMs: +(ev.t - p.onsetPerf).toFixed(1), method: "midi", timedOut: false });
-        return true;
-      }
-      const k = String(ev.key || "").toLowerCase();
-      if (k === "h" && pending.onHint) { updateHintButton(pending.onHint()); return true; }
-      if (k === " " || k === "space") {
-        const p = pending; pending = null;
-        p.done({ pc: null, rtMs: +(ev.t - p.onsetPerf).toFixed(1), method: ev.method, timedOut: false });
-        return true;
-      }
-      return false;
-    }
-
     if (pending.kind === "pcs") {
+      if (ev.kind === "key" && String(ev.key).toLowerCase() === "h" && pending.onHint) {
+        updateHintButton(pending.onHint()); return true;
+      }
+      if (ev.kind === "click" && String(ev.key || "").toLowerCase() === "h" && pending.onHint) {
+        updateHintButton(pending.onHint()); return true;
+      }
       if (ev.kind === "midi" || (ev.kind === "click" && ev.pc != null)) {
         const p = pending;
         if (p.pcs.includes(ev.pc)) return true;            // no duplicates in a chord
@@ -236,26 +226,13 @@ export function setupBattery(ctx) {
         .then((r) => { hideChoiceButtons(); return r; });
     },
 
-    /**
-     * Space bar (or a MIDI note, which doubles as the answer) stops the clock.
-     * There is no time pressure attached to this — it exists so decision time
-     * can be recorded without the friend's own reaction time contaminating it.
-     * `onHint` returns how many hints remain, so the button can relabel itself.
-     */
-    awaitDecision({ onsetPerf, timeoutMs = 120000, onHint = null, hintsLeft = 0 }) {
-      const extras = onHint ? [{ key: "h", label: `hear it again (${hintsLeft} left)`, disabled: hintsLeft <= 0 }] : [];
-      showChoiceButtons({ " ": "I've decided" }, extras);
-      const p = new Promise((done) => { pending = { kind: "decision", onsetPerf, onHint, done }; });
-      return withTimeout(p, timeoutMs, () => ({ pc: null, rtMs: null, method: "timeout", timedOut: true }))
-        .then((r) => { hideChoiceButtons(); return r; });
-    },
-
-    awaitPitchClasses(n, { onsetPerf = null, timeoutMs = 60000, onReplay = null, noRt = false } = {}) {
+    awaitPitchClasses(n, { onsetPerf = null, timeoutMs = 60000, onReplay = null, noRt = false, onHint = null, hintsLeft = 0 } = {}) {
       showPcGrid(n);
-      const st = { kind: "pcs", n, pcs: [], entryRts: [], rtMs: null, method: null, onsetPerf: noRt ? null : onsetPerf, onReplay };
+      if (onHint) showChoiceButtons({}, [{ key: "h", label: `hear it again (${hintsLeft} left)`, disabled: hintsLeft <= 0 }]);
+      const st = { kind: "pcs", n, pcs: [], entryRts: [], rtMs: null, method: null, onsetPerf: noRt ? null : onsetPerf, onReplay, onHint };
       const p = new Promise((done) => { pending = Object.assign(st, { done }); });
       return withTimeout(p, timeoutMs, () => ({ pcs: st.pcs, rtMs: st.rtMs, rtTotalMs: null, entryRts: st.entryRts, method: st.method || "timeout", timedOut: true }))
-        .then((r) => { hidePcGrid(); return r; });
+        .then((r) => { hidePcGrid(); hideChoiceButtons(); return r; });
     },
 
     awaitGo(label = "Press space to continue") {
