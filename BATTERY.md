@@ -62,12 +62,15 @@ No scores, no accuracy, no feedback of any kind until the experiment is over.
 | Key | Does |
 | --- | --- |
 | `F` / `J` | The two answers in any two-choice test (also `←` / `→` or `↑` / `↓`) |
-| `Space` | "I know it" in note naming · "match" in n-back · continue everywhere else |
+| `Space` | "I've decided" in note naming · "match" in n-back · continue everywhere else |
+| `H` | Hear the note again in note naming (2 per trial) |
 | `R` | Replay, where a module allows it |
 | `P` | Pause (takes effect at the next safe point) |
 | MIDI keyboard | Enter pitch classes directly |
 
 Everything is also clickable, so a friend can drive it. Reaction time is only ever taken from your own keypress, never from a friend's click — so `input_method` is logged per trial and RT stays clean regardless of who is operating the machine.
+
+Spoken instructions are **off** by default (toggle on the setup screen).
 
 ---
 
@@ -77,11 +80,13 @@ Chosen for evidence at this timescale and for producing continuous, well-powered
 
 ### 1. Note Naming — 48 trials
 
-Single isolated notes; you name the pitch class. Not an absolute-pitch test — the question is whether tagging gets easier or faster.
+Single isolated notes; you name the pitch class. Not an absolute-pitch test — the question is whether tagging gets easier.
+
+**No time pressure.** Take as long as you want. Press `H` to hear the note twice more (2 hints per trial), press space when you've decided, then say it. Reaction time and hint use are both still recorded — filter on `x_hints_used == 0` for a clean RT measure.
 
 - 12 pitch classes × 4 repetitions. Register and timbre assigned by orthogonal modular rules, so each appears exactly 16 times and **every pitch class is heard in every register and every timbre**.
 - A burst of random microtonal tones runs before every trial. Without it, trial N+1 gets answered by comparing against trial N, and the whole thing becomes a relative-pitch test.
-- Two-stage response: `Space` the instant you know (this is what gets timed), then say the note and your friend enters it. Decision time is measured without any motor-search or friend-reaction contamination.
+- Two-stage response: `Space` when decided, then say the note and your friend enters it. Decision time is measured without friend-reaction contamination, but nothing asks you to hurry.
 - A "how did you know?" probe fires on a third of trials — song reference / it just felt like that note / guessed / other.
 
 **Measures:** accuracy vs. 8.3% chance, median decision RT, signed and absolute semitone error, per-pitch-class accuracy, confusion matrix, strategy-vs-accuracy breakdown.
@@ -112,13 +117,15 @@ This is the headline measure. Landry, Shiller & Champoux (2013) found harmonicit
 
 ### 4. Auditory Working Memory — 88 tones
 
-2-back and 3-back on microtonal tones. Press `Space` on a match.
+**Adaptive n-back** on microtonal tones. Press `Space` on a match.
+
+Starts at 2-back every session, then climbs: clear a block with ≤2 errors and the next goes a step deeper (up to 6-back); make ≥5 errors and it steps back. It should always feel hard — that's the point. Headline number is **deepest level cleared**; d′ per level is recorded alongside.
 
 - Tones sit on a **137-cent grid** with a randomly roved base, so they have no note names to rehearse verbally. This was the specific failure mode to avoid for a trained musician.
 - Controlled lures (matches at n−1 and n+1 back) prevent answering on bare familiarity.
 - The whole 44-tone stream is scheduled in one go, so inter-onset intervals are sample-accurate rather than at the mercy of `setTimeout`.
 
-**Measures:** d′ and criterion c at each load, hit rate, false-alarm rate, lure false-alarm rate, hit RT, load cost.
+**Measures:** deepest level cleared, mean level, per-block log, plus d′ and criterion c at each load, hit rate, false-alarm rate, lure false-alarm rate, hit RT.
 
 > d′ rather than a span score: span is an integer that bounces around too much to read a trend from five sessions. d′ is continuous and separates sensitivity from response bias, so a session where you simply pressed more often doesn't masquerade as improvement.
 
@@ -222,7 +229,7 @@ One `AudioContext` for the whole battery, forced to 48 kHz where the device allo
 Off by default; enable on the session details screen. If you enable them, enable them **for every session including baseline**.
 
 - **Pitch Memory Retention** (24 trials) — same/different pitch after 1.5 s, 5 s, and 5 s + interference. Cut from the core because it's largely redundant with the n-back, which measures the same storage with much better power. Its one distinct contribution is separating decay from interference resistance.
-- **Chord Segregation** (12 trials) — name every pitch class in a simultaneous chord, sizes 2–5. Fun and musician-specific, but no supporting literature at this timescale and the slowest module per trial. Difficulty is stratified: exactly one chord of each size × voicing-type combination per session, transposed randomly, so no session can draw an easier hand.
+- **Chord Segregation** (12 trials) — name every pitch class in a simultaneous chord. **Escalating:** starts at 3 notes, get one exactly right and the next gains a note (up to 6), miss any and it drops back. Headline is the biggest chord solved. Fun and musician-specific, but no supporting literature at this timescale.
 
 ---
 
@@ -239,3 +246,11 @@ node tools/test-battery-dash.mjs http://localhost:8777/  # scoring + dashboard a
 ```
 
 `verify-battery` is the one to re-run after touching anything scientific. It asserts estimator bias flatness, that harmonic and inharmonic tokens are RMS-identical, that no stimulus clips, that every stimulus starts and ends at silence, that the note-naming design is balanced 16/16/16 across registers and timbres, that no chord template contains a duplicated pitch class, and that n-back targets and lures are constructed correctly.
+
+---
+
+## Is anything too easy?
+
+Three modules adapt on their own (pitch discrimination, harmonicity, cocktail party) — they converge on ~80% correct no matter how good you get, so they cannot go stale. Working memory and chord segregation now escalate in steps. Note naming is the opposite problem: at ~20% against 8.3% chance it sits near *floor*, which is why it does not get harder.
+
+Every module summary also carries `at_ceiling`, `at_floor` and `headroom`, so after baseline you can check directly rather than guess. If anything comes back `at_ceiling: true`, tell me and I'll widen that module before you film.

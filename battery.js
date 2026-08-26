@@ -38,7 +38,9 @@ export function setupBattery(ctx) {
   let runner = null;           // { modules, moduleIndex, trialIndex, run, trials }
   let pauseRequested = false;
   let aborted = false;
-  let ttsOn = localStorage.getItem(LS.tts) !== "0";
+  // Spoken instructions are off unless explicitly switched on. Instructions are
+  // on screen and a friend is operating the machine, so the voice is just delay.
+  let ttsOn = localStorage.getItem(LS.tts) === "1";
 
   // -------------------------------------------------------------------------
   // Input routing. Keyboard, MIDI and friend-clicks all funnel through one
@@ -77,6 +79,7 @@ export function setupBattery(ctx) {
         return true;
       }
       const k = String(ev.key || "").toLowerCase();
+      if (k === "h" && pending.onHint) { updateHintButton(pending.onHint()); return true; }
       if (k === " " || k === "space") {
         const p = pending; pending = null;
         p.done({ pc: null, rtMs: +(ev.t - p.onsetPerf).toFixed(1), method: ev.method, timedOut: false });
@@ -172,7 +175,7 @@ export function setupBattery(ctx) {
     if (g) g.querySelectorAll("[data-pc]").forEach((b) => b.classList.toggle("picked", p.pcs.includes(+b.dataset.pc)));
   }
 
-  function showChoiceButtons(map) {
+  function showChoiceButtons(map, extras = []) {
     const box = $("#bt-choices");
     if (!box) return;
     const seen = new Set();
@@ -182,10 +185,21 @@ export function setupBattery(ctx) {
       seen.add(v);
       rows.push(`<button class="bt-choice" data-key="${k}">${String(v).replace(/_/g, " ")}<span>${k === " " ? "space" : k.toUpperCase()}</span></button>`);
     }
+    for (const e of extras) {
+      rows.push(`<button class="bt-choice aux" data-key="${e.key}" ${e.disabled ? "disabled" : ""}>${e.label}<span>${e.key.toUpperCase()}</span></button>`);
+    }
     box.innerHTML = rows.join("");
     box.classList.add("on");
     box.querySelectorAll("[data-key]").forEach((b) =>
       b.addEventListener("click", () => handleInput({ kind: "click", key: b.dataset.key, method: "click", t: nowStamp() })));
+  }
+
+  /** Re-label the hint button in place as the allowance is spent. */
+  function updateHintButton(left) {
+    const b = root.querySelector('#bt-choices [data-key="h"]');
+    if (!b) return;
+    if (left <= 0) { b.disabled = true; b.innerHTML = `no hints left<span>H</span>`; }
+    else b.innerHTML = `hear it again (${left} left)<span>H</span>`;
   }
   function hideChoiceButtons() { const b = $("#bt-choices"); if (b) { b.classList.remove("on"); b.innerHTML = ""; } }
 
@@ -222,10 +236,16 @@ export function setupBattery(ctx) {
         .then((r) => { hideChoiceButtons(); return r; });
     },
 
-    /** Space bar (or a MIDI note, which doubles as the answer) stops the clock. */
-    awaitDecision({ onsetPerf, timeoutMs = 30000 }) {
-      showChoiceButtons({ " ": "I know it" });
-      const p = new Promise((done) => { pending = { kind: "decision", onsetPerf, done }; });
+    /**
+     * Space bar (or a MIDI note, which doubles as the answer) stops the clock.
+     * There is no time pressure attached to this — it exists so decision time
+     * can be recorded without the friend's own reaction time contaminating it.
+     * `onHint` returns how many hints remain, so the button can relabel itself.
+     */
+    awaitDecision({ onsetPerf, timeoutMs = 120000, onHint = null, hintsLeft = 0 }) {
+      const extras = onHint ? [{ key: "h", label: `hear it again (${hintsLeft} left)`, disabled: hintsLeft <= 0 }] : [];
+      showChoiceButtons({ " ": "I've decided" }, extras);
+      const p = new Promise((done) => { pending = { kind: "decision", onsetPerf, onHint, done }; });
       return withTimeout(p, timeoutMs, () => ({ pc: null, rtMs: null, method: "timeout", timedOut: true }))
         .then((r) => { hideChoiceButtons(); return r; });
     },

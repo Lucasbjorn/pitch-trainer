@@ -28,6 +28,23 @@ function pctCorrect(trials) {
   return scored.length ? scored.filter((t) => t.correct).length / scored.length : null;
 }
 
+/** Hints per trial in the note-naming task: each one replays the note twice. */
+const HINT_MAX = 2;
+
+/**
+ * Ceiling / floor detection. A module sitting at either end stops being able to
+ * show change in one direction, which is the failure mode worth catching early
+ * — ideally at baseline, while the design can still be adjusted.
+ */
+function rangeFlags(accuracy, chance = 0.5) {
+  if (accuracy == null) return { at_ceiling: null, at_floor: null };
+  return {
+    at_ceiling: accuracy >= 0.95,
+    at_floor: accuracy <= chance + 0.05,
+    headroom: +(1 - accuracy).toFixed(4),
+  };
+}
+
 // ===========================================================================
 // 1. Note Naming  (pitch-class tagging)
 //
@@ -75,12 +92,13 @@ const tagging = {
   id: "tagging",
   title: "Note Naming",
   blurb: "Name the pitch class of single isolated notes.",
-  keysHint: "SPACE the moment you know · then say the note, friend enters it",
+  keysHint: "H hears it again (2 max) · SPACE when decided · then say the note",
   instructions: [
     "Note naming.",
     "You will hear a burst of scrambled tones, then one single note.",
-    "Press the space bar the moment you know what note it is. That keypress is what gets timed, so press it as soon as you have decided, not after you have said it.",
-    "Then say the note out loud and your friend will enter it.",
+    "Take as long as you like. This is not a speed test — accuracy is the only thing that counts here, so think it through.",
+    "If you want to hear the note again, press H. That plays it twice more. You get two of those per trial.",
+    "When you have decided, press the space bar, then say the note out loud and your friend will enter it.",
     "If you are unsure, give your best guess. Do not leave a trial blank.",
     "Sometimes you will then be asked how you knew.",
   ],
@@ -110,13 +128,29 @@ const tagging = {
         const tone = A.renderTone({ freq, durMs, timbre: p.timbre, rms: roveLevel(rng, 1.5) });
         io.status("LISTEN");
         const h = A.playMono(tone.data, A.nextSlot());
-        io.status("SPACE WHEN YOU KNOW");
+        io.status("TAKE YOUR TIME");
 
-        // Two-stage response. The space bar captures decision time cleanly — no
-        // hunting for a key, and none of the friend's own reaction time. The
-        // identity is then entered at leisure, so the accuracy measure is not
-        // constrained by how fast anyone can operate an interface.
-        const dec = await io.awaitDecision({ onsetPerf: h.onsetPerf, timeoutMs: 30000 });
+        // Hint = the note played twice more, up to HINT_MAX times per trial.
+        // Hint use is logged rather than penalised: whether he needs a second
+        // listen is itself a measure, and it may move over the experiment even
+        // if raw accuracy does not.
+        let hints = 0;
+        const onHint = () => {
+          if (hints >= HINT_MAX) return 0;
+          hints++;
+          const t0 = A.nextSlot();
+          A.playMono(tone.data, t0);
+          A.playMono(tone.data, t0 + (durMs + 500) / 1000);
+          return HINT_MAX - hints;
+        };
+
+        // Two-stage response, but with no time pressure: he decides at leisure,
+        // presses space, and only then says the note. The space press keeps
+        // decision time free of the friend's own reaction time; the identity is
+        // entered afterwards so accuracy is never limited by interface speed.
+        const dec = await io.awaitDecision({
+          onsetPerf: h.onsetPerf, timeoutMs: 180000, onHint, hintsLeft: HINT_MAX,
+        });
         io.receipt();
 
         let chosen = dec.pc;
@@ -157,7 +191,10 @@ const tagging = {
           response: chosen == null ? null : PC_NAMES[chosen],
           response_pc: chosen,
           correct,
-          rt_ms: dec.rtMs,                 // decision time: tone onset -> space bar
+          // Decision time, tone onset -> space bar. Recorded, but NOT something
+          // the task asks him to optimise. Trials with hints have inflated RT by
+          // construction, so filter on hints_used == 0 for a clean RT measure.
+          rt_ms: dec.rtMs,
           input_method: entry.method,
           timed_out: dec.timedOut || entry.timedOut,
           extra: {
@@ -165,6 +202,7 @@ const tagging = {
             semitone_error_abs: err == null ? null : Math.min(Math.abs(err), 12 - Math.abs(err)),
             probe_asked: p.probe, probe_response: probeAns,
             decision_method: dec.method,
+            hints_used: hints, n_plays: 1 + hints * 2, unaided: hints === 0,
           },
         };
       },
@@ -189,15 +227,25 @@ const tagging = {
           byTim[k] = byTim[k] || { n: 0, correct: 0 };
           byTim[k].n++; if (t.correct) byTim[k].correct++;
         }
+        const unaided = scored.filter((t) => t.extra.unaided);
+        const aided = scored.filter((t) => !t.extra.unaided);
         return {
           n: scored.length,
           accuracy: pctCorrect(scored),
           chance: 1 / 12,
-          median_rt_ms: median(scored.map((t) => t.rt_ms)),
+          // RT only means anything on trials where he did not ask to re-hear it.
+          median_rt_ms: median(unaided.map((t) => t.rt_ms)),
+          median_rt_ms_all: median(scored.map((t) => t.rt_ms)),
           mean_abs_semitone_error: mean(scored.map((t) => t.extra.semitone_error_abs)),
           within_1_semitone: scored.length
             ? scored.filter((t) => t.extra.semitone_error_abs <= 1).length / scored.length : null,
+          hints_used_total: scored.reduce((a, t) => a + t.extra.hints_used, 0),
+          hint_rate: scored.length ? +(aided.length / scored.length).toFixed(4) : null,
+          accuracy_unaided: pctCorrect(unaided),
+          accuracy_with_hint: pctCorrect(aided),
+          n_unaided: unaided.length,
           by_pitch_class: byPc, by_register: byReg, by_timbre: byTim,
+          ...rangeFlags(pctCorrect(scored), 1 / 12),
         };
       },
     };
@@ -243,7 +291,7 @@ const discrim = {
   count: (practice) => (practice ? 8 : 42),
 
   make({ rng, practice, io }) {
-    const zest = makeZest({ min: 0.4, max: 120, priorMode: 12, ...ZEST_ROBUST });
+    const zest = makeZest({ min: 0.2, max: 120, priorMode: 12, ...ZEST_ROBUST });
 
     const plan = [];
     if (practice) {
@@ -327,6 +375,7 @@ const discrim = {
           anchor_accuracy: anchors,
           median_rt_ms: median(trials.map((t) => t.rt_ms)),
           overall_accuracy: pctCorrect(trials),
+          ...rangeFlags(pctCorrect(trials), 0.5),
         };
       },
     };
@@ -364,7 +413,7 @@ const harmonicity = {
   count: (practice) => (practice ? 8 : 44),
 
   make({ rng, practice, io }) {
-    const zest = makeZest({ min: 0.004, max: 0.6, priorMode: 0.08, ...ZEST_ROBUST });
+    const zest = makeZest({ min: 0.0015, max: 0.6, priorMode: 0.08, ...ZEST_ROBUST });
 
     const plan = [];
     if (practice) {
@@ -455,6 +504,7 @@ const harmonicity = {
           anchor_accuracy: anchors,
           median_rt_ms: median(trials.map((t) => t.rt_ms)),
           overall_accuracy: pctCorrect(trials),
+          ...rangeFlags(pctCorrect(trials), 0.5),
         };
       },
     };
@@ -480,7 +530,7 @@ const MEM_CONDITIONS = [
   { id: "long", delayMs: 5000, nInterf: 0 },
   { id: "interference", delayMs: 5000, nInterf: 4 },
 ];
-const MEM_DELTAS = [25, 50];
+const MEM_DELTAS = [12, 25];
 
 const memory = {
   id: "memory",
@@ -595,6 +645,7 @@ const memory = {
           by_delta_cents: byDelta,
           interference_cost: s != null && inf != null ? +(s - inf).toFixed(4) : null,
           median_rt_ms: median(trials.map((t) => t.rt_ms)),
+          ...rangeFlags(pctCorrect(trials), 0.5),
         };
       },
     };
@@ -634,7 +685,19 @@ export const CHORD_TEMPLATES = {
     spread: [[0, 7, 16, 21, 26], [0, 5, 14, 21, 28], [0, 9, 16, 23, 26]],
     mixed: [[0, 2, 5, 9, 16], [0, 1, 6, 11, 15], [0, 3, 8, 13, 18]],
   },
+  6: {
+    stacked: [[0, 4, 7, 11, 14, 18], [0, 3, 7, 10, 14, 17], [0, 4, 7, 10, 14, 18]],
+    spread: [[0, 7, 14, 21, 28, 35], [0, 9, 16, 23, 30, 37], [0, 5, 14, 23, 28, 37]],
+    mixed: [[0, 2, 5, 9, 16, 23], [0, 1, 6, 11, 15, 20], [0, 3, 8, 13, 18, 23]],
+  },
 };
+
+// Chord segregation escalates on the number of simultaneous notes. Every
+// session starts at 3 so the entry point is comparable; get one exactly right
+// and the next is bigger, miss and it steps back.
+const CHORD_START_SIZE = 3;
+const CHORD_MIN_SIZE = 2;
+const CHORD_MAX_SIZE = 6;
 
 // Drop any template with a duplicated pitch class, so a typo above can never
 // silently produce a chord whose answer set is smaller than its note count.
@@ -653,34 +716,30 @@ const chords = {
     "Play every note you hear on the MIDI keyboard, in any octave and any order.",
     "The trial submits itself once you have entered that many notes.",
     "Press R to hear the chord again. You get two replays.",
+    "Get one exactly right and the next chord gains a note, up to six. Miss any note and it drops back one.",
   ],
   count: (practice) => (practice ? 3 : 12),
 
   make({ rng, practice, io }) {
-    const plan = [];
-    if (practice) {
-      [2, 3, 4].forEach((size) => {
-        const types = Object.keys(CHORD_TEMPLATES[size]);
-        plan.push({ size, type: rng.pick(types) });
-      });
-    } else {
-      for (const size of [2, 3, 4, 5]) {
-        for (const type of Object.keys(CHORD_TEMPLATES[size])) plan.push({ size, type });
-      }
-    }
-    const order = practice ? plan : shuffled(plan, rng);
+    const nTrials = practice ? 3 : 12;
+    let size = CHORD_START_SIZE;
+    const sizeLog = [];
 
     return {
-      total: order.length,
-      serialize: () => ({}),
-      restore: () => {},
+      total: nTrials,
+      serialize: () => ({ size, sizeLog }),
+      restore: (s) => {
+        if (!s) return;
+        if (typeof s.size === "number") size = s.size;
+        if (Array.isArray(s.sizeLog)) { sizeLog.length = 0; sizeLog.push(...s.sizeLog); }
+      },
 
       async runTrial(i) {
-        const p = order[i];
+        const p = { size, type: rng.pick(Object.keys(CHORD_TEMPLATES[size])) };
         const tmpls = validTemplates(p.size, p.type);
         const iv = rng.pick(tmpls);
         const maxIv = Math.max(...iv);
-        const bassLo = 45, bassHi = Math.max(bassLo, 84 - maxIv);
+        const bassLo = 45, bassHi = Math.max(bassLo, 88 - maxIv);   // top note stays <= E6
         const bass = bassLo + rng.int(bassHi - bassLo + 1);
         const midis = iv.map((x) => bass + x);
         const truePcs = midis.map((m) => ((m % 12) + 12) % 12);
@@ -719,7 +778,18 @@ const chords = {
         const f1 = precision != null && recall != null && precision + recall > 0
           ? (2 * precision * recall) / (precision + recall) : 0;
 
-        if (practice) io.feedback(fn.length === 0, `Chord was ${truePcs.map((x) => PC_NAMES[x]).join(" ")}`);
+        // Escalate only on an exactly-right chord; anything less steps back.
+        const exact = fn.length === 0 && fp.length === 0;
+        const sizeBefore = p.size;
+        const sizeAfter = exact
+          ? Math.min(CHORD_MAX_SIZE, p.size + 1)
+          : Math.max(CHORD_MIN_SIZE, p.size - 1);
+        sizeLog.push({ trial: i, size: sizeBefore, exact, next: sizeAfter });
+        size = sizeAfter;
+
+        if (practice) {
+          io.feedback(exact, `Chord was ${truePcs.map((x) => PC_NAMES[x]).join(" ")} — next chord has ${sizeAfter} notes`);
+        }
 
         return {
           difficulty: p.size,
@@ -738,6 +808,7 @@ const chords = {
           rt_ms: res.rtMs,
           input_method: res.method, timed_out: res.timedOut,
           block: `size${p.size}`,
+          adaptive: { size_before: sizeBefore, exact, size_after: sizeAfter },
           extra: {
             true_positives: tp.length, false_positives: fp.length, missed: fn.length,
             missed_names: fn.map((x) => PC_NAMES[x]), false_positive_names: fp.map((x) => PC_NAMES[x]),
@@ -763,8 +834,17 @@ const chords = {
         }
         const totTp = trials.reduce((a, t) => a + t.extra.true_positives, 0);
         const totNotes = trials.reduce((a, t) => a + t.stim.chord_size, 0);
+        const sizes = trials.map((t) => t.stim.chord_size);
+        const solved = trials.filter((t) => t.correct).map((t) => t.stim.chord_size);
         return {
           n: trials.length,
+          // The escalating headline: the biggest chord he actually got exactly
+          // right, and the average size the staircase settled around.
+          max_size_solved: solved.length ? Math.max(...solved) : null,
+          mean_size: sizes.length ? +mean(sizes).toFixed(3) : null,
+          max_size_reached: sizes.length ? Math.max(...sizes) : null,
+          final_size: size,
+          size_log: sizeLog,
           note_accuracy: totNotes ? +(totTp / totNotes).toFixed(4) : null,
           exact_chord_rate: trials.length ? +(trials.filter((t) => t.correct).length / trials.length).toFixed(4) : null,
           mean_f1: mean(trials.map((t) => t.extra.f1)),
@@ -773,6 +853,7 @@ const chords = {
           total_replays: trials.reduce((a, t) => a + t.extra.replays, 0),
           by_size: bySize,
           median_rt_ms: median(trials.map((t) => t.rt_ms)),
+          ...rangeFlags(totNotes ? totTp / totNotes : null, 0.1),
         };
       },
     };
@@ -780,11 +861,19 @@ const chords = {
 };
 
 // ===========================================================================
-// 6. Auditory Working Memory  —  n-back on microtonal tones
+// 6. Auditory Working Memory  —  ADAPTIVE n-back on microtonal tones
 //
-// A span task would give an integer that bounces around too much to read a
-// trend from five sessions. N-back gives d', a continuous measure, from a
-// single findable key, and separates sensitivity from response bias.
+// The load climbs. Every session starts at 2-back so the entry point is always
+// comparable, then after each block the level moves: clear it nearly clean and
+// the next block goes one deeper, struggle and it steps back. A trained
+// musician would sit at ceiling on a fixed 2-back, which would hide any real
+// change; letting it climb means the measurement follows him up.
+//
+// Two headline numbers come out, and they answer different questions:
+//   • level reached  — how deep he got. Escalating, intuitive, good on camera.
+//   • d' per level   — sensitivity at a given load, separated from response
+//                      bias, so a session where he simply pressed more often
+//                      does not masquerade as improvement.
 //
 // The tone pool sits on a 137-cent grid with a randomly roved base, so the
 // items have no note names to rehearse verbally — which was the specific
@@ -794,6 +883,11 @@ const NB_POOL = 6;
 const NB_SPACING_CENTS = 137;
 const NB_SOA_MS = 1750;
 const NB_TONE_MS = 300;
+const NB_START_LEVEL = 2;          // identical every session: a fixed entry point
+const NB_MIN_LEVEL = 1;
+const NB_MAX_LEVEL = 6;
+const NB_UP_ERRORS = 2;            // <= this many errors in a block -> go deeper
+const NB_DOWN_ERRORS = 5;          // >= this many -> step back
 
 export function buildNbackSeq(len, n, pool, rng) {
   const nTargets = Math.round((len - n) * 0.36);
@@ -814,7 +908,8 @@ export function buildNbackSeq(len, n, pool, rng) {
     let v; do { v = rng.int(pool); } while (v === seq[i - n]);
     seq[i] = v;
   }
-  return { seq, targets, lures };
+  // Arrays rather than Sets so a block survives serialize/restore on resume.
+  return { seq, targets: [...targets].sort((a, b) => a - b), lures: [...lures].sort((a, b) => a - b) };
 }
 
 const workmem = {
@@ -826,45 +921,55 @@ const workmem = {
     "Auditory working memory.",
     "A steady stream of tones will play. These tones are deliberately not musical notes, so you cannot name them.",
     "Press the space bar whenever the current tone is the same as the tone a certain number of steps earlier.",
-    "The first block is two back. The second block is three back.",
+    "You will be told how many steps back at the start of each block. It begins at two back.",
+    "If you get a block nearly perfect, the next one goes one step deeper. If you struggle, it steps back. So it should always feel hard — that is working as intended.",
     "Do nothing when it is not a match.",
   ],
   count: (practice) => (practice ? 24 : 88),
 
   make({ rng, practice, io }) {
-    const blocks = practice
-      ? [{ n: 2, len: 12 }, { n: 3, len: 12 }]
-      : [{ n: 2, len: 44 }, { n: 3, len: 44 }];
-    const built = blocks.map((b) => {
-      const baseHz = 300 * Math.pow(2, rng.range(-0.3, 0.3));
-      const pool = Array.from({ length: NB_POOL }, (_, k) => A.centsShift(baseHz, k * NB_SPACING_CENTS));
-      return { ...b, baseHz, pool, ...buildNbackSeq(b.len, b.n, NB_POOL, rng) };
-    });
+    const nBlocks = practice ? 2 : 4;
+    const blockLen = practice ? 12 : 22;
+    const built = [];                    // blocks are built lazily: n depends on how the previous one went
+    let level = NB_START_LEVEL;
+    const levelLog = [];
 
-    // Flatten to a per-tone trial index so the shell's progress maths works.
-    const index = [];
-    built.forEach((b, bi) => { for (let i = 0; i < b.len; i++) index.push({ bi, i }); });
+    function ensureBlock(bi) {
+      while (built.length <= bi) {
+        const n = level;
+        const baseHz = 300 * Math.pow(2, rng.range(-0.3, 0.3));
+        const pool = Array.from({ length: NB_POOL }, (_, k) => A.centsShift(baseHz, k * NB_SPACING_CENTS));
+        built.push({ n, len: blockLen, baseHz, pool, ...buildNbackSeq(blockLen, n, NB_POOL, rng) });
+      }
+      return built[bi];
+    }
 
     let running = null;   // presses collected during the currently playing block
     const blockStarts = new Set();
-    { let acc = 0; for (const b of built) { blockStarts.add(acc); acc += b.len; } }
+    for (let bi = 0; bi < nBlocks; bi++) blockStarts.add(bi * blockLen);
 
     return {
-      total: index.length,
-      serialize: () => ({}),
-      restore: () => {},
+      total: nBlocks * blockLen,
+      serialize: () => ({ level, built, levelLog }),
+      restore: (s) => {
+        if (!s) return;
+        if (typeof s.level === "number") level = s.level;
+        if (Array.isArray(s.built)) { built.length = 0; built.push(...s.built); }
+        if (Array.isArray(s.levelLog)) { levelLog.length = 0; levelLog.push(...s.levelLog); }
+      },
       // The tone stream is scheduled a whole block at a time, so pausing partway
       // through would leave the response windows pointing at audio that has
       // already been cancelled. Pausing waits for the next block boundary.
       pauseSafe: (i) => blockStarts.has(i),
 
       async runTrial(k) {
-        const { bi, i } = index[k];
-        const b = built[bi];
+        const bi = Math.floor(k / blockLen);
+        const i = k % blockLen;
+        const b = ensureBlock(bi);
 
         // At the head of a block, schedule the whole stream at once. Web Audio
         // scheduling is sample-accurate, so this gives exact SOAs — far better
-        // than driving 36 tones off setTimeout.
+        // than driving 22 tones off setTimeout.
         if (i === 0) {
           await io.blockIntro(`${b.n}-BACK`, `Press SPACE when a tone matches the one ${b.n} back.`);
           const buffers = b.pool.map((f) =>
@@ -875,7 +980,7 @@ const workmem = {
             const h = A.playAt(buffers[b.seq[j]], t0 + (j * NB_SOA_MS) / 1000);
             onsets.push(h.onsetPerf);
           }
-          running = { onsets, presses: io.collectSpace() };
+          running = { onsets, presses: io.collectSpace(), errors: 0 };
           io.status(`${b.n}-BACK`);
         }
 
@@ -887,16 +992,24 @@ const workmem = {
         const press = running.presses.find((p) => p.t >= onset - 150 && p.t <= windowEnd && !p.used);
         if (press) press.used = true;
 
-        const isTarget = b.targets.has(i);
+        const isTarget = b.targets.includes(i);
         const responded = !!press;
         const correct = isTarget ? responded : !responded;
+        if (!correct) running.errors++;
 
+        const levelBefore = b.n;
+        let levelAfter = b.n;
         if (i === b.len - 1) {
           io.stopCollectSpace();
+          const errs = running.errors;
+          if (errs <= NB_UP_ERRORS) levelAfter = Math.min(NB_MAX_LEVEL, b.n + 1);
+          else if (errs >= NB_DOWN_ERRORS) levelAfter = Math.max(NB_MIN_LEVEL, b.n - 1);
+          level = levelAfter;
+          levelLog.push({ block: bi, n: b.n, errors: errs, next: levelAfter });
           if (practice) {
-            const hits = b.targets.size;
-            io.feedback(true, `Block done — ${hits} matches were in that stream`);
-            await A.sleep(1400);
+            io.feedback(errs <= NB_UP_ERRORS,
+              `${errs} error${errs === 1 ? "" : "s"} at ${b.n}-back — next block is ${levelAfter}-back`);
+            await A.sleep(1600);
           }
         }
 
@@ -907,7 +1020,7 @@ const workmem = {
             pool_index: b.seq[i], frequency_hz: +b.pool[b.seq[i]].toFixed(3),
             pool_base_hz: +b.baseHz.toFixed(3), pool_spacing_cents: NB_SPACING_CENTS,
             pool_hz: b.pool.map((f) => +f.toFixed(3)),
-            is_target: isTarget, is_lure: b.lures.has(i),
+            is_target: isTarget, is_lure: b.lures.includes(i),
             soa_ms: NB_SOA_MS, tone_ms: NB_TONE_MS,
           },
           correct_answer: isTarget ? "press" : "no_press",
@@ -917,6 +1030,9 @@ const workmem = {
           input_method: press ? press.method : "none",
           timed_out: false,
           block: `${b.n}back`,
+          adaptive: i === b.len - 1
+            ? { level_before: levelBefore, block_errors: running.errors, level_after: levelAfter }
+            : { level_before: levelBefore },
           extra: {
             outcome: isTarget ? (responded ? "hit" : "miss") : (responded ? "false_alarm" : "correct_rejection"),
           },
@@ -925,7 +1041,7 @@ const workmem = {
 
       summary(trials) {
         const out = {};
-        for (const nb of [...new Set(trials.map((t) => t.stim.n_back))]) {
+        for (const nb of [...new Set(trials.map((t) => t.stim.n_back))].sort((a, b) => a - b)) {
           const ts = trials.filter((t) => t.stim.n_back === nb);
           const sig = ts.filter((t) => t.stim.is_target);
           const noi = ts.filter((t) => !t.stim.is_target);
@@ -945,12 +1061,23 @@ const workmem = {
             median_hit_rt_ms: median(sig.filter((t) => t.rt_ms != null).map((t) => t.rt_ms)),
           };
         }
+        const levels = levelLog.map((l) => l.n);
         const ds = Object.values(out).map((o) => o.d_prime);
+        // Blocks cleared at the up-threshold. This is the escalating number:
+        // the deepest load he actually held, not merely the deepest he saw.
+        const cleared = levelLog.filter((l) => l.errors <= NB_UP_ERRORS).map((l) => l.n);
         return {
           n: trials.length,
+          start_level: NB_START_LEVEL,
+          levels_seen: levels,
+          mean_level: levels.length ? +mean(levels).toFixed(3) : null,
+          max_level_reached: levels.length ? Math.max(...levels) : null,
+          max_level_cleared: cleared.length ? Math.max(...cleared) : null,
+          final_level: level,
+          block_log: levelLog,
           by_load: out,
           mean_d_prime: ds.length ? +mean(ds).toFixed(4) : null,
-          load_cost: out.n2 && out.n3 ? +(out.n2.d_prime - out.n3.d_prime).toFixed(4) : null,
+          ...rangeFlags(trials.length ? trials.filter((t) => t.correct).length / trials.length : null, 0.64),
         };
       },
     };
@@ -1008,7 +1135,7 @@ const masking = {
     const zests = {};
     // ZEST variable is masker-to-target amplitude ratio: bigger = harder.
     // Threshold converts to target-to-masker ratio in dB as -20*log10(x).
-    conds.forEach((c) => { zests[c] = makeZest({ min: 0.15, max: 20, priorMode: 1.0, ...ZEST_ROBUST }); });
+    conds.forEach((c) => { zests[c] = makeZest({ min: 0.12, max: 40, priorMode: 1.0, ...ZEST_ROBUST }); });
 
     const plan = [];
     if (practice) {
@@ -1172,6 +1299,7 @@ const masking = {
           spatial_release_db: +(out.colocated.tmr_threshold_db - out.separated.tmr_threshold_db).toFixed(3),
           by_condition: out,
           overall_accuracy: pctCorrect(trials),
+          ...rangeFlags(pctCorrect(trials), 0.5),
         };
       },
     };

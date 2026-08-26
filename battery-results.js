@@ -230,9 +230,11 @@ export async function renderResults(root, { onBack, exportCsv, exportJson }) {
     const cards = [
       { id: "discrim", label: "Pitch discrimination", path: "discrim.threshold_cents", unit: "cents", lower: true },
       { id: "harmonicity", label: "Harmonicity threshold", path: "harmonicity.threshold_jitter_percent", unit: "% jitter", lower: true },
+      { id: "wmlevel", label: "n-back level cleared", path: "workmem.max_level_cleared", unit: "back", lower: false },
       { id: "workmem", label: "Working memory (mean d′)", path: "workmem.mean_d_prime", unit: "d′", lower: false },
       { id: "masking", label: "Spatial release", path: "masking.spatial_release_db", unit: "dB", lower: false },
       { id: "tagging", label: "Note naming", path: "tagging.accuracy", unit: "correct", lower: false, pct: true },
+      { id: "chords", label: "Biggest chord solved", path: "chords.max_size_solved", unit: "notes", lower: false },
     ].filter((c) => sessions.some((s) => get(s.summary || {}, c.path) != null));
 
     const tiles = cards.map((c) => {
@@ -259,12 +261,17 @@ export async function renderResults(root, { onBack, exportCsv, exportJson }) {
         series: [{ name: "threshold", color: C.magenta, points: seriesFrom(sessions, "harmonicity.threshold_jitter_percent").map((p, i) => ({ ...p, lo: (get(sessions[i].summary, "harmonicity.ci68_percent") || [])[0], hi: (get(sessions[i].summary, "harmonicity.ci68_percent") || [])[1] })) }],
         xLabels: xs, yLabel: "% of F0", lowerBetter: true,
       }))}
-      ${panel("Auditory working memory", "d′ separates sensitivity from response bias, so a session where he simply pressed more often does not masquerade as improvement.", lineChart({
-        series: [
-          { name: "2-back", color: C.blue, points: seriesFrom(sessions, "workmem.by_load.n2.d_prime") },
-          { name: "3-back", color: C.amber, points: seriesFrom(sessions, "workmem.by_load.n3.d_prime") },
-        ], xLabels: xs, yLabel: "d′", yZero: true,
-      }))}
+      ${panel("Auditory working memory", "The load climbs during the test, so the headline is how deep he got. d′ is plotted alongside because it separates sensitivity from response bias — a session where he simply pressed more often should not look like improvement.", `
+        ${lineChart({
+          series: [
+            { name: "deepest level cleared", color: C.green, points: seriesFrom(sessions, "workmem.max_level_cleared") },
+            { name: "mean level", color: C.blue, points: seriesFrom(sessions, "workmem.mean_level") },
+          ], xLabels: xs, yLabel: "n-back", yZero: true,
+        })}
+        ${lineChart({
+          series: [{ name: "mean d′", color: C.amber, points: seriesFrom(sessions, "workmem.mean_d_prime") }],
+          xLabels: xs, yLabel: "d′", yZero: true, height: 220,
+        })}`)}
       ${panel("Cocktail party", "Target-to-masker ratio threshold in each spatial condition, and the release from masking that separation buys.", lineChart({
         series: [
           { name: "co-located", color: C.slate, points: seriesFrom(sessions, "masking.colocated_tmr_db") },
