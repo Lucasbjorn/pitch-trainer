@@ -12,6 +12,7 @@ import { setupStats } from "./stats.js";
 import { setupApGames } from "./apgames.js";
 import { setupMicrotone } from "./microtone.js";
 import { setupBattery } from "./battery.js";
+import { setupWmSolo } from "./wmsolo.js";
 import { setupHub } from "./hub.js";
 
 // ---------------------------------------------------------------------------
@@ -158,6 +159,7 @@ const $stats    = document.getElementById("stats");
 const $apgames  = document.getElementById("apgames");
 const $microtone = document.getElementById("microtone");
 const $battery  = document.getElementById("battery");
+const $wmsolo   = document.getElementById("wmsolo");
 
 // ---------------------------------------------------------------------------
 // Shared sample bank (lazy; created on first mode init)
@@ -822,6 +824,7 @@ async function switchMode(newMode) {
   document.body.classList.toggle("mode-apgames", newMode === "apgames");
   document.body.classList.toggle("mode-microtone", newMode === "microtone");
   document.body.classList.toggle("mode-battery", newMode === "battery");
+  document.body.classList.toggle("mode-wmsolo", newMode === "wmsolo");
 
   $modeBtns.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.mode === newMode);
@@ -836,6 +839,7 @@ async function switchMode(newMode) {
   if (oldMode === "apgames")  apgamesMod.exit();
   if (oldMode === "microtone") microtoneMod.exit();
   if (oldMode === "battery")  batteryMod.exit();
+  if (oldMode === "wmsolo")   wmsoloMod.exit();
 
   // Common teardown of any non-passive UI.
   cancelAutoAdvance();
@@ -851,6 +855,7 @@ async function switchMode(newMode) {
   $apgames.classList.remove("active");
   $microtone.classList.remove("active");
   $battery.classList.remove("active");
+  $wmsolo.classList.remove("active");
   hideAllAnswerGroups();
   $followup.classList.remove("active");
 
@@ -924,6 +929,11 @@ async function switchMode(newMode) {
     $battery.classList.add("active");
     await batteryMod.enter(batteryEnterOpts);
     batteryEnterOpts = null;
+  } else if (newMode === "wmsolo") {
+    await cleanupPassive();
+    hideStartButton();
+    $wmsolo.classList.add("active");
+    await wmsoloMod.enter();
   }
 }
 
@@ -1017,6 +1027,7 @@ const statsMod    = setupStats(sharedCtx);
 const apgamesMod  = setupApGames(sharedCtx);
 const microtoneMod = setupMicrotone(sharedCtx);
 const batteryMod  = setupBattery(sharedCtx);
+const wmsoloMod   = setupWmSolo(sharedCtx);
 let batteryEnterOpts = null;   // set by the deep-link handler below
 
 // ---------------------------------------------------------------------------
@@ -1126,9 +1137,20 @@ async function goBattery(opts) {
   else await batteryMod.enter(batteryEnterOpts);
 }
 
+async function goWmSolo() {
+  setTopView("lucas");
+  document.body.classList.add("solo-lab");
+  document.body.classList.remove("show-tabs");
+  if (mode !== "wmsolo") await switchMode("wmsolo");
+  else await wmsoloMod.enter();
+}
+sharedCtx.goWmSolo = goWmSolo;
+sharedCtx.goBattery = () => goBattery(null);
+
 function batteryDeepLink() {
   const q = new URLSearchParams(location.search);
   const hash = (location.hash || "").replace(/^#/, "").toLowerCase();
+  if (q.get("wm") === "1" || hash === "wm") { goWmSolo(); return true; }
   const wants = q.get("battery") === "1" || hash === "battery" || hash === "battery-admin";
   if (!wants) return false;
   goBattery({ admin: q.get("admin") === "1" || hash === "battery-admin" });

@@ -303,6 +303,10 @@ export function setupBattery(ctx) {
             <div class="bt-card-t">Run a session</div>
             <div class="bt-card-b">The full battery. About 10 minutes. No feedback until it is over.</div>
           </button>
+          <button class="bt-card" id="bt-wmsolo">
+            <div class="bt-card-t">Working Memory — standalone</div>
+            <div class="bt-card-b">Longer re-run of the tone memory test, with a walkthrough and a practice round. Saved separately; does not touch battery data.</div>
+          </button>
           <button class="bt-card" id="bt-practice">
             <div class="bt-card-t">Practice</div>
             <div class="bt-card-b">Short versions with feedback. Never enters the dataset. Do this until every task feels automatic, <i>before</i> baseline.</div>
@@ -316,6 +320,7 @@ export function setupBattery(ctx) {
       `);
       $("#bt-start").addEventListener("click", renderMeta);
       $("#bt-practice").addEventListener("click", renderPracticeMenu);
+      $("#bt-wmsolo").addEventListener("click", () => ctx.goWmSolo && ctx.goWmSolo());
       $("#bt-setup").addEventListener("click", renderSetup);
       if (open) {
         $("#bt-resume").addEventListener("click", () => resumeSession(open));

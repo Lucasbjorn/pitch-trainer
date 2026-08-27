@@ -259,14 +259,14 @@
     }
 
     /* Full-width, top-aligned, scrollable app-style tabs. */
-    body.mode-learn, body.mode-practice, body.mode-tune, body.mode-yesno, body.mode-stats, body.mode-apgames, body.mode-microtone, body.mode-battery { background: var(--bg); }
-    body.mode-learn, body.mode-practice, body.mode-tune, body.mode-yesno, body.mode-stats, body.mode-apgames, body.mode-microtone, body.mode-battery {
+    body.mode-learn, body.mode-practice, body.mode-tune, body.mode-yesno, body.mode-stats, body.mode-apgames, body.mode-microtone, body.mode-battery, body.mode-wmsolo { background: var(--bg); }
+    body.mode-learn, body.mode-practice, body.mode-tune, body.mode-yesno, body.mode-stats, body.mode-apgames, body.mode-microtone, body.mode-battery, body.mode-wmsolo {
       justify-content: flex-start;
     }
-    body.mode-learn #note, body.mode-practice #note, body.mode-tune #note, body.mode-yesno #note, body.mode-stats #note, body.mode-apgames #note, body.mode-microtone #note, body.mode-battery #note,
-    body.mode-learn #debug, body.mode-practice #debug, body.mode-tune #debug, body.mode-yesno #debug, body.mode-stats #debug, body.mode-apgames #debug, body.mode-microtone #debug, body.mode-battery #debug,
-    body.mode-learn #start, body.mode-practice #start, body.mode-tune #start, body.mode-yesno #start, body.mode-stats #start, body.mode-apgames #start, body.mode-microtone #start, body.mode-battery #start,
-    body.mode-learn #status, body.mode-practice #status, body.mode-tune #status, body.mode-yesno #status, body.mode-stats #status, body.mode-apgames #status, body.mode-microtone #status, body.mode-battery #status { display: none !important; }
+    body.mode-learn #note, body.mode-practice #note, body.mode-tune #note, body.mode-yesno #note, body.mode-stats #note, body.mode-apgames #note, body.mode-microtone #note, body.mode-battery #note, body.mode-wmsolo #note,
+    body.mode-learn #debug, body.mode-practice #debug, body.mode-tune #debug, body.mode-yesno #debug, body.mode-stats #debug, body.mode-apgames #debug, body.mode-microtone #debug, body.mode-battery #debug, body.mode-wmsolo #debug,
+    body.mode-learn #start, body.mode-practice #start, body.mode-tune #start, body.mode-yesno #start, body.mode-stats #start, body.mode-apgames #start, body.mode-microtone #start, body.mode-battery #start, body.mode-wmsolo #start,
+    body.mode-learn #status, body.mode-practice #status, body.mode-tune #status, body.mode-yesno #status, body.mode-stats #status, body.mode-apgames #status, body.mode-microtone #status, body.mode-battery #status, body.mode-wmsolo #status { display: none !important; }
 
     #learn, #practice, #tune, #yesno, #stats, #apgames, #microtone {
       display: none;
@@ -279,6 +279,43 @@
     /* The battery runs on a desktop with a friend operating it — it gets more room. */
     #battery { display: none; width: 100%; max-width: 860px; padding: 0 1rem 3rem; animation: fadeIn 0.2s ease; }
     #battery.active { display: block; }
+    #wmsolo { display: none; width: 100%; max-width: 860px; padding: 0 1rem 3rem; animation: fadeIn 0.2s ease; }
+    #wmsolo.active { display: block; }
+
+    /* ---- Working Memory standalone (reuses the .bt-* battery styles) ---- */
+    .wm-explain { max-width: 46rem; margin: 0 auto 1.4rem; }
+    .wm-explain p { font-size: 1.06rem; line-height: 1.7; margin: 0 0 0.9rem; }
+    .wm-explain u { text-underline-offset: 3px; }
+    .wm-eg { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: center; margin: 1.2rem 0 !important; }
+    .wm-eg span { padding: 0.55rem 0.8rem; border-radius: 10px; background: var(--card2);
+      border: 1px solid var(--line); font-weight: 700; font-size: 0.95rem; }
+    .wm-eg .hit { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .wm-warn { background: #fff8e6; border: 1px solid #f0d493; color: #7a5a10;
+      border-radius: 12px; padding: 0.8rem 1rem; font-size: 0.98rem !important; }
+    .wm-demo-row, .wm-track { display: flex; gap: 0.35rem; flex-wrap: wrap;
+      justify-content: center; margin: 1.2rem auto 0; max-width: 40rem; }
+    .wm-slot { min-width: 3.6rem; padding: 0.45rem 0.5rem; border-radius: 9px; text-align: center;
+      background: var(--card2); border: 1px solid var(--line); color: var(--muted);
+      font-size: 0.8rem; font-weight: 700; }
+    .wm-slot.on { color: var(--text); }
+    .wm-slot.hit { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .wm-slot.bad { background: rgba(239,68,68,0.14); color: var(--bad); border-color: rgba(239,68,68,0.4); }
+    .wm-head { margin-bottom: 1.6rem; }
+    .wm-stage, .wm-ready { position: relative; display: flex; flex-direction: column;
+      align-items: center; text-align: center; gap: 1rem; padding-top: 1.4rem; }
+    .wm-load { font-size: 1.1rem; font-weight: 800; letter-spacing: 0.1em; color: var(--muted); }
+    .wm-load.big { font-size: 2.6rem; letter-spacing: -0.01em; color: var(--text); }
+    .wm-live { min-height: 1.6em; font-size: 1rem; font-weight: 600; color: var(--muted); }
+    .wm-live.ok { color: var(--good); }
+    .wm-live.bad { color: var(--bad); }
+    .wm-tap { display: flex; flex-direction: column; align-items: center; gap: 0.3rem;
+      width: 100%; max-width: 22rem; padding: 2.2rem 1rem; border-radius: 20px;
+      border: 3px solid var(--line); background: var(--card); color: var(--text);
+      font-family: inherit; font-size: 1.6rem; font-weight: 800; letter-spacing: 0.02em;
+      cursor: pointer; touch-action: manipulation; }
+    .wm-tap:active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .wm-tap span { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.09em;
+      color: var(--muted); text-transform: uppercase; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
     .screen-title { font-size: 1.9rem; font-weight: 800; margin: 0.2rem 0 0.3rem; letter-spacing: -0.02em; }
@@ -1232,6 +1269,9 @@
 
   <!-- Testing Battery (rendered by battery.js) -->
   <div id="battery"></div>
+
+  <!-- Working Memory standalone (rendered by wmsolo.js) -->
+  <div id="wmsolo"></div>
 
   <div id="status">Tap Start to begin</div>
 
