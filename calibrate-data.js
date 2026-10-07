@@ -1,4 +1,5 @@
-// calibrate-data.js — the data spine of Daily Calibration.
+// calibrate-data.js — the data spine of Daily Calibration + the training drills.
+// (suggestDrills() is the rule-based coach behind the Training Hub.)
 //
 //   Storage   every trial is written the moment it happens (IndexedDB, with a
 //             localStorage fallback) + an optional Supabase backup (cal_rows).
@@ -12,8 +13,14 @@
 // analyze() and makePlan() are pure, so they're unit-tested against simulated
 // listeners (tools/test-cal-analysis.mjs). See CALIBRATION.md for the protocol.
 
-export const SCHEMA_VERSION = 1;
-export const STATIONS_GRADED = ["imagine", "anchor", "hold", "name", "twins", "triad"];
+export const SCHEMA_VERSION = 2;   // record shape (v2 adds mode, protocol, localDate, sessionOfDay)
+export const PROTOCOL = 2;         // calibration protocol: v1 = first week, v2 = harder hold/anchor + song anchors
+export const SKILLS = ["cue", "name", "imagine", "anchor", "hold", "twins", "triad", "tune"];
+export const SKILL_TITLE = { cue: "Song anchors", name: "Blindfold naming", imagine: "Imagine & sing", anchor: "Anchor lock", hold: "Hold it", twins: "Octave twins", triad: "Find the note", tune: "In tune?" };
+export const STATIONS_GRADED = SKILLS;
+export const localDate = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+export const kindOf = (s) => s.kind || "calibration";      // v1 sessions were all calibrations
+const modeOf = (t) => t.mode || "calibration";
 const PC = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const DB_NAME = "pitches-calibration", DB_VER = 1, LS_KEY = "pt.cal.data", SYNC_KEY = "pt.cal.syncedThrough";
 
@@ -175,39 +182,59 @@ function seeded(seed) { let s = seed >>> 0 || 1; return () => ((s = (s * 1664525
 // =============================================================================
 // ANALYSIS — a model of the ear
 // =============================================================================
+// Handles protocol v1 (first week) and v2 records side by side.
+const graded = (t) => typeof t.correct === "boolean";
+const anchorOffCents = (t) => (t.stim.offsetCents != null ? t.stim.offsetCents : (t.stim.offset || 0) * 100);
+const centsDist = (c) => { const m = ((c % 1200) + 1200) % 1200; return Math.min(m, 1200 - m); };
+const holdCents = (t) => (t.stim.probeCents != null ? Math.abs(t.stim.probeCents) : Math.abs(t.stim.probeOffset || 0) * 100);
+
 export function analyze({ sessions = [], trials = [] } = {}) {
   const T = trials.filter((t) => !t.practice);
   const by = (st) => T.filter((t) => t.station === st);
   const name = by("name");
-  const nameClean = name.filter((t) => t.stim && t.stim.wash !== false && t.stim.timbre !== "sine"); // the canonical condition
-  const out = { generatedAt: new Date().toISOString(), nSessions: sessions.length, nTrials: T.length, indices: {} };
+  const nameClean = name.filter((t) => t.stim && t.stim.wash !== false && t.stim.timbre !== "sine"); // canonical condition
+  const out = {
+    generatedAt: new Date().toISOString(),
+    nSessions: sessions.filter((s) => kindOf(s) === "calibration").length,
+    nDrills: sessions.filter((s) => kindOf(s) === "drill").length,
+    nTrials: T.length, indices: {},
+  };
 
-  // ---- per-session timeline + learning trend --------------------------------
+  // ---- sessions, days, and the daily "cold reading" ---------------------------------
+  // Several runs a day are common, so progress is tracked per DAY on the first
+  // completed calibration (cold, unpracticed); later runs count as practice.
   const bySess = new Map();
   T.forEach((t) => { if (!bySess.has(t.sessionId)) bySess.set(t.sessionId, []); bySess.get(t.sessionId).push(t); });
   out.timeline = sessions.map((s) => {
     const ts = bySess.get(s.id) || [];
     const all = prop(ts), nm = prop(ts.filter((t) => t.station === "name"));
-    return { id: s.id, date: new Date(s.startedAt).toISOString().slice(0, 10), dayIndex: s.dayIndex, completed: !!s.completed,
-      acc: all.acc, n: all.n, nameAcc: nm.acc, nameN: nm.n, checkin: s.checkin || null, durSec: s.durSec || null, levels: s.plan ? s.plan.levels : null };
+    return { id: s.id, kind: kindOf(s), skill: s.skill || null, date: s.localDate || localDate(s.startedAt), protocol: s.protocol || 1,
+      sessionOfDay: s.sessionOfDay || null, completed: !!s.completed, acc: all.acc, n: all.n, nameAcc: nm.acc, nameN: nm.n,
+      checkin: s.checkin || null, durSec: s.durSec || null, levels: s.plan ? s.plan.levels : null };
   });
-  const tl = out.timeline.filter((x) => x.nameN >= 3);
-  const tr = ols(tl.map((_, i) => i), tl.map((x) => x.nameAcc));
-  out.trend = { sessionsUsed: tl.length, namingSlopePerSession: tr.slope, r: tr.r };
+  const days = new Map();
+  out.timeline.forEach((x) => { if (!days.has(x.date)) days.set(x.date, []); days.get(x.date).push(x); });
+  out.daily = [...days.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([date, xs]) => {
+    const cals = xs.filter((x) => x.kind === "calibration" && x.completed);
+    const dayTrials = T.filter((t) => localDate(t.t) === date);
+    return { date, calRuns: cals.length, drillRuns: xs.filter((x) => x.kind === "drill").length,
+      cold: cals.length ? cals[0].acc : null, coldName: cals.length ? cals[0].nameAcc : null,
+      all: prop(dayTrials).acc, nTrials: dayTrials.length };
+  });
+  const td = out.daily.filter((d) => d.cold != null);
+  const tr = ols(td.map((_, i) => i), td.map((d) => d.cold));
+  out.trend = { daysUsed: td.length, coldSlopePerDay: tr.slope, r: tr.r };
 
-  // ---- stations ----------------------------------------------------------------
   out.stations = {};
-  STATIONS_GRADED.forEach((st) => { out.stations[st] = prop(by(st)); });
+  SKILLS.forEach((st) => { out.stations[st] = prop(by(st)); });
 
-  // ---- pitch map (naming, all conditions) ------------------------------------------
+  // ---- pitch map (naming, all conditions/modes) -----------------------------------
   out.pcMap = PC.map((nm, pc) => {
     const g = name.filter((t) => t.stim.pc === pc), p = prop(g);
     return { pc, name: nm, ...p, medRt: median(g.filter((t) => t.correct).map((t) => t.rt).filter(Number.isFinite)) };
   });
 
   // ---- 1. Relative-pitch leak: accuracy WITHOUT vs WITH the atonal cleanser -------------
-  //  The cleanser wipes the last labeled note from working memory; if accuracy
-  //  drops when it's there, you were computing from that note (relative pitch).
   {
     const piano = name.filter((t) => t.stim.timbre !== "sine");
     const noWash = prop(piano.filter((t) => t.stim.wash === false)), wash = prop(piano.filter((t) => t.stim.wash !== false));
@@ -218,10 +245,7 @@ export function analyze({ sessions = [], trials = [] } = {}) {
       enough: noWash.n >= 8 && wash.n >= 15 };
   }
 
-  // ---- 2. Inferred anchor: does RT grow with distance from some note? --------------
-  //  True AP: RT is flat across notes. Counting from an anchor: RT rises with the
-  //  distance from it. Test all 12 candidates; permutation test guards against
-  //  picking the best of 12 by luck.
+  // ---- 2. Hidden anchor: does RT grow with distance from some note? ------------------
   {
     const pts = nameClean.filter((t) => t.correct && Number.isFinite(t.rt) && t.rt < 15000);
     const fit = (a, rts) => ols(pts.map((t) => cdist(t.stim.pc, a)), rts);
@@ -244,22 +268,22 @@ export function analyze({ sessions = [], trials = [] } = {}) {
       verdict: pts.length < 15 ? "needs-data" : (p != null && p < 0.05 && best.slope > 40 ? "counting-from-anchor" : "flat") };
   }
 
-  // ---- 3. Gut vs compute: is a correct answer a fast categorical hit? -------------
+  // ---- 3. Gut vs compute ---------------------------------------------------------------
   {
-    const g = nameClean.filter((t) => typeof t.correct === "boolean" && Number.isFinite(t.rt));
+    const g = nameClean.filter((t) => graded(t) && Number.isFinite(t.rt));
     const rc = g.filter((t) => t.correct).map((t) => t.rt), rw = g.filter((t) => !t.correct).map((t) => t.rt);
     out.indices.gut = { n: g.length, medRtCorrect: median(rc), medRtWrong: median(rw),
       fastCorrectRate: g.length ? g.filter((t) => t.correct && t.rt < 1500).length / g.length : null };
   }
 
-  // ---- 4. Timbre lock: piano vs pure sine ----------------------------------------
+  // ---- 4. Timbre lock: piano vs pure sine ----------------------------------------------
   {
     const w = name.filter((t) => t.stim.wash !== false);
     const piano = prop(w.filter((t) => t.stim.timbre !== "sine")), sine = prop(w.filter((t) => t.stim.timbre === "sine"));
     out.indices.timbre = { piano, sine, diff: diffCI(piano, sine), enough: sine.n >= 8 && piano.n >= 15 };
   }
 
-  // ---- 5. Register dependence: accuracy by octave ---------------------------------
+  // ---- 5. Register dependence ------------------------------------------------------------
   {
     const octs = [...new Set(nameClean.map((t) => t.stim.oct))].sort();
     const rows = octs.map((o) => ({ oct: o, ...prop(nameClean.filter((t) => t.stim.oct === o)) })).filter((r) => r.n >= 5);
@@ -267,22 +291,29 @@ export function analyze({ sessions = [], trials = [] } = {}) {
     out.indices.register = { byOct: rows, spread: accs.length >= 2 ? Math.max(...accs) - Math.min(...accs) : null };
   }
 
-  // ---- 6. Chroma vs height (octave twins) -----------------------------------------
+  // ---- 6. Chroma vs height (octave twins) ----------------------------------------------
   {
     const tw = by("twins");
     const offs = [...new Set(tw.map((t) => cdist(0, t.stim.offset)))].sort((a, b) => a - b);
     out.indices.chroma = { ...prop(tw), byOffset: offs.map((d) => ({ semis: d, ...prop(tw.filter((t) => cdist(0, t.stim.offset) === d)) })) };
   }
 
-  // ---- 7. Working-memory decay (hold it) -----------------------------------------
+  // ---- 7. Pitch memory (hold it): decay + TONE-interference cost ------------------------
+  //  Intervening tones wreck an echoic trace but not a labeled one, so the
+  //  noise-vs-tones gap says whether you're holding the SOUND or the NAME.
   {
-    const h = by("hold").filter((t) => typeof t.correct === "boolean");
+    const h = by("hold").filter(graded);
+    const intf = (t) => t.stim.interference || "noise";
     const durs = [...new Set(h.map((t) => t.stim.dur))].sort((a, b) => a - b);
     const f = ols(h.map((t) => t.stim.dur), h.map((t) => (t.correct ? 1 : 0)));
-    out.indices.hold = { n: h.length, byDur: durs.map((d) => ({ dur: d, ...prop(h.filter((t) => t.stim.dur === d)) })), accPerSecond: f.slope };
+    const noise = prop(h.filter((t) => intf(t) === "noise")), tones = prop(h.filter((t) => intf(t) === "tones"));
+    const cents = [...new Set(h.filter((t) => !t.stim.same).map(holdCents))].sort((a, b) => a - b);
+    out.indices.hold = { n: h.length, byDur: durs.map((d) => ({ dur: d, ...prop(h.filter((t) => t.stim.dur === d)) })), accPerSecond: f.slope,
+      noise, tones, toneCost: diffCI(noise, tones), enoughCost: noise.n >= 8 && tones.n >= 8,
+      byCents: cents.map((c) => ({ cents: c, ...prop(h.filter((t) => !t.stim.same && holdCents(t) === c)) })) };
   }
 
-  // ---- 8. Inner pitch (sung production): template bias in cents --------------------
+  // ---- 8. Inner pitch (sung production) ----------------------------------------------------
   {
     const s = by("imagine").filter((t) => t.sing && t.sing.ok && Number.isFinite(t.sing.cents));
     const c = s.map((t) => t.sing.cents);
@@ -292,17 +323,33 @@ export function analyze({ sessions = [], trials = [] } = {}) {
       octaveSung: median(s.map((t) => t.sing.oct)), selfNailedRate: self.length ? self.filter((t) => t.resp === "nailed").length / self.length : null, nSelf: self.length };
   }
 
-  // ---- 9. Anchor precision: false alarms by distance from C ------------------------
+  // ---- 9. Anchor precision: hit rate + false alarms by lure distance (cents) ----------------
   {
-    const a = by("anchor");
+    const a = by("anchor").filter(graded);
     const hits = prop(a.filter((t) => t.stim.isAnchor));
     const lures = a.filter((t) => !t.stim.isAnchor);
-    const ds = [...new Set(lures.map((t) => cdist(0, t.stim.offset)))].sort((x, y) => x - y);
+    const ds = [...new Set(lures.map((t) => centsDist(anchorOffCents(t))))].sort((x, y) => x - y);
     out.indices.anchorLock = { hitRate: hits.acc, nHits: hits.n,
-      falseAlarmsByDist: ds.map((d) => { const g = lures.filter((t) => cdist(0, t.stim.offset) === d); return { semis: d, n: g.length, faRate: g.length ? g.filter((t) => t.resp === "yes").length / g.length : null }; }) };
+      falseAlarmsByCents: ds.map((d) => { const g = lures.filter((t) => centsDist(anchorOffCents(t)) === d); return { cents: d, n: g.length, faRate: g.length ? g.filter((t) => t.resp === "yes").length / g.length : null }; }) };
   }
 
-  // ---- 10. Confusions + systematic shift --------------------------------------------
+  // ---- 10. Song anchors (PP-MIDI association) -------------------------------------------
+  {
+    const cu = by("cue");
+    out.indices.song = { ...prop(cu), cueToNote: prop(cu.filter((t) => t.stim.kind === "cue2note")), noteToCue: prop(cu.filter((t) => t.stim.kind === "note2cue")),
+      byPc: PC.map((nm, pc) => ({ name: nm, ...prop(cu.filter((t) => t.stim.pc === pc)) })) };
+  }
+
+  // ---- 11. In tune? (categorical tuning template) -------------------------------------------
+  {
+    const tu = by("tune").filter(graded);
+    const off = tu.filter((t) => !t.stim.inTune);
+    const cs = [...new Set(off.map((t) => Math.abs(t.stim.cents)))].sort((a, b) => a - b);
+    out.indices.tune = { ...prop(tu), inTune: prop(tu.filter((t) => t.stim.inTune)), detuned: prop(off),
+      byCents: cs.map((c) => ({ cents: c, ...prop(off.filter((t) => Math.abs(t.stim.cents) === c)) })) };
+  }
+
+  // ---- 12. Confusions + systematic shift ---------------------------------------------------
   {
     const wrong = name.filter((t) => t.correct === false && Number.isFinite(t.resp));
     const counts = new Map();
@@ -316,17 +363,20 @@ export function analyze({ sessions = [], trials = [] } = {}) {
     out.indices.shift = { nWrong: errs.length, meanSignedSemis: mean(errs), sharpRate: errs.length ? errs.filter((e) => e > 0).length / errs.length : null };
   }
 
-  // ---- 11. Context: when is your AP best? ---------------------------------------------
+  // ---- 13. Context: when is your AP best? ---------------------------------------------------
   {
     const sessOf = new Map(sessions.map((s) => [s.id, s]));
-    const graded = T.filter((t) => typeof t.correct === "boolean");
-    const groupBy = (keyFn) => { const m = new Map(); graded.forEach((t) => { const k = keyFn(t); if (k == null) return; if (!m.has(k)) m.set(k, []); m.get(k).push(t); }); return [...m.entries()].map(([k, g]) => ({ key: k, ...prop(g) })).sort((a, b) => String(a.key).localeCompare(String(b.key))); };
+    const G = T.filter(graded);
+    const groupBy = (keyFn) => { const m = new Map(); G.forEach((t) => { const k = keyFn(t); if (k == null) return; if (!m.has(k)) m.set(k, []); m.get(k).push(t); }); return [...m.entries()].map(([k, g]) => ({ key: k, ...prop(g) })).sort((a, b) => String(a.key).localeCompare(String(b.key))); };
     const bucket = (h) => (h < 12 ? "morning" : h < 17 ? "afternoon" : "evening");
-    const pos = graded.map((t) => { const g = (bySess.get(t.sessionId) || []).filter((x) => typeof x.correct === "boolean"); return { t, half: g.indexOf(t) < g.length / 2 ? "first" : "second" }; });
+    const pos = G.map((t) => { const g = (bySess.get(t.sessionId) || []).filter(graded); return { t, half: g.indexOf(t) < g.length / 2 ? "first" : "second" }; });
+    const sAttr = (t, f) => { const s = sessOf.get(t.sessionId); return s ? f(s) : null; };
     out.context = {
       timeOfDay: groupBy((t) => bucket(t.hour)),
-      energy: groupBy((t) => { const s = sessOf.get(t.sessionId); return s && s.checkin ? s.checkin.energy : null; }),
-      musicToday: groupBy((t) => { const s = sessOf.get(t.sessionId); return s && s.checkin ? s.checkin.music : null; }),
+      energy: groupBy((t) => sAttr(t, (s) => (s.checkin ? s.checkin.energy : null))),
+      musicToday: groupBy((t) => sAttr(t, (s) => (s.checkin ? s.checkin.music : null))),
+      runOfDay: groupBy((t) => sAttr(t, (s) => (kindOf(s) === "calibration" && s.sessionOfDay ? (s.sessionOfDay === 1 ? "1st run" : "2nd+ run") : null))),
+      mode: groupBy((t) => modeOf(t)),
       warmup: ["first", "second"].map((h) => ({ half: h, ...prop(pos.filter((x) => x.half === h).map((x) => x.t)) })),
     };
   }
@@ -334,22 +384,43 @@ export function analyze({ sessions = [], trials = [] } = {}) {
 }
 
 // =============================================================================
-// ADAPTIVE PLAN — the "living" part
+// PARAMETERS + ADAPTIVE PLAN — the "living" part (protocol v2)
 // =============================================================================
 export const LEVEL_MAX = 5;
-const HOLD_RANGE = [[2, 7], [3, 9], [4, 12], [5, 15], [6, 18]];                      // seconds of hush
-const ANCHOR_OFFS = [[3, 4, 5, 7, 8, 9], [2, 3, 5, 7, 10], [1, 2, 3, 5, 7, 10, 11], [1, 2, 10, 11], [1, 11, 1, 11, 2, 10]];
-const NAME_OCTS = [[4], [3, 4], [3, 4, 5], [2, 3, 4, 5], [2, 3, 4, 5, 6]];
-const TWIN_OFFS = [[5, 6, 7], [3, 4, 5, 6, 7], [2, 3, 4, 5, 9, 10], [1, 2, 3, 9, 10, 11], [1, 11, 1, 11, 2, 10]];
+const lvlIdx = (L) => Math.max(1, Math.min(LEVEL_MAX, Math.round(L) || 1)) - 1;
 
-// Replay completed sessions in order: a station's level goes up after a session
-// at ≥80% and down after ≤50% (min 3 graded trials). Deterministic from history,
-// so there's no separate state to corrupt.
+// One table drives both the daily calibration and the drills.
+export function paramsFor(skill, L) {
+  const l = lvlIdx(L);
+  switch (skill) {
+    case "cue": return { choices: [4, 6, 12, 12, 12][l], mixBare: l >= 1, cleanse: l >= 2 };
+    case "imagine": return { secs: [8, 7, 6, 5, 4][l] };
+    case "anchor": return { lures: [[-300, -200, -100, 100, 200, 300, 500, 700], [-200, -100, 100, 200], [-200, -100, -100, 100, 100, 200], [-100, -50, 50, 100], [-50, -30, 30, 50]][l], octaves: l >= 2 ? [3, 4, 5] : [4] };
+    case "name": return { octaves: [[4], [3, 4], [3, 4, 5], [2, 3, 4, 5], [2, 3, 4, 5, 6]][l], noWashFrac: 0.3, sineFrac: 0.2 };
+    case "hold": return { range: [[3, 6], [4, 8], [5, 10], [6, 13], [8, 16]][l], cents: [60, 45, 30, 20, 12][l], tonesFrac: 0.5, distractors: [3, 4, 5, 6, 7][l] };
+    case "twins": return { offsets: [[3, 4, 5, 6, 7, 8, 9], [2, 3, 4, 5, 9, 10], [1, 2, 3, 9, 10, 11], [1, 2, 10, 11], [1, 11]][l] };
+    case "triad": return { firstInv: l >= 1, secondInv: l >= 2, dimAug: l >= 3, spread: l >= 4 };
+    case "tune": return { cents: [50, 35, 25, 15, 10][l] };
+    default: return {};
+  }
+}
+
+// Calibration levels from history. Runs are pooled PER DAY and a station moves
+// at most one step per day (≥80% up, ≤50% down, min 3 graded trials), so doing
+// the calibration three times in an afternoon can't fake three days of progress.
 export function stationLevels(sessions = []) {
-  const L = Object.fromEntries(STATIONS_GRADED.map((s) => [s, 1]));
-  sessions.filter((s) => s.completed && s.summary).sort((a, b) => a.startedAt - b.startedAt).forEach((s) => {
-    STATIONS_GRADED.forEach((st) => {
-      const r = s.summary[st]; if (!r || r.n < 3) return;
+  const L = Object.fromEntries(SKILLS.map((s) => [s, 1]));
+  const days = new Map();
+  sessions.filter((s) => kindOf(s) === "calibration" && s.completed && s.summary).forEach((s) => {
+    const d = s.localDate || localDate(s.startedAt);
+    if (!days.has(d)) days.set(d, {});
+    const agg = days.get(d);
+    Object.entries(s.summary).forEach(([st, r]) => { if (!agg[st]) agg[st] = { n: 0, k: 0 }; agg[st].n += r.n; agg[st].k += r.k; });
+  });
+  [...days.keys()].sort().forEach((d) => {
+    const agg = days.get(d);
+    SKILLS.forEach((st) => {
+      const r = agg[st]; if (!r || r.n < 3) return;
       const a = r.k / r.n;
       if (a >= 0.8) L[st] = Math.min(LEVEL_MAX, L[st] + 1);
       else if (a <= 0.5) L[st] = Math.max(1, L[st] - 1);
@@ -358,38 +429,65 @@ export function stationLevels(sessions = []) {
   return L;
 }
 
-export function makePlan({ sessions = [], trials = [] } = {}) {
-  const L = stationLevels(sessions);
-  // Weak notes get sampled more (Beta(1,1)-smoothed error rate over recent naming).
-  const recent = trials.filter((t) => t.station === "name" && typeof t.correct === "boolean").slice(-150);
-  const pcWeights = PC.map((_, pc) => {
+// Per-note weights: Beta(1,1)-smoothed error rate over recent pitch-naming
+// (blindfold naming + song anchors). Weak notes come up more.
+export function noteWeights(trials = []) {
+  const recent = trials.filter((t) => (t.station === "name" || t.station === "cue") && graded(t) && t.stim && Number.isFinite(t.stim.pc)).slice(-200);
+  return PC.map((_, pc) => {
     const g = recent.filter((t) => t.stim.pc === pc), k = g.filter((t) => t.correct).length;
     return 0.6 + 1.8 * (1 - (k + 1) / (g.length + 2));
   });
-  // Budget: weakest station (last 3 sessions) +2 trials, strongest −1.
-  const counts = { imagine: 3, anchor: 5, hold: 4, name: 6, twins: 4, triad: 5, lockin: 3 };
-  const last3 = sessions.filter((s) => s.completed && s.summary).slice(-3);
+}
+
+export function makePlan({ sessions = [], trials = [] } = {}) {
+  const L = stationLevels(sessions);
+  const pcWeights = noteWeights(trials);
+  const counts = { cue: 4, imagine: 3, anchor: 5, name: 6, hold: 4, twins: 4, triad: 4, lockin: 2 };
+  const last3 = sessions.filter((s) => kindOf(s) === "calibration" && s.completed && s.summary).slice(-3);
   const accOf = (st) => { let n = 0, k = 0; last3.forEach((s) => { const r = s.summary[st]; if (r) { n += r.n; k += r.k; } }); return n >= 4 ? k / n : null; };
-  const ranked = ["anchor", "hold", "name", "twins", "triad"].map((st) => [st, accOf(st)]).filter(([, a]) => a != null).sort((x, y) => x[1] - y[1]);
+  const ranked = ["cue", "anchor", "hold", "name", "twins", "triad"].map((st) => [st, accOf(st)]).filter(([, a]) => a != null).sort((x, y) => x[1] - y[1]);
   let focus = null;
   if (ranked.length >= 3) {
     focus = ranked[0][0]; counts[focus] += 2;
     const top = ranked[ranked.length - 1][0]; counts[top] = Math.max(3, counts[top] - 1);
   }
-  const [h0, h1] = HOLD_RANGE[L.hold - 1];
+  const params = Object.fromEntries(SKILLS.map((s) => [s, paramsFor(s, L[s])]));
+  const [h0, h1] = params.hold.range;
   const holdDurs = Array.from({ length: counts.hold }, (_, i) => Math.round(h0 + ((h1 - h0) * i) / Math.max(1, counts.hold - 1)));
-  return {
-    version: 1, levels: L, focus, counts, pcWeights,
-    imagineSecs: [8, 7, 6, 5, 4][L.imagine - 1],
-    holdDurs,
-    anchorOffsets: ANCHOR_OFFS[L.anchor - 1],
-    anchorOctaves: L.anchor >= 3 ? [3, 4, 5] : [4],
-    nameOctaves: NAME_OCTS[L.name - 1],
-    // Diagnostic contrasts are held CONSTANT across levels so the indices stay comparable over weeks.
-    nameNoWashFrac: 0.3, nameSineFrac: 0.2,
-    twinOffsets: TWIN_OFFS[L.twins - 1],
-    triad: { firstInv: L.triad >= 2, secondInv: L.triad >= 3, dimAug: L.triad >= 4, spread: L.triad >= 5 },
-  };
+  const order = pcWeights.map((w, pc) => [w, pc]).sort((a, b) => b[0] - a[0]).map(([, pc]) => pc);
+  return { protocol: PROTOCOL, levels: L, focus, counts, pcWeights, params, holdDurs, cueLearn: order.slice(0, 2) };
+}
+
+// ---- the coach: which drill next, and why ------------------------------------------
+const DAY = 86400000;
+export function suggestDrills(data = {}, now = Date.now()) {
+  const { sessions = [], trials = [] } = data;
+  const today = localDate(now);
+  const calToday = sessions.some((s) => kindOf(s) === "calibration" && s.completed && (s.localDate || localDate(s.startedAt)) === today);
+  const recent = trials.filter((t) => t.t >= now - 3 * DAY && graded(t));
+  const a = analyze(data), I = a.indices;
+  const weak = a.pcMap.filter((p) => p.n >= 3 && p.acc < 0.75).sort((x, y) => x.acc - y.acc).slice(0, 3).map((p) => p.name);
+  const drillSess = sessions.filter((s) => kindOf(s) === "drill");
+  const ranked = SKILLS.map((sk) => {
+    const g = prop(recent.filter((t) => t.station === sk));
+    let score = g.n >= 4 ? 1 - g.acc : 0.45;
+    let reason = g.n >= 4 ? `${Math.round(g.acc * 100)}% over the last 3 days` : "not much data on this yet";
+    const flag = (bonus, why) => { score += bonus; reason = why; };
+    const last = Math.max(0, ...drillSess.filter((s) => s.skill === sk).map((s) => s.endedAt || s.startedAt));
+    if (!last || now - last > 2 * DAY) score += 0.15;
+    if (last && now - last < 20 * 60000) score -= 0.3;                                   // variety: just did it
+    if (drillSess.some((s) => s.skill === sk && (s.events || []).some((e) => e.type === "tooEasy" && now - e.t < DAY))) score -= 0.35;
+    if (sk === "cue") { score += 0.1; if (weak.length) flag(0.15, `your shakiest notes are ${weak.join(", ")} — drill their song tags`); }
+    if (sk === "name") {
+      const rp = I.rpLeak, an = I.anchor, tb = I.timbre;
+      if (tb.enough && tb.diff && tb.diff.lo > 0.1) flag(0.15, "pure tones trip you up — naming mixes them in");
+      if (an.verdict === "counting-from-anchor") flag(0.2, `you seem to count up from ${an.anchorName} — drill direct naming`);
+      if (rp.enough && rp.ci && rp.ci.lo > 0.05) flag(0.35, "you name better right after hearing a labeled note — train without that crutch");
+    }
+    if (sk === "hold" && I.hold.enoughCost && I.hold.toneCost && I.hold.toneCost.d > 0.2) flag(0.2, "notes in between knock the pitch out of memory — practice holding it by name");
+    return { skill: sk, title: SKILL_TITLE[sk], score: Math.round(score * 100) / 100, reason };
+  }).sort((x, y) => y.score - x.score);
+  return { calibrateFirst: !calToday, ranked };
 }
 
 // Weighted pick of k distinct pitch classes.
