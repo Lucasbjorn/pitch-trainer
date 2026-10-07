@@ -123,6 +123,10 @@ export function setupHub(ctx) {
     });
   }
 
+  // Lucas's Daily Calibration is private: its button only shows on a device
+  // that's already been unlocked with 1234 (friends never see it).
+  function calUnlocked() { try { return localStorage.getItem("pt.lucas.ok") === "1"; } catch (_) { return false; } }
+
   // Temp gate so friends don't wander into the dev trainers.
   const LAB_PW = "temp";
   function tryLab() {
@@ -225,13 +229,27 @@ export function setupHub(ctx) {
         </div>
         <div class="hub-section-label" style="margin-top:1.6rem">Other games</div>
         <div class="hub-cards">${otherCards}</div>
-        <button class="hub-lab" data-lab>🔒 Lucas's Lab</button>
+        <div class="hub-lab-row">
+          <button class="hub-lab" data-lab>🔒 Lucas's Lab</button>
+          ${calUnlocked() ? `<button class="hub-lab" data-cal>🎯 Calibrate</button>` : ""}
+        </div>
         <div class="hub-foot">One attempt per game, per day. Build your streak. 🎧</div>
       </div>`;
 
     home.querySelectorAll("[data-daily]").forEach((b) => b.addEventListener("click", () => ctx.goDaily(b.dataset.daily)));
     home.querySelectorAll("[data-micro]").forEach((b) => b.addEventListener("click", () => ctx.goMicrotone(b.dataset.micro)));
     home.querySelector("[data-lab]").addEventListener("click", tryLab);
+    const calBtn = home.querySelector("[data-cal]");
+    if (calBtn && ctx.goCalibrate) calBtn.addEventListener("click", () => ctx.goCalibrate());
+    // Hidden way into Lucas's Daily Calibration: triple-tap the title (→ 1234).
+    const title = home.querySelector(".hub-title");
+    if (title && ctx.goCalibrate) {
+      let taps = 0, tapT = null;
+      title.addEventListener("click", () => {
+        taps++; clearTimeout(tapT); tapT = setTimeout(() => { taps = 0; }, 700);
+        if (taps >= 3) { taps = 0; ctx.goCalibrate(); }
+      });
+    }
     const pb = home.querySelector("[data-practice]");
     if (pb && ctx.goPractice) pb.addEventListener("click", () => ctx.goPractice());
     const si = home.querySelector("#home-signin");

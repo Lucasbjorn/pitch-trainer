@@ -65,6 +65,32 @@ export async function leaderboard(gameId, date) {
 }
 export async function myId() { const s = await getSession(); return s ? s.user.id : null; }
 
+// ---- Daily Calibration backup (Lucas-only; RLS = own rows; table in db/calibration.sql) ----
+// rows: [{ kind: "trial" | "session", obj, t }]. Returns false if signed out or the table is missing.
+export async function calUpload(rows) {
+  const c = await client(); if (!c) return false;
+  const s = await getSession(); if (!s) return false;
+  const payload = rows.map((r) => ({
+    id: r.obj.id, user_id: s.user.id, kind: r.kind,
+    session_id: r.kind === "trial" ? r.obj.sessionId : r.obj.id,
+    at: new Date(r.t || Date.now()).toISOString(), data: r.obj,
+  }));
+  const { error } = await c.from("cal_rows").upsert(payload, { onConflict: "id" });
+  return !error;
+}
+export async function calDownload() {
+  const c = await client(); if (!c) return null;
+  const s = await getSession(); if (!s) return null;
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await c.from("cal_rows").select("kind,data").order("at").range(from, from + 999);
+    if (error) return out.length ? out : null;
+    out.push(...data);
+    if (data.length < 1000) break;
+  }
+  return out;
+}
+
 // Every score row ever (for the cumulative Overall board + per-user streaks).
 export async function allScores() {
   const c = await client(); if (!c) return [];
