@@ -16,7 +16,7 @@
 
 import { PitchDetector } from "https://esm.sh/pitchy@4";
 import * as D from "./calibrate-data.js";
-import { calUpload, calDownload } from "./social.js";
+import { calUpload, calDownload, calCloudStatus, signInGoogle } from "./social.js";
 
 export function setupCalibrate(ctx) {
   const { Tone, PITCH_NAMES } = ctx;
@@ -34,7 +34,8 @@ export function setupCalibrate(ctx) {
     triad:   { icon: "🎹", color: "#fde2c8", blurb: "There's an E♭ in this chord — bottom, middle or top?" },
     tune:    { icon: "🎚️", color: "#dff3d8", blurb: "Exactly on a note, or a hair off?" },
   };
-  D.setCloud({ upload: calUpload, download: calDownload });
+  // window.__calTestCloud lets the Playwright sync test stand in a fake server for Supabase.
+  D.setCloud((typeof window !== "undefined" && window.__calTestCloud) || { upload: calUpload, download: calDownload, status: calCloudStatus });
 
   let abort = false, timers = [], noiseNode = null, _resolve = null, gen = 0;
   let run = null;                                     // the active calibration or drill
@@ -270,7 +271,11 @@ export function setupCalibrate(ctx) {
       mode: run.mode, station: skill, gi: run.seq++, t: now.getTime(), hour: now.getHours(), dow: now.getDay(),
       level: lvlFor(skill), correct: null, rt: null, ...fields,
     }).catch(() => {});
+    pushSoon();
   }
+  // Trickle-push during a run so a dropped phone loses at most ~45 s of cloud copy.
+  let pushT = null;
+  function pushSoon() { if (pushT) return; pushT = setTimeout(() => { pushT = null; D.syncCloud().catch(() => {}); }, 45000); }
   function record(skill, correct) {
     if (typeof correct !== "boolean") return;
     const r = run.tally[skill] || (run.tally[skill] = { n: 0, k: 0 });
@@ -658,7 +663,7 @@ export function setupCalibrate(ctx) {
       startedAt: Date.now(), localDate: today,
       sessionOfDay: all.sessions.filter((s) => D.kindOf(s) === "calibration" && (s.localDate || D.localDate(s.startedAt)) === today).length + 1,
       dayIndex: all.sessions.length ? Math.floor((Date.now() - all.sessions[0].startedAt) / 86400000) : 0,
-      checkin: ci, plan, completed: false, sing: singOn(), summary: {},
+      checkin: ci, plan, completed: false, sing: singOn(), summary: {}, device: D.deviceInfo(),
       env: { ua: navigator.userAgent, tz: (Intl.DateTimeFormat().resolvedOptions() || {}).timeZone || null, standalone: window.matchMedia("(display-mode: standalone)").matches },
     };
     await D.putSession(session);
@@ -690,7 +695,7 @@ export function setupCalibrate(ctx) {
     Object.assign(s, { completed, endedAt: Date.now(), summary: { ...run.tally } });
     s.durSec = Math.round((s.endedAt - s.startedAt) / 1000);
     await D.putSession(s).catch(() => {});
-    D.syncCloud().catch(() => {});
+    D.syncAll().then(noteSync).catch(() => {});
     return s;
   }
 
@@ -698,10 +703,13 @@ export function setupCalibrate(ctx) {
   const dkey = (d) => D.localDate(d.getTime());
   function loadLog() { try { return JSON.parse(localStorage.getItem("pt.cal.log")) || {}; } catch (_) { return {}; } }
   function markToday(acc, n) { const l = loadLog(), k = dkey(new Date()); l[k] = { acc, n, runs: ((l[k] && l[k].runs) || 0) + 1 }; try { localStorage.setItem("pt.cal.log", JSON.stringify(l)); } catch (_) {} }
-  function streak() {
-    const l = loadLog(), c = new Date();
-    if (!l[dkey(c)]) { c.setDate(c.getDate() - 1); if (!l[dkey(c)]) return 0; }
-    let n = 0; while (l[dkey(c)]) { n++; c.setDate(c.getDate() - 1); } return n;
+  // Calibration days from synced sessions (any device) + this device's legacy log.
+  function streakFrom(sessions = []) {
+    const days = new Set(Object.keys(loadLog()));
+    sessions.forEach((x) => { if (D.kindOf(x) === "calibration" && x.completed) days.add(x.localDate || D.localDate(x.startedAt)); });
+    const c = new Date();
+    if (!days.has(dkey(c))) { c.setDate(c.getDate() - 1); if (!days.has(dkey(c))) return 0; }
+    let n = 0; while (days.has(dkey(c))) { n++; c.setDate(c.getDate() - 1); } return n;
   }
 
   async function finishCalibration() {
@@ -724,7 +732,7 @@ export function setupCalibrate(ctx) {
         <div class="cal-title2">Calibrated.</div>
         <div class="cal-say">You're in absolute-pitch mode. Carry the anchor with you today.</div>
         <div class="cal-stats">
-          <div class="cal-stat"><div class="cal-stat-n">🔥 ${streak()}</div><div class="cal-stat-l">day streak</div></div>
+          <div class="cal-stat"><div class="cal-stat-n">🔥 ${streakFrom(data.sessions)}</div><div class="cal-stat-l">day streak</div></div>
           ${acc != null ? `<div class="cal-stat"><div class="cal-stat-n">${acc}%</div><div class="cal-stat-l">on target</div></div>` : ""}
           ${s && s.sessionOfDay > 1 ? `<div class="cal-stat"><div class="cal-stat-n">#${s.sessionOfDay}</div><div class="cal-stat-l">run today</div></div>` : ""}
         </div>
@@ -744,7 +752,13 @@ export function setupCalibrate(ctx) {
   // ===========================================================================
   function drillLevels() { try { return JSON.parse(localStorage.getItem("pt.cal.drillLv")) || {}; } catch (_) { return {}; } }
   function saveDrillLevel(skill, l) { const d = drillLevels(); d[skill] = l; try { localStorage.setItem("pt.cal.drillLv", JSON.stringify(d)); } catch (_) {} }
-  const drillLevel = (skill, plan) => clampL(drillLevels()[skill] || plan.levels[skill] || 1);
+  // Latest drill session for the skill (from ANY synced device) wins, then this
+  // device's memory, then the calibration level.
+  function drillLevel(skill, plan, sessions = []) {
+    const last = sessions.filter((x) => D.kindOf(x) === "drill" && x.skill === skill && (x.endLevel || x.startLevel))
+      .sort((a, b) => (a.endedAt || a.startedAt) - (b.endedAt || b.startedAt)).pop();
+    return clampL((last && (last.endLevel || last.startLevel)) || drillLevels()[skill] || plan.levels[skill] || 1);
+  }
 
   function setLevel(to, type) {
     const from = run.level; to = clampL(to);
@@ -771,9 +785,9 @@ export function setupCalibrate(ctx) {
     root.innerHTML = `<div class="cal-stage cal-trans"><div class="cal-big">${META[skill].icon}</div><div class="cal-say">${TITLE[skill]}…</div></div>`;
     await p;
     const data = await D.allData();
-    const plan = D.makePlan(data), level = drillLevel(skill, plan);
+    const plan = D.makePlan(data), level = drillLevel(skill, plan, data.sessions);
     const session = { id: newId("d"), kind: "drill", skill, schema: D.SCHEMA_VERSION, protocol: D.PROTOCOL, startedAt: Date.now(),
-      localDate: D.localDate(Date.now()), startLevel: level, events: [], completed: false, sing: singOn() };
+      localDate: D.localDate(Date.now()), startLevel: level, events: [], completed: false, sing: singOn(), device: D.deviceInfo() };
     await D.putSession(session);
     D.requestPersist();
     abort = false; lastLabeled = null; clearTimers();
@@ -806,7 +820,7 @@ export function setupCalibrate(ctx) {
     run = null;
     stopMic();
     await D.putSession(s).catch(() => {});
-    D.syncCloud().catch(() => {});
+    D.syncAll().then(noteSync).catch(() => {});
     return r;
   }
   async function drillSummary(s) {
@@ -853,7 +867,7 @@ export function setupCalibrate(ctx) {
   // ===========================================================================
   // TRAINING HUB (home of Lucas mode)
   // ===========================================================================
-  async function enter() {
+  async function enter(opts = {}) {
     abort = false; clearTimers(); run = null;
     root.innerHTML = `<div class="cal-stage cal-trans"><div class="cal-big">🎯</div></div>`;
     let data = { sessions: [], trials: [] };
@@ -864,7 +878,7 @@ export function setupCalibrate(ctx) {
     const sumAcc = (s) => { let n = 0, k = 0; Object.values(s.summary || {}).forEach((r) => { n += r.n; k += r.k; }); return n ? k / n : null; };
     const since = Date.now() - 3 * 86400000;
     const recentAcc = (sk) => { const g = data.trials.filter((t) => t.station === sk && t.t >= since && typeof t.correct === "boolean"); return g.length >= 3 ? g.filter((t) => t.correct).length / g.length : null; };
-    const s = streak(), nCal = data.sessions.filter((x) => D.kindOf(x) === "calibration" && x.completed).length;
+    const s = streakFrom(data.sessions), nCal = data.sessions.filter((x) => D.kindOf(x) === "calibration" && x.completed).length;
     const lastCal = calsToday[calsToday.length - 1];
     const top = coach.ranked[0];
     const fmtTime = (ms) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -891,18 +905,56 @@ export function setupCalibrate(ctx) {
         </div>
 
         <div class="cal-sec">Drills <span>endless · adaptive · end or switch anytime</span></div>
-        <div class="hub-cards">${D.SKILLS.map((sk) => drillCard(sk, !coach.calibrateFirst && sk === top.skill ? "suggested" : "", `L${clampL(dl[sk] || plan.levels[sk] || 1)}${recentAcc(sk) != null ? ` · ${pct(recentAcc(sk))}` : ""}`)).join("")}</div>
+        <div class="hub-cards">${D.SKILLS.map((sk) => drillCard(sk, !coach.calibrateFirst && sk === top.skill ? "suggested" : "", `L${drillLevel(sk, plan, data.sessions)}${recentAcc(sk) != null ? ` · ${pct(recentAcc(sk))}` : ""}`)).join("")}</div>
 
         <div class="cal-sec">You</div>
+        <div class="cal-sync" id="cal-sync">☁️ checking sync…</div>
         <button class="cal-cta ghost-cta" id="hub-model">📊 Your ear model & data</button>
         <label class="cal-toggle"><input type="checkbox" id="cal-sing" ${singOn() ? "checked" : ""}> 🎤 Sing in “Imagine” (mic measures your inner pitch)</label>
-        <div class="cal-foot">Everything you do here is logged on this device. Export from “Your ear model” when you want me to analyze it.</div>
+        <div class="cal-foot">Everything is logged on this device as you go, and synced to your account when you’re signed in. Export from “Your ear model” when you want me to analyze it.</div>
       </div>`;
     $("#hub-exit").onclick = () => { exit(); if (ctx.goHome) ctx.goHome(); };
     $("#hub-cal").onclick = () => startCalibration();
     $("#hub-model").onclick = () => renderInsights();
     root.querySelectorAll("[data-drill]").forEach((b) => (b.onclick = () => startDrill(b.dataset.drill)));
     $("#cal-sing").onchange = (e) => { try { localStorage.setItem("pt.cal.sing", e.target.checked ? "1" : "0"); } catch (_) {} };
+    if (opts.skipSync) renderSync(lastStatus || { configured: true }, false); else backgroundSync();
+  }
+
+  // ---- account sync (phone ↔ laptop) --------------------------------------------
+  let lastSync = null, lastStatus = null, syncing = false;
+  function noteSync(r) { lastSync = { at: Date.now(), ...r }; return r; }
+  const agoText = (t) => { const x = Math.round((Date.now() - t) / 1000); return x < 60 ? "just now" : x < 3600 ? `${Math.round(x / 60)}m ago` : `${Math.round(x / 3600)}h ago`; };
+  async function backgroundSync() {
+    if (syncing) return; syncing = true;
+    let st = { configured: false };
+    try {
+      st = await D.cloudStatus();
+      renderSync(st, true);
+      if (st.signedIn && st.tableOk) {
+        const r = noteSync(await D.syncAll());
+        if (r.pulled > 0 && $(".cal-hub")) { syncing = false; return enter({ skipSync: true }); }   // show the other device's runs
+      }
+    } catch (_) {}
+    syncing = false;
+    renderSync(st, false);
+  }
+  function renderSync(st, busy) {
+    const el = $("#cal-sync"); if (!el) return;
+    lastStatus = st;
+    if (!st || !st.configured) { el.hidden = true; return; }
+    if (!st.signedIn) {
+      el.innerHTML = `☁️ <b>Sync phone ↔ laptop</b><div class="cs-s">Sign in once on each device and every run lives in one place.</div><button class="cal-cta" id="sync-signin">Sign in with Google</button>`;
+      $("#sync-signin").onclick = () => signInGoogle(`${location.origin}/?calibrate=1`);
+      return;
+    }
+    const who = st.name || st.email || "you";
+    if (!st.tableOk) { el.innerHTML = `☁️ Signed in as <b>${who}</b> — <b>one-time setup needed:</b> run <code>db/calibration.sql</code> in Supabase → SQL Editor. Until then everything stays on this device.`; return; }
+    if (busy) { el.innerHTML = `☁️ Syncing as <b>${who}</b>…`; return; }
+    el.innerHTML = lastSync && !lastSync.ok
+      ? `☁️ Sync hiccup — ${lastSync.reason || "try again"}. Your data is safe on this device. <a id="sync-now">Retry</a>`
+      : `☁️ Synced as <b>${who}</b>${lastSync ? ` · ${agoText(lastSync.at)}` : ""}${lastSync && (lastSync.pulled || lastSync.pushed) ? ` · ↓${lastSync.pulled} ↑${lastSync.pushed}` : ""} · <a id="sync-now">Sync now</a>`;
+    const b = $("#sync-now"); if (b) b.onclick = () => backgroundSync();
   }
 
   // ===========================================================================
@@ -948,13 +1000,13 @@ export function setupCalibrate(ctx) {
     const ctxBest = (rows) => { const r = rows.filter((x) => x.n >= 8).sort((x, y) => y.acc - x.acc); return r.length >= 2 ? `${r[0].key} (${pct(r[0].acc)}) vs ${r[r.length - 1].key} (${pct(r[r.length - 1].acc)})` : null; };
     const C = a.context, wu = C.warmup;
     const lines = [ctxBest(C.timeOfDay) && `Time of day: ${ctxBest(C.timeOfDay)}`, ctxBest(C.energy) && `Energy: ${ctxBest(C.energy)}`,
-      ctxBest(C.runOfDay) && `Run of the day: ${ctxBest(C.runOfDay)}`, ctxBest(C.mode) && `Mode: ${ctxBest(C.mode)}`,
+      ctxBest(C.runOfDay) && `Run of the day: ${ctxBest(C.runOfDay)}`, ctxBest(C.mode) && `Mode: ${ctxBest(C.mode)}`, ctxBest(C.device) && `Device: ${ctxBest(C.device)}`,
       wu.every((h) => h.n >= 8) ? `Warm-up: first half ${pct(wu[0].acc)} → second half ${pct(wu[1].acc)}` : null].filter(Boolean);
     const chips = (lv) => Object.entries(lv).map(([st, l]) => `<span class="cal-chip">${TITLE[st]} L${l}</span>`).join("");
 
     root.innerHTML = `<div class="cal-ins">
         <div class="cal-top"><button class="cal-x" id="cal-back">‹</button><div class="cal-ins-h">Your ear model</div><div style="width:2rem"></div></div>
-        <div class="cal-ins-sum">${a.nSessions} calibrations · ${a.nDrills} drill sets · ${a.nTrials} trials · 🔥 ${streak()}</div>
+        <div class="cal-ins-sum">${a.nSessions} calibrations · ${a.nDrills} drill sets · ${a.nTrials} trials · 🔥 ${streakFrom(data.sessions)}</div>
         <div class="cal-sec">Daily reading</div>${trend}
         <div class="cal-sec">Pitch map <span>naming accuracy by note</span></div>${pcMap}
         <div class="cal-sec">How you're getting notes <span>mechanism tests</span></div>
@@ -977,20 +1029,20 @@ export function setupCalibrate(ctx) {
         <div class="cal-ins-m" style="margin-bottom:0.4rem">Next calibration${next.focus ? ` · extra reps on <b>${TITLE[next.focus]}</b>` : ""}:</div>
         <div class="cal-chips">${chips(next.levels)}</div>
         <div class="cal-ins-m" style="margin:0.7rem 0 0.4rem">Drill levels (move inside drills + your ⏫/⏬):</div>
-        <div class="cal-chips">${chips(Object.fromEntries(D.SKILLS.map((sk) => [sk, clampL(dl[sk] || next.levels[sk] || 1)])))}</div>
+        <div class="cal-chips">${chips(Object.fromEntries(D.SKILLS.map((sk) => [sk, drillLevel(sk, next, data.sessions)])))}</div>
         <div class="cal-ins-m">Calibration levels move at most one step per day (≥80% up, ≤50% down); weak notes are oversampled.</div>
         <div class="cal-sec">Your data</div>
         <div class="cal-exp">
           <button class="cal-cta ghost-cta" id="cal-json">⬇ Export JSON</button>
           <button class="cal-cta ghost-cta" id="cal-csv">⬇ Export CSV</button>
-          <button class="cal-cta ghost-cta" id="cal-sync">☁️ Back up</button>
+          <button class="cal-cta ghost-cta" id="cal-syncnow">☁️ Sync now</button>
         </div>
         <div class="cal-ins-m" id="cal-exp-msg">Everything is saved on this device as you go. Export when you want me to analyze it.</div>
       </div>`;
     $("#cal-back").onclick = () => enter();
-    $("#cal-json").onclick = async () => { msg("preparing…"); const b = await D.exportBundle(); await saveFile(`calibration-${D.localDate(Date.now())}.json`, JSON.stringify(b, null, 1), "application/json"); msg(`Exported ${b.trials.length} trials from ${b.sessions.length} sessions${b.cloudRows ? ` (merged ${b.cloudRows} cloud rows)` : ""}.`); };
+    $("#cal-json").onclick = async () => { msg("preparing…"); const b = await D.exportBundle(); await saveFile(`calibration-${D.localDate(Date.now())}.json`, JSON.stringify(b, null, 1), "application/json"); msg(`Exported ${b.trials.length} trials from ${b.sessions.length} sessions${b.pulledFromCloud ? ` (pulled ${b.pulledFromCloud} new from the cloud first)` : ""}.`); };
     $("#cal-csv").onclick = async () => { const b = await D.exportBundle(); await saveFile(`calibration-trials-${D.localDate(Date.now())}.csv`, D.trialsToCSV(b.trials), "text/csv"); msg(`Exported ${b.trials.length} trials as CSV.`); };
-    $("#cal-sync").onclick = async () => { msg("backing up…"); const r = await D.syncCloud(); msg(r.ok ? `☁️ Backed up ${r.n} new rows.` : `Backup unavailable — ${r.reason}. (Sign in + run db/calibration.sql once.)`); };
+    $("#cal-syncnow").onclick = async () => { msg("syncing…"); const r = noteSync(await D.syncAll()); msg(r.ok ? `☁️ Synced — ↓${r.pulled} pulled, ↑${r.pushed} pushed.` : `Sync unavailable — ${r.reason}. (Sign in on the hub + run db/calibration.sql once.)`); };
   }
   function msg(t) { const el = $("#cal-exp-msg"); if (el) el.textContent = t; }
   async function saveFile(name, text, type) {

@@ -21,9 +21,9 @@ export async function getSession() {
   const { data } = await c.auth.getSession();
   return data.session || null;
 }
-export async function signInGoogle() {
+export async function signInGoogle(redirectTo) {
   const c = await client(); if (!c) return;
-  await c.auth.signInWithOAuth({ provider: "google", options: { redirectTo: location.origin } });
+  await c.auth.signInWithOAuth({ provider: "google", options: { redirectTo: redirectTo || location.origin } });
 }
 export async function signOut() { const c = await client(); if (c) await c.auth.signOut(); }
 
@@ -78,17 +78,29 @@ export async function calUpload(rows) {
   const { error } = await c.from("cal_rows").upsert(payload, { onConflict: "id" });
   return !error;
 }
-export async function calDownload() {
+// Incremental pull: rows the server touched after `since` (server time), paged.
+export async function calDownload(since) {
   const c = await client(); if (!c) return null;
   const s = await getSession(); if (!s) return null;
-  const out = [];
+  const rows = []; let maxAt = since || null;
   for (let from = 0; ; from += 1000) {
-    const { data, error } = await c.from("cal_rows").select("kind,data").order("at").range(from, from + 999);
-    if (error) return out.length ? out : null;
-    out.push(...data);
+    let q = c.from("cal_rows").select("kind,data,updated_at");
+    if (since) q = q.gt("updated_at", since);
+    const { data, error } = await q.order("updated_at").order("id").range(from, from + 999);
+    if (error) return null;
+    data.forEach((r) => { rows.push(r); if (!maxAt || r.updated_at > maxAt) maxAt = r.updated_at; });
     if (data.length < 1000) break;
   }
-  return out;
+  return { rows, maxAt };
+}
+// Is sync possible right now? (configured → signed in → table exists)
+export async function calCloudStatus() {
+  const c = await client(); if (!c) return { configured: false };
+  const s = await getSession();
+  if (!s) return { configured: true, signedIn: false };
+  const u = s.user || {}, m = u.user_metadata || {};
+  const { error } = await c.from("cal_rows").select("id").limit(1);
+  return { configured: true, signedIn: true, email: u.email || null, name: m.full_name || m.name || null, tableOk: !error, error: error ? error.message : null };
 }
 
 // Every score row ever (for the cumulative Overall board + per-user streaks).

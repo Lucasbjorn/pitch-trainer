@@ -22,7 +22,7 @@ export const localDate = (ms) => { const d = new Date(ms); return `${d.getFullYe
 export const kindOf = (s) => s.kind || "calibration";      // v1 sessions were all calibrations
 const modeOf = (t) => t.mode || "calibration";
 const PC = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-const DB_NAME = "pitches-calibration", DB_VER = 1, LS_KEY = "pt.cal.data", SYNC_KEY = "pt.cal.syncedThrough";
+const DB_NAME = "pitches-calibration", DB_VER = 1, LS_KEY = "pt.cal.data", SYNC_KEY = "pt.cal.syncedThrough", PULL_KEY = "pt.cal.pulledThrough";
 
 // =============================================================================
 // STORAGE
@@ -88,17 +88,48 @@ export async function requestPersist() {
   return false;
 }
 
-// ---- optional cloud backup (injected so this module stays backend-agnostic) ----
-let cloud = { upload: null, download: null };
+// Many records in one transaction (used when pulling a device's backlog).
+async function putMany(store, objs) {
+  if (!objs.length) return;
+  try {
+    const db = await openDB();
+    await new Promise((res, rej) => {
+      const tx = db.transaction(store, "readwrite"), os = tx.objectStore(store);
+      objs.forEach((o) => os.put(o));
+      tx.oncomplete = res; tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error);
+    });
+  } catch (_) { const d = lsLoad(); objs.forEach((o) => { d[store][o.id] = o; }); lsSave(d); }
+}
+
+// ---- device identity (sessions are tagged, so analysis can compare phone vs laptop) ----
+export function deviceInfo() {
+  let id = null;
+  try { id = localStorage.getItem("pt.cal.device"); if (!id) { id = `dev-${Math.random().toString(36).slice(2, 10)}`; localStorage.setItem("pt.cal.device", id); } } catch (_) {}
+  const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+  return { id, kind: /iPhone|iPad|iPod|Android|Mobi/i.test(ua) ? "phone" : "desktop" };
+}
+
+// =============================================================================
+// SYNC — account-based, two-way (phone ↔ laptop). Backend injected via setCloud:
+//   upload(rows) → bool · download(since) → { rows:[{kind,data,updated_at}], maxAt }
+// • push: this device's own records changed since the last push (by record time)
+// • pull: everything the SERVER touched since our last pull (server clock), merged
+//   into local storage tagged _pulled — pulled records are never pushed back, so
+//   two devices can't ping-pong the same rows forever.
+// =============================================================================
+let cloud = { upload: null, download: null, status: null };
 export function setCloud(c) { cloud = { ...cloud, ...c }; }
-export async function syncCloud() {
+const lsGet = (k) => { try { return localStorage.getItem(k); } catch (_) { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} };
+
+export async function syncCloud() {           // push
   if (!cloud.upload) return { ok: false, reason: "no backend" };
-  const since = +(localStorage.getItem(SYNC_KEY) || 0);
+  const since = +(lsGet(SYNC_KEY) || 0);
   const { sessions, trials } = await allData();
   const rows = [
     ...sessions.map((s) => ({ kind: "session", obj: s, t: s.updatedAt || s.startedAt })),
     ...trials.map((t) => ({ kind: "trial", obj: t, t: t.t })),
-  ].filter((r) => r.t > since).sort((a, b) => a.t - b.t);
+  ].filter((r) => r.t > since && !r.obj._pulled).sort((a, b) => a.t - b.t);
   if (!rows.length) return { ok: true, n: 0 };
   let maxT = since;
   for (let i = 0; i < rows.length; i += 200) {
@@ -107,35 +138,54 @@ export async function syncCloud() {
     try { ok = await cloud.upload(batch); } catch (_) {}
     if (!ok) return { ok: false, n: i, reason: "upload failed (signed in? table created?)" };
     maxT = Math.max(maxT, batch[batch.length - 1].t);
-    try { localStorage.setItem(SYNC_KEY, String(maxT)); } catch (_) {}
+    lsSet(SYNC_KEY, String(maxT));
   }
   return { ok: true, n: rows.length };
 }
 
+export async function pullCloud() {
+  if (!cloud.download) return { ok: false, reason: "no backend" };
+  let res = null;
+  try { res = await cloud.download(lsGet(PULL_KEY) || null); } catch (_) {}
+  if (!res || !Array.isArray(res.rows)) return { ok: false, reason: "download failed (signed in? table created?)" };
+  const { sessions, trials } = await allData();
+  const S = new Map(sessions.map((x) => [x.id, x])), T = new Set(trials.map((x) => x.id));
+  const newS = [], newT = [];
+  res.rows.forEach((r) => {
+    const o = r.data; if (!o || !o.id) return;
+    if (r.kind === "session") {
+      const cur = S.get(o.id);
+      if (cur && !cur._pulled) return;                                  // this device's own session: local is the truth
+      if (!cur || (o.updatedAt || 0) > (cur.updatedAt || 0)) newS.push({ ...o, _pulled: true });
+    } else if (!T.has(o.id)) { newT.push({ ...o, _pulled: true }); T.add(o.id); }
+  });
+  await putMany("sessions", newS);
+  await putMany("trials", newT);
+  if (res.maxAt) lsSet(PULL_KEY, res.maxAt);
+  return { ok: true, n: newS.length + newT.length };
+}
+
+// Pull then push. Never throws.
+export async function syncAll() {
+  const pull = await pullCloud().catch(() => ({ ok: false, reason: "pull error" }));
+  const push = await syncCloud().catch(() => ({ ok: false, reason: "push error" }));
+  return { ok: pull.ok && push.ok, pulled: pull.n || 0, pushed: push.n || 0, reason: (!pull.ok && pull.reason) || (!push.ok && push.reason) || null };
+}
+export async function cloudStatus() {
+  if (!cloud.status) return { configured: false };
+  try { return await cloud.status(); } catch (_) { return { configured: false }; }
+}
+
 // ---- export ------------------------------------------------------------------
+const clean = (o) => { const { _pulled, ...rest } = o; return rest; };
 export async function exportBundle({ includeCloud = true } = {}) {
-  let { sessions, trials } = await allData();
-  let cloudRows = 0;
-  if (includeCloud && cloud.download) {
-    try {
-      const rows = await cloud.download();
-      if (rows && rows.length) {
-        cloudRows = rows.length;
-        const S = new Map(sessions.map((s) => [s.id, s])), T = new Map(trials.map((t) => [t.id, t]));
-        rows.forEach((r) => {
-          const o = r.data; if (!o || !o.id) return;
-          if (r.kind === "session") { const cur = S.get(o.id); if (!cur || (o.updatedAt || 0) > (cur.updatedAt || 0)) S.set(o.id, o); }
-          else if (!T.has(o.id)) T.set(o.id, o);
-        });
-        sessions = [...S.values()].sort((a, b) => a.startedAt - b.startedAt);
-        trials = [...T.values()].sort((a, b) => a.t - b.t || a.gi - b.gi);
-      }
-    } catch (_) {}
-  }
+  let pulled = 0;
+  if (includeCloud && cloud.download) { const r = await pullCloud().catch(() => null); pulled = (r && r.n) || 0; }
+  const { sessions, trials } = await allData();
   return {
     app: "pitches-daily-calibration", schema: SCHEMA_VERSION,
-    exportedAt: new Date().toISOString(), tzOffsetMin: new Date().getTimezoneOffset(), cloudRows,
-    sessions, trials, analysis: analyze({ sessions, trials }),
+    exportedAt: new Date().toISOString(), tzOffsetMin: new Date().getTimezoneOffset(), pulledFromCloud: pulled,
+    sessions: sessions.map(clean), trials: trials.map(clean), analysis: analyze({ sessions, trials }),
   };
 }
 export function trialsToCSV(trials) {
@@ -377,6 +427,7 @@ export function analyze({ sessions = [], trials = [] } = {}) {
       musicToday: groupBy((t) => sAttr(t, (s) => (s.checkin ? s.checkin.music : null))),
       runOfDay: groupBy((t) => sAttr(t, (s) => (kindOf(s) === "calibration" && s.sessionOfDay ? (s.sessionOfDay === 1 ? "1st run" : "2nd+ run") : null))),
       mode: groupBy((t) => modeOf(t)),
+      device: groupBy((t) => sAttr(t, (s) => (s.device ? s.device.kind : null))),
       warmup: ["first", "second"].map((h) => ({ half: h, ...prop(pos.filter((x) => x.half === h).map((x) => x.t)) })),
     };
   }

@@ -15,7 +15,7 @@ You land on the **Training Hub**, which has three parts:
 - **Coach** card: the suggested next drill and why.
 - **8 drills.**
 
-On iPhone the home-screen app and the browser keep **separate storage**. Pick one, or turn on the cloud backup so exports merge both.
+**Account sync:** sign in with Google once on each device (from the hub's ☁️ card). After that, the phone, the laptop and the iPhone home-screen app all share one dataset (see *Account sync* below).
 
 ## Daily Calibration — protocol v2 (~7 min, 9 stations)
 
@@ -98,10 +98,28 @@ Everything is written the instant a trial completes, to IndexedDB `pitches-calib
 
 **Export:** Hub → 📊 Your ear model & data → **Export JSON** (full bundle + analysis) or **CSV** (one row per trial; nested fields flattened to `stim_*` / `sing_*`). On iPhone it opens the share sheet → AirDrop to the Mac.
 
-**Optional cloud backup:** sign in, then run [db/calibration.sql](db/calibration.sql) once in Supabase. It's a private `cal_rows` table (row-level security: only your login can see your rows). It syncs after every calibration and drill; exports merge cloud + device.
+## Account sync (phone ↔ laptop)
+One-time setup:
+1. Supabase → SQL Editor → paste [db/calibration.sql](db/calibration.sql) → Run. It's safe to re-run.
+2. On each device, open the hub → ☁️ **Sign in with Google**. You'll come straight back to the hub.
+
+How it works:
+- **Local first.** Everything is written to the device's IndexedDB instantly, so training works with no signal and syncs when you're back online.
+- **When it syncs:** opening the hub pulls then pushes; every finished calibration or drill syncs again; during a run, trials trickle up every ~45 s.
+- **Push:** this device's own records, changed since its last push.
+- **Pull:** every row the **server** touched since this device's last pull. The `updated_at` timestamp is set by a trigger, so a run uploaded late from the gym is still picked up.
+- **No sync loops.** Pulled records are stored with an internal `_pulled` flag and are never pushed back. A device never overwrites its *own* sessions with cloud copies.
+- **Follows you across devices:** drill levels (from the latest drill session of each skill, on any device), the streak (calibration days from any device), the coach and the ear model.
+- **Device tags.** Every session carries `device {id, kind: phone|desktop}`, so the analysis can compare phone vs laptop.
+- **Privacy.** It's a private `cal_rows` table: row-level security means only your login can read or write your rows, and it never touches the friends' game tables.
+- Export pulls first, so it includes every device.
+- **Tested** with two simulated devices sharing a fake server (`tools/shot-sync.mjs`):
+  - each device's runs appear on the other, and levels follow;
+  - idle re-syncs upload nothing;
+  - pulled rows are never re-uploaded.
 
 ### Sessions
-- Calibration: `kind: "calibration", protocol, localDate, sessionOfDay, dayIndex, checkin, plan, summary {skill:{n,k}}, completed, durSec, env`
+- Calibration: `kind: "calibration", protocol, localDate, sessionOfDay, dayIndex, checkin, plan, summary {skill:{n,k}}, completed, durSec, env, device {id, kind}`
 - Drill: `kind: "drill", skill, startLevel, endLevel, events [{t, type: tooEasy|tooHard|autoUp|autoDown, from, to, atTrial}], n, graded, k, bestStreak, endReason (end|switch|exit), durSec`
 - v1 sessions have no `kind` and count as calibrations.
 
@@ -138,7 +156,7 @@ Validated against simulated listeners in `tools/test-cal-analysis.mjs`, which ha
 | Inner pitch | sung signed cents bias / abs error | template drift |
 | Anchor precision | hit rate; false alarms by lure cents | how sharp the anchor is |
 | Confusions | top true→answered pairs; mean signed error | semitone vs tonal confusions |
-| Context | time of day, energy, music today, run of the day, mode, warm-up | when your AP is best |
+| Context | time of day, energy, music today, run of the day, mode, device (phone vs laptop), warm-up | when your AP is best |
 
 ## Analysis handoff (for Claude, when asked)
 1. Export JSON (from the device you use, or the Mac browser if the cloud backup is on). Drop it into `calibration-data/` in this repo; that folder is gitignored and never committed.
