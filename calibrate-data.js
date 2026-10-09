@@ -15,8 +15,8 @@
 
 export const SCHEMA_VERSION = 2;   // record shape (v2 adds mode, protocol, localDate, sessionOfDay)
 export const PROTOCOL = 2;         // calibration protocol: v1 = first week, v2 = harder hold/anchor + song anchors
-export const SKILLS = ["cue", "name", "imagine", "anchor", "hold", "twins", "triad", "tune"];
-export const SKILL_TITLE = { cue: "Song anchors", name: "Blindfold naming", imagine: "Imagine & sing", anchor: "Anchor lock", hold: "Hold it", twins: "Octave twins", triad: "Find the note", tune: "In tune?" };
+export const SKILLS = ["cue", "name", "imagine", "anchor", "hold", "twins", "triad", "tune", "tri", "pair"];
+export const SKILL_TITLE = { cue: "Song anchors", name: "Blindfold naming", imagine: "Imagine & sing", anchor: "Anchor lock", hold: "Hold it", twins: "Octave twins", triad: "Find the note", tune: "In tune?", tri: "Triangulate", pair: "Neighbors" };
 export const STATIONS_GRADED = SKILLS;
 export const localDate = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 export const kindOf = (s) => s.kind || "calibration";      // v1 sessions were all calibrations
@@ -379,7 +379,9 @@ export function analyze({ sessions = [], trials = [] } = {}) {
     const hits = prop(a.filter((t) => t.stim.isAnchor));
     const lures = a.filter((t) => !t.stim.isAnchor);
     const ds = [...new Set(lures.map((t) => centsDist(anchorOffCents(t))))].sort((x, y) => x - y);
-    out.indices.anchorLock = { hitRate: hits.acc, nHits: hits.n,
+    const anc = (t) => (Number.isFinite(t.stim.anchorPc) ? t.stim.anchorPc : 0);
+    const byAnchor = PC.map((nm, pc) => ({ name: nm, ...prop(a.filter((t) => t.stim.isAnchor && anc(t) === pc)) })).filter((x) => x.n);
+    out.indices.anchorLock = { hitRate: hits.acc, nHits: hits.n, byAnchor,
       falseAlarmsByCents: ds.map((d) => { const g = lures.filter((t) => centsDist(anchorOffCents(t)) === d); return { cents: d, n: g.length, faRate: g.length ? g.filter((t) => t.resp === "yes").length / g.length : null }; }) };
   }
 
@@ -397,6 +399,26 @@ export function analyze({ sessions = [], trials = [] } = {}) {
     const cs = [...new Set(off.map((t) => Math.abs(t.stim.cents)))].sort((a, b) => a - b);
     out.indices.tune = { ...prop(tu), inTune: prop(tu.filter((t) => t.stim.inTune)), detuned: prop(off),
       byCents: cs.map((c) => ({ cents: c, ...prop(off.filter((t) => Math.abs(t.stim.cents) === c)) })) };
+  }
+
+  // ---- 11b. Triangulate: which IMAGINED anchors get you to the note best? ----------------
+  {
+    const tr = by("tri").filter(graded);
+    const byAnchor = PC.map((nm, pc) => {
+      const g = tr.filter((t) => t.stim.anchor === pc);
+      return { pc, name: nm, ...prop(g), medRt: median(g.filter((t) => t.correct).map((t) => t.rt).filter(Number.isFinite)) };
+    }).filter((x) => x.n);
+    const ranked = byAnchor.filter((x) => x.n >= 3).sort((x, y) => y.acc - x.acc || (x.medRt || 9e9) - (y.medRt || 9e9));
+    const dists = [...new Set(tr.map((t) => Math.abs(t.stim.dist)))].sort((a, b) => a - b);
+    out.indices.mentalAnchors = { ...prop(tr), byAnchor, best: ranked.slice(0, 3), worst: ranked.slice(-3).reverse(),
+      byDist: dists.map((d) => ({ dist: d, ...prop(tr.filter((t) => Math.abs(t.stim.dist) === d)) })) };
+  }
+  // ---- 11c. Neighbors: which next-door chroma pairs are muddy? ----------------------------
+  {
+    const pr = by("pair").filter(graded);
+    const key = (t) => [...t.stim.pair].sort((a, b) => a - b).map((x) => PC[x]).join("/");
+    const pairs = [...new Set(pr.map(key))].map((k) => ({ pair: k, ...prop(pr.filter((t) => key(t) === k)) })).sort((a, b) => a.acc - b.acc);
+    out.indices.neighbors = { ...prop(pr), semitone: prop(pr.filter((t) => t.stim.step === 1)), wholeStep: prop(pr.filter((t) => t.stim.step === 2)), pairs };
   }
 
   // ---- 12. Confusions + systematic shift ---------------------------------------------------
@@ -452,6 +474,10 @@ export function paramsFor(skill, L) {
     case "twins": return { offsets: [[3, 4, 5, 6, 7, 8, 9], [2, 3, 4, 5, 9, 10], [1, 2, 3, 9, 10, 11], [1, 2, 10, 11], [1, 11]][l] };
     case "triad": return { firstInv: l >= 1, secondInv: l >= 2, dimAug: l >= 3, spread: l >= 4 };
     case "tune": return { cents: [50, 35, 25, 15, 10][l] };
+    // Triangulate: max distance target↔imagined anchor, octave spread, imagine time
+    case "tri": return { maxDist: [2, 3, 4, 5, 6][l], octaves: [[4], [3, 4], [3, 4, 5], [3, 4, 5], [2, 3, 4, 5]][l], secs: [3, 3, 2, 2, 2][l] };
+    // Neighbors: whole step → semitone, then more octaves, synth timbres, shorter notes
+    case "pair": return { step: [2, 1, 1, 1, 1][l], octaves: [[4], [4], [3, 4, 5], [3, 4, 5], [2, 3, 4, 5, 6]][l], synth: l >= 3, dur: [1.4, 1.4, 1.2, 1.0, 0.5][l] };
     default: return {};
   }
 }
@@ -535,10 +561,34 @@ export function suggestDrills(data = {}, now = Date.now()) {
       if (an.verdict === "counting-from-anchor") flag(0.2, `you seem to count up from ${an.anchorName} — drill direct naming`);
       if (rp.enough && rp.ci && rp.ci.lo > 0.05) flag(0.35, "you name better right after hearing a labeled note — train without that crutch");
     }
+    if (sk === "pair") {
+      const wrong = trials.filter((t) => t.station === "name" && t.correct === false && Number.isFinite(t.resp));
+      const nb = wrong.filter((t) => cdist(t.stim.pc, t.resp) === 1).length;
+      if (wrong.length >= 6 && nb / wrong.length >= 0.4) flag(0.25, `${Math.round((nb / wrong.length) * 100)}% of your naming misses are next-door notes — sharpen the neighbors`);
+    }
     if (sk === "hold" && I.hold.enoughCost && I.hold.toneCost && I.hold.toneCost.d > 0.2) flag(0.2, "notes in between knock the pitch out of memory — practice holding it by name");
     return { skill: sk, title: SKILL_TITLE[sk], score: Math.round(score * 100) / 100, reason };
   }).sort((x, y) => y.score - x.score);
   return { calibrateFirst: !calToday, ranked };
+}
+
+// ---- the day's anchor note ----------------------------------------------------------
+// Rotates daily: the weakest note (by naming/song-anchor history from BEFORE
+// today, so it can't drift mid-day) that hasn't been the anchor in the last 11
+// days. All 12 notes get a turn every 12 days, weakest first. Once a calibration
+// today has recorded an anchor, that one sticks. mode "fixed" → always C.
+export function anchorOfDay({ sessions = [], trials = [] } = {}, dateStr = localDate(Date.now()), mode = "rotate") {
+  if (mode === "fixed") return 0;
+  const dayOf = (s) => s.localDate || localDate(s.startedAt);
+  const today = sessions.find((s) => kindOf(s) === "calibration" && dayOf(s) === dateStr && Number.isFinite(s.anchorPc));
+  if (today) return today.anchorPc;
+  const d0 = Date.parse(`${dateStr}T12:00:00`);
+  const recent = new Set(sessions.filter((s) => Number.isFinite(s.anchorPc) && kindOf(s) === "calibration").filter((s) => {
+    const ago = Math.round((d0 - Date.parse(`${dayOf(s)}T12:00:00`)) / DAY); return ago >= 1 && ago <= 11;
+  }).map((s) => s.anchorPc));
+  const w = noteWeights(trials.filter((t) => localDate(t.t) < dateStr));
+  const pool = PC.map((_, pc) => pc).filter((pc) => !recent.has(pc));
+  return (pool.length ? pool : PC.map((_, pc) => pc)).sort((a, b) => w[b] - w[a] || a - b)[0];
 }
 
 // Weighted pick of k distinct pitch classes.

@@ -22,7 +22,9 @@ export function setupCalibrate(ctx) {
   const { Tone, PITCH_NAMES } = ctx;
   const PC = PITCH_NAMES;
   const root = document.getElementById("calibrate");
-  const ANCHOR = 0;                                   // home note: C
+  // The day's anchor note (rotates daily, weakest first; "always C" toggle).
+  const anchorMode = () => { try { return localStorage.getItem("pt.cal.anchorMode") || "rotate"; } catch (_) { return "rotate"; } };
+  let dayAnchor = 0;
   const TITLE = D.SKILL_TITLE;
   const META = {
     cue:     { icon: "🎵", color: "#ffe1a6", blurb: "Each note's song tag — hear the tag, name the note (and back)." },
@@ -32,7 +34,9 @@ export function setupCalibrate(ctx) {
     hold:    { icon: "🧊", color: "#d4f1f4", blurb: "Hold a pitch through noise or stray notes. Cents-fine." },
     twins:   { icon: "🪞", color: "#ffd9e6", blurb: "Three octaves, one odd note name out." },
     triad:   { icon: "🎹", color: "#fde2c8", blurb: "There's an E♭ in this chord — bottom, middle or top?" },
-    tune:    { icon: "🎚️", color: "#dff3d8", blurb: "Exactly on a note, or a hair off?" },
+    tune:    { icon: "🎚️", color: "#dff3d8", blurb: "Exactly on a note, or a hair off? (pure pitch — no timbre tells)" },
+    tri:     { icon: "🧭", color: "#e0e7ff", blurb: "Hear a note, imagine an anchor, find it from there. Which mental anchors work best?" },
+    pair:    { icon: "👯", color: "#fef3c7", blurb: "E♭ or D? Tell next-door notes apart with no reference." },
   };
   // window.__calTestCloud lets the Playwright sync test stand in a fake server for Supabase.
   D.setCloud((typeof window !== "undefined" && window.__calTestCloud) || { upload: calUpload, download: calDownload, status: calCloudStatus });
@@ -94,10 +98,29 @@ export function setupCalibrate(ctx) {
     await sleep(midis.length * gap * 1000 + 300);
   }
   // Atonal "palette cleanser": random notes that overwrite pitch working memory.
-  async function cleanser() {
+  // detuned=true scatters them ±50¢ too, so it leaves NO in-tune grid behind to
+  // judge the next note against (needed wherever tuning itself is the question).
+  async function cleanser(detuned = false) {
     const p = await piano(); const now = Tone.now(), N = 9;
-    for (let i = 0; i < N; i++) { try { p.triggerAttackRelease(midiName(36 + rand(48)), 0.14, now + i * 0.085, 0.28 + Math.random() * 0.15); } catch (_) {} }
+    for (let i = 0; i < N; i++) {
+      const m = 36 + rand(48);
+      try { p.triggerAttackRelease(detuned ? hzOf(m, Math.random() * 100 - 50) : midiName(m), 0.14, now + i * 0.085, 0.28 + Math.random() * 0.15); } catch (_) {}
+    }
     await sleep(N * 85 + 650);
+  }
+  // Synth voices for tuning-critical stimuli: in-tune and detuned notes go through
+  // IDENTICAL processing (no piano-sample repitching), with a random voice and
+  // ±2 dB per trial, so pitch is the only thing that differs.
+  const VOICES = ["triangle", "sine", "fmsine", "amtriangle"];
+  const voices = {};
+  function voice(type) {
+    if (!voices[type]) {
+      voices[type] = new Tone.PolySynth(Tone.Synth, { oscillator: { type }, envelope: { attack: 0.01, decay: 1.1, sustain: 0.25, release: 0.5 } }).toDestination();
+    }
+    return voices[type];
+  }
+  async function playTuned(m, cents, type, dur = 1.4) {
+    try { const v = voice(type); v.volume.value = -8 + (Math.random() * 4 - 2); v.triggerAttackRelease(hzOf(m, cents), dur, Tone.now()); } catch (_) {}
   }
   function stopNoise() { if (noiseNode) { try { noiseNode.n.stop(); noiseNode.n.dispose(); noiseNode.g.dispose(); } catch (_) {} noiseNode = null; } }
   function noiseBed(ms, db = -26) {
@@ -244,7 +267,7 @@ export function setupCalibrate(ctx) {
   // Stratified condition blocks, so randomized contrasts stay balanced in both modes.
   function nextCond(skill) {
     const q = run.sched[skill] || (run.sched[skill] = []);
-    if (!q.length) q.push(...makeBlock(skill, run.mode === "calibration" ? run.plan.counts[skill] || 6 : 10));
+    if (!q.length) q.push(...makeBlock(skill, run.mode === "calibration" ? run.plan.counts[skill] || 6 : skill === "tri" ? 12 : 10));
     return q.shift();
   }
   function makeBlock(skill, n) {
@@ -261,6 +284,7 @@ export function setupCalibrate(ctx) {
     if (skill === "anchor") idx().forEach((j, r) => { arr[j].isAnchor = r < Math.ceil(n / 2); });
     if (skill === "tune") idx().forEach((j, r) => { arr[j].inTune = r < Math.ceil(n / 2); });
     if (skill === "cue") idx().forEach((j, r) => { arr[j].bare = r % 2 === 1; });
+    if (skill === "tri") idx().forEach((j, r) => { arr[j].anchor = r % 12; });
     return arr;
   }
   function logTrial(skill, fields) {
@@ -361,27 +385,30 @@ export function setupCalibrate(ctx) {
 
   async function trAnchor(info) {
     const p = P("anchor"), cond = nextCond("anchor"), isAnchor = !!cond.isAnchor;
-    const offsetCents = isAnchor ? 0 : pick(p.lures), oct = pick(p.octaves), base = midiOf(ANCHOR, oct);
-    const label = isAnchor ? midiName(base) : offsetCents % 100 === 0 ? midiName(base + offsetCents / 100) : `${PC[ANCHOR]} ${offsetCents > 0 ? "+" : ""}${offsetCents}¢`;
+    const A = run.anchor, subSemi = p.lures.some((c) => c % 100 !== 0);
+    const vtype = subSemi ? pick(VOICES) : null;                     // cent-level lures → identical synth path for all
+    const offsetCents = isAnchor ? 0 : pick(p.lures), oct = pick(p.octaves), base = midiOf(A, oct);
+    const label = isAnchor ? midiName(base) : offsetCents % 100 === 0 ? midiName(base + offsetCents / 100) : `${PC[A]} ${offsetCents > 0 ? "+" : ""}${offsetCents}¢`;
     stage(head("anchor", info) + `
       <div class="cal-stage">
-        <div class="cal-say">Is this your home note — exactly <b>${PC[ANCHOR]}</b>?</div>
+        <div class="cal-say">Is this today's note — exactly <b>${PC[A]}</b>?</div>
         <div class="cal-phase" id="cal-phase">🌀 clearing…</div>
-        <div class="cal-choices" id="cal-ch" hidden><button class="cal-choice" data-v="yes">Yes, it's ${PC[ANCHOR]}</button><button class="cal-choice" data-v="no">No</button></div>
+        <div class="cal-choices" id="cal-ch" hidden><button class="cal-choice" data-v="yes">Yes, it's ${PC[A]}</button><button class="cal-choice" data-v="no">No</button></div>
         <div class="cal-fb" id="cal-fb"></div>
       </div>` + foot());
-    await cleanser(); if (abort) return null;
+    await cleanser(true); if (abort) return null;
     setPhase("🎧 listen");
-    await playHz(base, offsetCents, 1.5); await sleep(800); if (abort) return null;
+    if (vtype) await playTuned(base, offsetCents, vtype, 1.5); else await playHz(base, offsetCents, 1.5);
+    await sleep(800); if (abort) return null;
     setPhase("your call ↓");
     const { v, rt } = await ask("#cal-ch"); if (abort || v == null) return null;
     const correct = (v === "yes") === isAnchor;
     record("anchor", correct);
-    logTrial("anchor", { ti: info.i, stim: { pc: pcOf(base + offsetCents / 100), isAnchor, offsetCents, oct }, resp: v, correct, rt });
+    logTrial("anchor", { ti: info.i, stim: { pc: pcOf(base + offsetCents / 100), anchorPc: A, isAnchor, offsetCents, oct, voice: vtype || "piano" }, resp: v, correct, rt });
     markChoices("#cal-ch", isAnchor ? "yes" : "no", v);
-    fb(correct, `${correct ? "✅ Right" : "❌ Nope"} — that was ${label}. Here's ${PC[ANCHOR]}:`);
+    fb(correct, `${correct ? "✅ Right" : "❌ Nope"} — that was ${label}. Here's ${PC[A]}:`);
     await sleep(400);
-    await noteCue(ANCHOR);
+    await noteCue(A);
     return abort ? null : { correct };
   }
 
@@ -423,6 +450,7 @@ export function setupCalibrate(ctx) {
     const dur = run.mode === "calibration" && run.plan.holdDurs[info.i] ? run.plan.holdDurs[info.i] : p.range[0] + rand(p.range[1] - p.range[0] + 1);
     const pc = rand(12), m = midiOf(pc, 4), same = !!cond.same, interference = cond.interference || "noise";
     const probeCents = same ? 0 : (Math.random() < 0.5 ? -1 : 1) * p.cents;
+    const vtype = pick(VOICES);                                      // same voice for both → only pitch can differ
     stage(head("hold", info) + `
       <div class="cal-stage">
         <div class="cal-hint">${dur}s hold · ${interference === "tones" ? "stray notes" : "noise"} · ±${p.cents}¢</div>
@@ -432,19 +460,19 @@ export function setupCalibrate(ctx) {
         <div class="cal-choices" id="cal-ch" hidden><button class="cal-choice" data-v="same">Same</button><button class="cal-choice" data-v="diff">Different</button></div>
         <div class="cal-fb" id="cal-fb"></div>
       </div>` + foot());
-    await playMidi(m, 1.3); await sleep(1300); if (abort) return null;
+    await playTuned(m, 0, vtype, 1.3); await sleep(1300); if (abort) return null;
     setPhase(interference === "tones" ? "🎹 ignore these… hold it" : "🌫️ hold it…");
     countdown($("#cal-count"), dur);
     if (interference === "tones") await distractors(p.distractors, dur * 1000, pc); else await noiseBed(dur * 1000);
     if (abort) return null;
     const ce = $("#cal-count"); if (ce) ce.textContent = "";
     setPhase("🎧 probe");
-    await playHz(m, probeCents, 1.3); await sleep(1100); if (abort) return null;
+    await playTuned(m, probeCents, vtype, 1.3); await sleep(1100); if (abort) return null;
     setPhase("same note?");
     const { v, rt } = await ask("#cal-ch"); if (abort || v == null) return null;
     const correct = (v === "same") === same;
     record("hold", correct);
-    logTrial("hold", { ti: info.i, stim: { pc, dur, same, probeCents, interference, distractors: interference === "tones" ? p.distractors : 0 }, resp: v, correct, rt });
+    logTrial("hold", { ti: info.i, stim: { pc, dur, same, probeCents, interference, distractors: interference === "tones" ? p.distractors : 0, voice: vtype }, resp: v, correct, rt });
     markChoices("#cal-ch", same ? "same" : "diff", v);
     fb(correct, `${correct ? "✅" : "❌"} ${same ? "Same note" : `Different — probe was ${probeCents > 0 ? "+" : ""}${probeCents}¢`} (${midiName(m)})`);
     lastLabeled = m;
@@ -529,6 +557,7 @@ export function setupCalibrate(ctx) {
     const p = P("tune"), cond = nextCond("tune"), inTune = !!cond.inTune;
     const pc = weightedPc(), oct = pick([3, 4, 5]), m = midiOf(pc, oct);
     const cents = inTune ? 0 : (Math.random() < 0.5 ? -1 : 1) * p.cents;
+    const vtype = pick(VOICES);
     stage(head("tune", info) + `
       <div class="cal-stage">
         <div class="cal-say">Exactly on a note — or a hair off?</div>
@@ -537,14 +566,14 @@ export function setupCalibrate(ctx) {
         <div class="cal-choices" id="cal-ch" hidden><button class="cal-choice" data-v="in">🎯 In tune</button><button class="cal-choice" data-v="off">〰️ Off</button></div>
         <div class="cal-fb" id="cal-fb"></div>
       </div>` + foot());
-    await cleanser(); if (abort) return null;
+    await cleanser(true); if (abort) return null;
     setPhase("🎧 listen");
-    await playHz(m, cents, 1.6); await sleep(1000); if (abort) return null;
+    await playTuned(m, cents, vtype, 1.6); await sleep(1000); if (abort) return null;
     setPhase("");
     const { v, rt } = await ask("#cal-ch"); if (abort || v == null) return null;
     const correct = (v === "in") === inTune;
     record("tune", correct);
-    logTrial("tune", { ti: info.i, stim: { pc, oct, inTune, cents }, resp: v, correct, rt });
+    logTrial("tune", { ti: info.i, stim: { pc, oct, inTune, cents, voice: vtype }, resp: v, correct, rt });
     markChoices("#cal-ch", inTune ? "in" : "off", v);
     fb(correct, `${correct ? "✅" : "❌"} ${inTune ? `Right on ${PC[pc]}` : `${cents > 0 ? "+" : ""}${cents}¢ off ${PC[pc]}`} — here's the real one:`);
     await sleep(400);
@@ -552,7 +581,74 @@ export function setupCalibrate(ctx) {
     return abort ? null : { correct };
   }
 
-  const TRIAL = { cue: trCue, name: trName, imagine: trImagine, anchor: trAnchor, hold: trHold, twins: trTwins, triad: trTriad, tune: trTune };
+  // Triangulate: mystery note → imagine an assigned anchor → find the note from it.
+  // Anchors are stratified over all 12, so the data shows which mental anchors work.
+  async function trTri(info) {
+    const p = P("tri"), cond = nextCond("tri"), anchor = Number.isFinite(cond.anchor) ? cond.anchor : rand(12);
+    const dists = []; for (let d = -p.maxDist; d <= p.maxDist; d++) if (d) dists.push(d);
+    const dist = pick(dists), target = (anchor + dist + 12) % 12, oct = pick(p.octaves), m = midiOf(target, oct);
+    let replays = 0;
+    stage(head("tri", info) + `
+      <div class="cal-stage">
+        <div class="cal-phase" id="cal-phase">🌀 clearing…</div>
+        <div class="cal-say" id="tri-say">Listen to the mystery note.</div>
+        <button class="cal-cta ghost-cta" id="cal-replay" hidden>▶ replay mystery note</button>
+        ${grid(PC.map((_, j) => j))}
+        <div class="cal-fb" id="cal-fb"></div>
+      </div>` + foot());
+    $("#cal-replay").onclick = () => { replays++; playMidi(m, 1.2); };
+    await cleanser(); if (abort) return null;
+    setPhase("🎧 mystery note");
+    await playMidi(m, 1.4); await sleep(900); if (abort) return null;
+    setPhase(`🧭 imagine ${PC[anchor]}`);
+    const say = $("#tri-say"); if (say) say.innerHTML = `Now hear <b>${PC[anchor]}</b> in your head (don't hum).<br>From ${PC[anchor]}, find the mystery note.`;
+    const rb = $("#cal-replay"); if (rb) rb.hidden = false;
+    await sleep(p.secs * 1000); if (abort) return null;
+    setPhase("name it ↓");
+    const { v, rt } = await ask("#cal-grid"); if (abort || v == null) return null;
+    const resp = +v, correct = resp === target;
+    record("tri", correct);
+    logTrial("tri", { ti: info.i, stim: { anchor, target, dist, oct, midi: m }, resp, correct, rt, replays, errSemis: correct ? 0 : D.circ(target, resp) });
+    markChoices("#cal-grid", target, resp);
+    const rel = `${Math.abs(dist)} semitone${Math.abs(dist) > 1 ? "s" : ""} ${dist > 0 ? "above" : "below"} ${PC[anchor]}`;
+    fb(correct, `${correct ? "✅" : "❌"} ${PC[target]} — ${rel}. Hear it: ${PC[anchor]} → ${PC[target]}`);
+    await sleep(400);
+    await playMidi(m - dist, 0.9); await sleep(800); if (abort) return null;      // the real anchor, then the target
+    await playMidi(m, 1.0); await sleep(800); if (abort) return null;
+    await cueSample(target);
+    lastLabeled = m;
+    return abort ? null : { correct };
+  }
+
+  // Neighbors: "E♭ or D?" — chroma between next-door notes, no reference.
+  async function trPair(info) {
+    const p = P("pair"), lo = rand(12), hi = (lo + p.step) % 12, pair = [lo, hi];
+    const pc = Math.random() < 0.5 ? lo : hi, oct = pick(p.octaves), m = midiOf(pc, oct);
+    const vtype = p.synth && Math.random() < 0.5 ? pick(VOICES) : null;
+    stage(head("pair", info) + `
+      <div class="cal-stage">
+        <div class="cal-say">Is this <b>${PC[lo]}</b> or <b>${PC[hi]}</b>?</div>
+        <div class="cal-phase" id="cal-phase">🌀 clearing…</div>
+        <div class="cal-choices" id="cal-ch" hidden>${pair.map((x) => `<button class="cal-choice big-note" data-v="${x}">${PC[x]}</button>`).join("")}</div>
+        <div class="cal-fb" id="cal-fb"></div>
+      </div>` + foot());
+    await cleanser(); if (abort) return null;
+    setPhase(vtype ? "🎧 listen (synth)" : "🎧 listen");
+    if (vtype) await playTuned(m, 0, vtype, p.dur); else await playMidi(m, p.dur);
+    await sleep(Math.max(500, p.dur * 700)); if (abort) return null;
+    setPhase("");
+    const { v, rt } = await ask("#cal-ch"); if (abort || v == null) return null;
+    const resp = +v, correct = resp === pc;
+    record("pair", correct);
+    logTrial("pair", { ti: info.i, stim: { pc, pair, step: p.step, oct, timbre: vtype || "piano", dur: p.dur }, resp, correct, rt });
+    markChoices("#cal-ch", pc, resp);
+    fb(correct, `${correct ? "✅" : "❌"} it was ${PC[pc]}`);
+    await sleep(300);
+    await noteCue(pc, oct);
+    return abort ? null : { correct };
+  }
+
+  const TRIAL = { cue: trCue, name: trName, imagine: trImagine, anchor: trAnchor, hold: trHold, twins: trTwins, triad: trTriad, tune: trTune, tri: trTri, pair: trPair };
 
   async function countdown(el, secs) {
     for (let s = secs; s > 0; s--) { if (abort) return; if (el) el.textContent = s; await sleep(1000); }
@@ -567,9 +663,10 @@ export function setupCalibrate(ctx) {
     const t0 = performance.now(); let skipped = false;
     stage(head("attune") + `
       <div class="cal-stage">
-        <div class="cal-big pulse" id="cal-anchor">${PC[ANCHOR]}</div>
-        <div class="cal-say">Breathe. Let your home note settle in — hum it quietly.</div>
-        <div class="cal-hint">Note · its song tag · note. Everything today is measured from here.</div>
+        <div class="cal-hint">${anchorMode() === "fixed" ? "your home note" : "today's note · rotates daily, weakest first"}</div>
+        <div class="cal-big pulse" id="cal-anchor">${PC[run.anchor]}</div>
+        <div class="cal-say">Breathe. Let it settle in — hum it quietly.</div>
+        <div class="cal-hint">Note · its song tag · note. It's your anchor for today.</div>
         <button class="cal-cta ghost-cta" id="cal-skip">I've got it →</button>
       </div>`);
     $("#cal-skip").onclick = () => { skipped = true; done(); };
@@ -577,14 +674,14 @@ export function setupCalibrate(ctx) {
     const beat = async () => {
       if (abort || myGen !== gen) return;
       const el = $("#cal-anchor"); if (el) { el.classList.remove("pulse"); void el.offsetWidth; el.classList.add("pulse"); }
-      await noteCue(ANCHOR);
+      await noteCue(run.anchor);
       if (abort || myGen !== gen) return;
       reps++;
       if (reps >= 3) later(() => done(), 2500); else later(beat, 2600);
     };
     beat();
     await wait();
-    logTrial("attune", { stim: { pc: ANCHOR, reps }, durMs: Math.round(performance.now() - t0), skipped });
+    logTrial("attune", { stim: { pc: run.anchor, reps }, durMs: Math.round(performance.now() - t0), skipped });
   }
   // Learn phase before Song anchors: the weakest notes, note · tag · note.
   async function calCueLearn() {
@@ -658,18 +755,19 @@ export function setupCalibrate(ctx) {
     const all = await D.allData();
     const today = D.localDate(Date.now());
     const plan = D.makePlan(all);
+    dayAnchor = D.anchorOfDay(all, today, anchorMode());
     const session = {
       id: newId("s"), kind: "calibration", schema: D.SCHEMA_VERSION, protocol: D.PROTOCOL,
       startedAt: Date.now(), localDate: today,
       sessionOfDay: all.sessions.filter((s) => D.kindOf(s) === "calibration" && (s.localDate || D.localDate(s.startedAt)) === today).length + 1,
       dayIndex: all.sessions.length ? Math.floor((Date.now() - all.sessions[0].startedAt) / 86400000) : 0,
-      checkin: ci, plan, completed: false, sing: singOn(), summary: {}, device: D.deviceInfo(),
+      checkin: ci, plan, completed: false, sing: singOn(), summary: {}, device: D.deviceInfo(), anchorPc: dayAnchor, anchorMode: anchorMode(),
       env: { ua: navigator.userAgent, tz: (Intl.DateTimeFormat().resolvedOptions() || {}).timeZone || null, standalone: window.matchMedia("(display-mode: standalone)").matches },
     };
     await D.putSession(session);
     D.requestPersist();
     abort = false; lastLabeled = null;
-    run = { mode: "calibration", session, plan, step: 0, stepTitle: "", sched: {}, tally: {}, seq: 0, intent: null };
+    run = { mode: "calibration", anchor: dayAnchor, session, plan, step: 0, stepTitle: "", sched: {}, tally: {}, seq: 0, intent: null };
     for (let s = 0; s < CAL.length && !abort; s++) {
       run.step = s + 1; run.stepTitle = CAL[s].title;
       await CAL[s].fn();
@@ -786,12 +884,13 @@ export function setupCalibrate(ctx) {
     await p;
     const data = await D.allData();
     const plan = D.makePlan(data), level = drillLevel(skill, plan, data.sessions);
+    dayAnchor = D.anchorOfDay(data, D.localDate(Date.now()), anchorMode());
     const session = { id: newId("d"), kind: "drill", skill, schema: D.SCHEMA_VERSION, protocol: D.PROTOCOL, startedAt: Date.now(),
-      localDate: D.localDate(Date.now()), startLevel: level, events: [], completed: false, sing: singOn(), device: D.deviceInfo() };
+      localDate: D.localDate(Date.now()), startLevel: level, events: [], completed: false, sing: singOn(), device: D.deviceInfo(), anchorPc: dayAnchor };
     await D.putSession(session);
     D.requestPersist();
     abort = false; lastLabeled = null; clearTimers();
-    run = { mode: "drill", skill, level, plan, session, events: session.events, n: 0, g: 0, k: 0, streak: 0, best: 0, recent: [], sched: {}, tally: {}, seq: 0, intent: null };
+    run = { mode: "drill", anchor: dayAnchor, skill, level, plan, session, events: session.events, n: 0, g: 0, k: 0, streak: 0, best: 0, recent: [], sched: {}, tally: {}, seq: 0, intent: null };
     while (!abort) {
       clearTimers();
       const r = await TRIAL[skill]({ i: run.n });
@@ -872,8 +971,9 @@ export function setupCalibrate(ctx) {
     root.innerHTML = `<div class="cal-stage cal-trans"><div class="cal-big">🎯</div></div>`;
     let data = { sessions: [], trials: [] };
     try { data = await D.allData(); } catch (_) {}
-    const coach = D.suggestDrills(data), plan = D.makePlan(data), dl = drillLevels();
+    const coach = D.suggestDrills(data), plan = D.makePlan(data);
     const today = D.localDate(Date.now());
+    dayAnchor = D.anchorOfDay(data, today, anchorMode());
     const calsToday = data.sessions.filter((s) => D.kindOf(s) === "calibration" && s.completed && (s.localDate || D.localDate(s.startedAt)) === today);
     const sumAcc = (s) => { let n = 0, k = 0; Object.values(s.summary || {}).forEach((r) => { n += r.n; k += r.k; }); return n ? k / n : null; };
     const since = Date.now() - 3 * 86400000;
@@ -887,11 +987,13 @@ export function setupCalibrate(ctx) {
         <div class="cal-badge">LUCAS ONLY</div>
         <h1 class="cal-title2">Training</h1>
         <div class="cal-streakline">${s > 0 ? `🔥 ${s}-day streak` : "Start a streak 🔥"}${nCal ? ` · ${nCal} calibrations` : ""}</div>
+        <div class="cal-sync top" id="cal-sync">☁️ checking sync…</div>
 
         <button class="cal-hub-cal" id="hub-cal">
           <div class="chc-k">DAILY CALIBRATION</div>
           <div class="chc-t">${lastCal ? `✓ Done at ${fmtTime(lastCal.startedAt)}${sumAcc(lastCal) != null ? ` · ${pct(sumAcc(lastCal))}` : ""}` : "Today's reading"}</div>
           <div class="chc-s">${lastCal ? `Run it again — extra runs count as practice (run #${calsToday.length + 1}).` : "~7 min · song tags, imagery, naming, holds, chords. Your clean daily data point."}</div>
+          <div class="chc-anchor">⚓ Today's note: <b>${PC[dayAnchor]}</b>${anchorMode() === "fixed" ? " (always C)" : " · rotates daily, weakest first"}</div>
           <div class="chc-go">${lastCal ? "↻ Run again" : "▶ Start"}</div>
         </button>
 
@@ -908,9 +1010,9 @@ export function setupCalibrate(ctx) {
         <div class="hub-cards">${D.SKILLS.map((sk) => drillCard(sk, !coach.calibrateFirst && sk === top.skill ? "suggested" : "", `L${drillLevel(sk, plan, data.sessions)}${recentAcc(sk) != null ? ` · ${pct(recentAcc(sk))}` : ""}`)).join("")}</div>
 
         <div class="cal-sec">You</div>
-        <div class="cal-sync" id="cal-sync">☁️ checking sync…</div>
         <button class="cal-cta ghost-cta" id="hub-model">📊 Your ear model & data</button>
         <label class="cal-toggle"><input type="checkbox" id="cal-sing" ${singOn() ? "checked" : ""}> 🎤 Sing in “Imagine” (mic measures your inner pitch)</label>
+        <label class="cal-toggle"><input type="checkbox" id="cal-fixc" ${anchorMode() === "fixed" ? "checked" : ""}> ⚓ Always use C as the anchor (instead of a daily note)</label>
         <div class="cal-foot">Everything is logged on this device as you go, and synced to your account when you’re signed in. Export from “Your ear model” when you want me to analyze it.</div>
       </div>`;
     $("#hub-exit").onclick = () => { exit(); if (ctx.goHome) ctx.goHome(); };
@@ -918,6 +1020,7 @@ export function setupCalibrate(ctx) {
     $("#hub-model").onclick = () => renderInsights();
     root.querySelectorAll("[data-drill]").forEach((b) => (b.onclick = () => startDrill(b.dataset.drill)));
     $("#cal-sing").onchange = (e) => { try { localStorage.setItem("pt.cal.sing", e.target.checked ? "1" : "0"); } catch (_) {} };
+    $("#cal-fixc").onchange = (e) => { try { localStorage.setItem("pt.cal.anchorMode", e.target.checked ? "fixed" : "rotate"); } catch (_) {} enter({ skipSync: true }); };
     if (opts.skipSync) renderSync(lastStatus || { configured: true }, false); else backgroundSync();
   }
 
@@ -990,7 +1093,7 @@ export function setupCalibrate(ctx) {
     const anRead = an.verdict === "needs-data" ? needs(an.n, 15, "correct naming trials")
       : an.verdict === "counting-from-anchor" ? `~${Math.round(an.msPerSemitone)} ms slower per semitone away from <b>${an.anchorName}</b> (p=${an.p.toFixed(3)}). You seem to <b>find notes by counting from ${an.anchorName}</b>.`
       : "Reaction time doesn't grow with distance from any note — consistent with <b>direct recognition</b>.";
-    const gut = I.gut, tb = I.timbre, reg = I.register, ch = I.chroma, hd = I.hold, im = I.imagery, al = I.anchorLock, sh = I.shift, so = I.song, tu = I.tune;
+    const gut = I.gut, tb = I.timbre, reg = I.register, ch = I.chroma, hd = I.hold, im = I.imagery, al = I.anchorLock, sh = I.shift, so = I.song, tu = I.tune, ma = I.mentalAnchors, nb = I.neighbors;
     const tbRead = !tb.enough ? needs(tb.sine.n, 8, "pure-tone trials")
       : tb.diff.lo > 0.1 ? "Much better on piano than pure tone → your note memory is partly <b>tied to piano timbre</b>." : "Pure tones about as good as piano → the memory is <b>timbre-general</b>. ✓";
     const holdRead = hd.enoughCost
@@ -1020,7 +1123,9 @@ export function setupCalibrate(ctx) {
         ${card("Register cues", reg.spread != null ? pts(reg.spread) : "—", reg.spread == null ? "Needs ≥5 trials in two octaves." : reg.spread > 0.25 ? "Accuracy swings a lot by octave → you may be using <b>register</b> as a cue." : "Similar across octaves → you're hearing <b>chroma</b>, not height. ✓", reg.byOct.map((r) => `oct ${r.oct}: ${pct(r.acc)}`).join(" · "))}
         ${card("Chroma vs height", pct(ch.acc), ch.n >= 6 ? "Octave twins: spotting the odd note name across octaves." : needs(ch.n, 6, "octave-twins trials"), ch.byOffset.filter((x) => x.n).map((x) => `${x.semis}st: ${pct(x.acc)}`).join(" · "))}
         ${card("Inner pitch", im.nSung ? `${im.meanBiasCents > 0 ? "+" : ""}${Math.round(im.meanBiasCents)}¢` : "—", im.nSung >= 5 ? `Your sung template runs ${Math.abs(im.meanBiasCents) < 15 ? "dead center" : im.meanBiasCents > 0 ? "<b>sharp</b>" : "<b>flat</b>"}; ${pct(im.within50)} within a quarter-tone (avg miss ${Math.round(im.meanAbsCents)}¢).` : `Turn on 🎤 singing to measure your internal template.${im.nSelf ? ` Self-rated "nailed it": ${pct(im.selfNailedRate)}.` : ""}`, im.nSung ? `n=${im.nSung} sung` : "")}
-        ${card("Anchor precision", pct(al.hitRate), al.nHits >= 5 ? `Hit rate on real ${PC[ANCHOR]}s.${fa100 != null ? ` Fooled by a semitone neighbor ${pct(fa100)} of the time.` : ""}` : needs(al.nHits, 5, "anchor trials"), al.falseAlarmsByCents.filter((x) => x.n).map((x) => `±${x.cents}¢: ${pct(x.faRate)} fooled`).join(" · "))}
+        ${card("Anchor precision", pct(al.hitRate), al.nHits >= 5 ? `Hit rate on the real anchor note.${fa100 != null ? ` Fooled by a semitone neighbor ${pct(fa100)} of the time.` : ""}${al.byAnchor.length > 1 ? ` By note: ${al.byAnchor.map((x) => `${x.name} ${pct(x.acc)}`).join(", ")}.` : ""}` : needs(al.nHits, 5, "anchor trials"), al.falseAlarmsByCents.filter((x) => x.n).map((x) => `±${x.cents}¢: ${pct(x.faRate)} fooled`).join(" · "))}
+        ${card("Mental anchors", ma.best.length ? ma.best[0].name : "—", ma.best.length >= 2 ? `Triangulating from an imagined note works best from <b>${ma.best.map((x) => x.name).join(", ")}</b> and worst from <b>${ma.worst.map((x) => x.name).join(", ")}</b>.` : needs(ma.byAnchor.filter((x) => x.n >= 3).length, 2, "anchors with 3+ Triangulate trials"), ma.byDist.map((x) => `${x.dist}st: ${pct(x.acc)}`).join(" · "))}
+        ${card("Neighbors", pct(nb.acc), nb.n >= 8 ? `Telling next-door notes apart with no reference.${nb.pairs.filter((x) => x.n >= 3).length ? ` Muddiest: ${nb.pairs.filter((x) => x.n >= 3).slice(0, 3).map((x) => `${x.pair} ${pct(x.acc)}`).join(", ")}.` : ""}` : needs(nb.n, 8, "Neighbors trials"), `semitone ${pct(nb.semitone.acc)} · whole step ${pct(nb.wholeStep.acc)}`)}
         <div class="cal-sec">Confusions</div>
         ${a.confusions.length ? `<div class="cal-conf">${a.confusions.map((c) => `<div><b>${c.from} → ${c.to}</b> ×${c.n} <span>${c.kind}</span></div>`).join("")}</div>${sh.nWrong >= 6 ? `<div class="cal-ins-m">Errors lean ${sh.meanSignedSemis > 0.3 ? "sharp" : sh.meanSignedSemis < -0.3 ? "flat" : "neither way"} (mean ${sh.meanSignedSemis.toFixed(2)} st).</div>` : ""}` : `<div class="cal-hint">No naming errors logged yet.</div>`}
         <div class="cal-sec">When you're sharpest</div>

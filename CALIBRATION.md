@@ -20,12 +20,14 @@ You land on the **Training Hub**, which has three parts:
 ## Daily Calibration — protocol v2 (~7 min, 9 stations)
 
 0. **Check-in**: energy, music heard today, headphones vs speaker.
-1. **Attune**: C → its PP-MIDI song tag → C, three times.
+1. **Attune**: today's note → its PP-MIDI song tag → note, three times.
+
+**Today's note (daily anchor).** The anchor rotates: each day it's your weakest note that hasn't been the anchor in the last 11 days, so all 12 get a turn every 12 days, weakest first. "Weakest" is computed only from trials before today, so it can't drift mid-day. Once a calibration records it, it sticks for that day. A hub toggle switches back to "always C." Attune and Anchor lock use it, and sessions/trials record `anchorPc`.
 2. **Song anchors**: learn your 2 weakest notes (note · tag · note), then recall trials:
    - **tag → note**: hear the PP-MIDI cue, name the note;
    - from L2, also **bare note → tag**: hear the plain piano note, recall its tag, name it. This is the bridge to real AP.
 3. **Imagine it**: hear a named note internally; optionally sing it (mic → signed cents).
-4. **Anchor lock**: "is this exactly C?" Lures are in cents and tighten with level (±300¢ … ±30¢).
+4. **Anchor lock**: "is this exactly today's note?" Lures are in cents and tighten with level (±300¢ … ±30¢).
 5. **Blindfold naming**: the diagnostic core (below).
 6. **Hold it**: keep a pitch alive for 3–16 s, then same/different by **60¢ → 12¢**. Half the holds play **stray notes** in the gap, half play noise.
 7. **Octave twins**: three notes in three octaves; which one has a different note name?
@@ -38,6 +40,15 @@ v1 (first week) differed: no Song anchors station, tags only at the end, hold = 
 
 ### The palette cleanser
 A quiet scatter of random atonal notes before each absolute trial. Intervening *tones* (not noise) disrupt pitch working memory (Deutsch), so it wipes the last labeled note and you can't count from it.
+
+**Tuning-critical trials have no hidden cues** (protocol v2.1: In tune?, Hold it, and Anchor lock at cent-level lures). Lucas spotted that off notes were easy. There were two leaks:
+1. The cleanser played *in-tune* notes, giving a tuning grid to judge the next note against.
+2. Detuned piano samples sound subtly "processed."
+
+The fixes:
+- These trials use a **detuned cleanser** (each scatter note randomly ±50¢), so no grid is left behind.
+- In-tune and off notes are played by the **same synth voice**: a random pick of triangle / sine / fmsine / amtriangle, at ±2 dB. No sample repitching, so pitch is the only difference.
+- `stim.voice` is logged on every one of these trials.
 
 ### Embedded experiments (why the data can reveal mechanism)
 Conditions are **stratified-randomized within each block**, in calibration and drills alike:
@@ -58,7 +69,13 @@ Each skill also runs as an **endless adaptive drill**, launched from the hub, th
 - **😴 too easy / 😵 too hard:** move one level immediately. Logged as events — this is data too.
 - **✕** ends the drill (shows a summary plus the coach's next pick); **⇄** switches drills mid-trial.
 - Drill levels are stored per skill (`pt.cal.drillLv`) and start from the calibration level. Drills **never** change calibration levels.
-- **In tune?** is drill-only for now: is this note exactly on a pitch, or ±50¢ → ±10¢ off?
+- **In tune?** is drill-only: is this note exactly on a pitch, or ±50¢ → ±10¢ off?
+- **Triangulate 🧭** (drill-only): hear a mystery note, then **imagine an assigned anchor** and find the note from it.
+  - Anchors are stratified so each of the 12 comes up once per 12 trials, which shows which mental anchors work best for you.
+  - Levels widen the anchor→target distance (±2 → ±6 semitones) and the octave spread, and shorten imagery time.
+  - Feedback plays the real anchor → target, then the tag.
+- **Neighbors 👯** (drill-only): "Is this E♭ or D?" Next-door chroma with no reference.
+  - Levels go whole step → semitone → more octaves → random synth timbres → 0.5 s notes.
 
 ## The coach (`suggestDrills` in [calibrate-data.js](calibrate-data.js))
 Rule-based, from your data:
@@ -133,12 +150,14 @@ Common fields: `id, sessionId, mode (calibration|drill), protocol, station, gi, 
 | attune / lockin | `pc` | — |
 | cue | `pc, kind (learn / cue2note / note2cue), choices, cleansed` | `resp` |
 | imagine | `pc, secs` | `resp` (sung / nailed / off), `sing {ok, hz, midi, cents, oct}` |
-| anchor | `pc, isAnchor, offsetCents, oct` (v1: `offset` semitones) | `resp` yes/no |
+| anchor | `pc, anchorPc, isAnchor, offsetCents, oct, voice` (v1: `offset` semitones, anchor always C) | `resp` yes/no |
 | name | `pc, oct, midi, wash, timbre, prevMidi, prevPc, prevInt` | `resp, errSemis` |
-| hold | `pc, dur, same, probeCents, interference (noise/tones), distractors` (v1: `probeOffset`) | `resp` |
+| hold | `pc, dur, same, probeCents, interference (noise/tones), distractors, voice` (v1: `probeOffset`) | `resp` |
 | twins | `a, b, offset, octs, oddSlot, notes` | `resp, replays` |
 | triad | `rootPc, quality, inversion, spread, chord, targetPc, posIdx` | `resp, replays` |
-| tune | `pc, oct, inTune, cents` | `resp` in/off |
+| tune | `pc, oct, inTune, cents, voice` | `resp` in/off |
+| tri | `anchor, target, dist, oct, midi` | `resp, replays, errSemis` |
+| pair | `pc, pair [lo, hi], step, oct, timbre, dur` | `resp` |
 
 ## What `analyze()` estimates
 Validated against simulated listeners in `tools/test-cal-analysis.mjs`, which has 23 checks.
@@ -152,11 +171,13 @@ Validated against simulated listeners in `tools/test-cal-analysis.mjs`, which ha
 | Song anchors | tag→note vs bare-note→tag accuracy, per note | association strength; the bare direction is the AP bridge |
 | Hold it | noise − stray-notes accuracy (tone-interference cost); accuracy by cents | big cost → holding the sound, not the name |
 | In tune? | accuracy by cents off | tuning-template resolution |
+| Mental anchors | Triangulate accuracy + RT per imagined anchor; by distance | which internal reference notes you can actually use |
+| Neighbors | accuracy per next-door pair; semitone vs whole step | which chroma boundaries are muddy |
 | Timbre lock | piano − sine | >0 → piano-bound |
 | Register cues | accuracy spread across octaves | height vs chroma |
 | Chroma | octave twins by offset | — |
 | Inner pitch | sung signed cents bias / abs error | template drift |
-| Anchor precision | hit rate; false alarms by lure cents | how sharp the anchor is |
+| Anchor precision | hit rate (per anchor note); false alarms by lure cents | how sharp each daily anchor is |
 | Confusions | top true→answered pairs; mean signed error | semitone vs tonal confusions |
 | Context | time of day, energy, music today, run of the day, mode, device (phone vs laptop), warm-up | when your AP is best |
 
