@@ -319,7 +319,10 @@
     .cal-choice { flex: 1; min-width: 120px; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 14px; padding: 0.9rem 1rem; font-weight: 800; font-size: 1rem; cursor: pointer; box-shadow: var(--shadow); touch-action: manipulation; font-family: inherit; }
     .cal-choice.ok, .cal-key.ok { background: var(--good); border-color: var(--good); color: #fff; }
     .cal-choice.bad, .cal-key.bad { background: var(--bad); border-color: var(--bad); color: #fff; }
-    .cal-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.45rem; max-width: 340px; margin: 0.4rem auto; }
+    /* Scoped to #calibrate: the friends' calendar also uses .cal-grid, and these
+       elements toggle the [hidden] attribute, which their display rules would override. */
+    #calibrate [hidden] { display: none !important; }
+    #calibrate .cal-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.45rem; max-width: 340px; margin: 0.4rem auto; }
     .cal-key { border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 12px; padding: 0.8rem 0; font-weight: 800; font-size: 1.02rem; cursor: pointer; touch-action: manipulation; font-family: inherit; }
     .cal-fb { min-height: 1.5em; font-weight: 800; margin-top: 0.8rem; font-size: 1.02rem; }
     .cal-fb.ok { color: var(--good); } .cal-fb.bad { color: var(--bad); }
@@ -410,6 +413,10 @@
     .chc-anchor b { font-size: 1.05rem; }
     .cal-sync.top { margin: 0.2rem auto 1rem; max-width: 420px; font-size: 0.85rem; padding: 0.6rem 0.9rem; }
     .cal-choice.big-note { font-size: 1.6rem; padding: 1.1rem 0.6rem; }
+    .cal-popup { display: inline-block; margin: 0.2rem auto 0.4rem; font-weight: 800; font-size: 0.82rem; color: #b45309; background: #fef3c7; border: 1px solid #fcd34d; padding: 0.3rem 0.75rem; border-radius: 999px; }
+    .dr-stats + .cal-popup { display: table; }
+    .cal-r1 { margin-top: 0.6rem; font-size: 0.85rem !important; padding: 0.5rem 1rem !important; }
+    .cal-r1:disabled { opacity: 0.45; }
     .cal-picker { padding-bottom: 2rem; }
     .cal-picker .hub-cards { margin-top: 0.8rem; }
     .cal-finish .cal-coach-mini { margin-top: 1.2rem; }

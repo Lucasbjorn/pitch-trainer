@@ -17,7 +17,7 @@ You land on the **Training Hub**, which has three parts:
 
 **Account sync:** sign in with Google once on each device (from the hub's ☁️ card). After that, the phone, the laptop and the iPhone home-screen app all share one dataset (see *Account sync* below).
 
-## Daily Calibration — protocol v2 (~7 min, 9 stations)
+## Daily Calibration — protocol v3 (~7 min, 8 stations + ⚓ pop-ups)
 
 0. **Check-in**: energy, music heard today, headphones vs speaker.
 1. **Attune**: today's note → its PP-MIDI song tag → note, three times.
@@ -27,16 +27,35 @@ You land on the **Training Hub**, which has three parts:
    - **tag → note**: hear the PP-MIDI cue, name the note;
    - from L2, also **bare note → tag**: hear the plain piano note, recall its tag, name it. This is the bridge to real AP.
 3. **Imagine it**: hear a named note internally; optionally sing it (mic → signed cents).
-4. **Anchor lock**: "is this exactly today's note?" Lures are in cents and tighten with level (±300¢ … ±30¢).
-5. **Blindfold naming**: the diagnostic core (below).
-6. **Hold it**: keep a pitch alive for 3–16 s, then same/different by **60¢ → 12¢**. Half the holds play **stray notes** in the gap, half play noise.
-7. **Octave twins**: three notes in three octaves; which one has a different note name?
-8. **Find the note**: "there's an E♭ in this chord — bottom, middle or top?" Higher levels add inversions, then dim/aug, then spread voicings.
-9. **Lock it in**: your weakest notes, note · tag · note.
+4. **Blindfold naming**: the diagnostic core (below).
+5. **Hold it**: keep a pitch alive for 3–16 s, then same/different by **60¢ → 12¢**. Half the holds play **stray notes** in the gap, half play noise.
+6. **Octave twins**: three notes in three octaves; which one has a different note name?
+7. **Find the note**: "there's an E♭ in this chord — bottom, middle or top?" Higher levels add inversions, then dim/aug, then spread voicings.
+8. **Lock it in**: your weakest notes, note · tag · note.
 
 **Every answer, in every station, ends with note · song tag · note.** The tags are 0.74 s, so this costs little time. Ending on the labeled note keeps the "last heard note" clean for the relative-pitch test.
 
-v1 (first week) differed: no Song anchors station, tags only at the end, hold = ±1 semitone through noise, and anchor lures in whole semitones. Every v2 record carries `protocol: 2`.
+**⚓ Anchor pop-ups (v3).** "Is this exactly today's note?" is no longer a block. Back to back, the answer was easy: you could still hear the anchor from the previous question. Instead it pops up at random:
+- **In the calibration:** 5 checks (7 when anchor is the focus) at random points between other stations' questions, never back to back, and not in the first two questions.
+- **In every drill:** after at least 3 questions, a 22% chance per question.
+- **Scoring:** a pop-up keeps the host drill's header, hides ⏫/⏬, and doesn't count toward the drill's stats.
+- **Logged:** each pop-up records `popup, host` (what it interrupted), `sinceAnchorMs` (time since you last *heard* the anchor), and `trialsSinceAnchor`. Together these measure **how long today's note survives in memory**.
+- Lures are in cents and tighten with level (±300¢ … ±30¢). There is no standalone Anchor lock drill anymore.
+
+**Pacing and responses (v3).** Lucas's notes: a game replayed the just-answered note straight into the next question (a forced relative-pitch shortcut), some games had no replay, and you couldn't answer the moment you knew. Now:
+- **Breather:** 0.7 s of silence before each question's first sound.
+- **Song anchors** use the cleanser at every level. That station was the culprit: at L1–2 the next tag followed the last note directly.
+- **Blindfold naming**'s deliberate no-cleanser trials (the relative-pitch test) get a **1.8 s** gap, logged as `preGapMs`.
+- **▶ replay (1×)** in Blindfold naming, Neighbors, In tune?, anchor pop-ups and Song anchors. It's logged as `replays`. Hold it gets none, since a replay would defeat the memory test.
+- **Answer the instant you know:** buttons are armed at **note onset**, and RT is measured from onset (`rtFrom: "onset"`). Before v3 the buttons were visible but dead until a fixed delay passed, a CSS bug where `display` overrode `[hidden]`; that's now fixed.
+- ✕ / ⇄ unwind immediately even mid-feedback, with no stray notes.
+
+**Version history:**
+- **v1** (first week): no Song anchors station, tags only at the end, hold = ±1 semitone through noise, anchor lures in whole semitones, always C.
+- **v2:** Song anchors, cents-level hold/anchor, rotating daily anchor, tuning-cue fixes.
+- **v3:** pop-ups, pacing, replay, RT from onset.
+
+Every record carries its `protocol`. Compare like with like.
 
 ### The palette cleanser
 A quiet scatter of random atonal notes before each absolute trial. Intervening *tones* (not noise) disrupt pitch working memory (Deutsch), so it wipes the last labeled note and you can't count from it.
@@ -177,11 +196,21 @@ Validated against simulated listeners in `tools/test-cal-analysis.mjs`, which ha
 | Register cues | accuracy spread across octaves | height vs chroma |
 | Chroma | octave twins by offset | — |
 | Inner pitch | sung signed cents bias / abs error | template drift |
-| Anchor precision | hit rate (per anchor note); false alarms by lure cents | how sharp each daily anchor is |
+| Anchor precision | hit rate (per anchor note); **by time since last heard** (<1 min / 1–5 min / >5 min); pop-up vs old block; false alarms by lure cents | how sharp each daily anchor is, and how long it lasts |
 | Confusions | top true→answered pairs; mean signed error | semitone vs tonal confusions |
 | Context | time of day, energy, music today, run of the day, mode, device (phone vs laptop), warm-up | when your AP is best |
 
 ## Analysis handoff (for Claude, when asked)
+**Standing brief from Lucas:** after about a week of data, don't wait to be told what's too easy. Find stations or levels at ceiling (or flagged 😴 too easy), **diagnose why**, and design a creative fix.
+
+The usual cause is a cue leak that lets a non-AP strategy pass. Examples so far:
+- the anchor echo in a back-to-back block;
+- an in-tune cleanser that left a tuning grid;
+- detuned piano samples that sound "processed";
+- the last note replayed straight into the next question.
+
+Check ceiling accuracy, RT distributions, replay use and "too easy" events by station × level × protocol.
+
 1. Export JSON (from the device you use, or the Mac browser if the cloud backup is on). Drop it into `calibration-data/` in this repo; that folder is gitignored and never committed.
 2. Ask Claude to "analyze my calibration data." The plan:
    - check data quality per protocol version: sessions, trials per condition, RT outliers, v1/v2 split;

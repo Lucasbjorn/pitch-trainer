@@ -49,11 +49,11 @@ export function setupCalibrate(ctx) {
   // Every in-flight sleep is resolvable, so ✕ / ⇄ can release a trial that's
   // mid-wait (e.g. 16 s into a hold) instead of leaving it hanging forever.
   const pending = new Set();
-  const sleep = (ms) => new Promise((res) => {
+  const sleep = (ms) => (abort ? Promise.resolve() : new Promise((res) => {
     const fin = () => { clearTimeout(t); pending.delete(fin); res(); };
     const t = setTimeout(fin, ms);
     pending.add(fin);
-  });
+  }));
   function flushWaits() { [...pending].forEach((f) => f()); }
   function later(fn, ms) { const g = gen; const t = setTimeout(() => { if (!abort && g === gen) fn(); }, ms); timers.push(t); return t; }
   function clearTimers() { gen++; timers.forEach(clearTimeout); timers = []; }
@@ -73,9 +73,11 @@ export function setupCalibrate(ctx) {
   const hzOf = (m, cents = 0) => 440 * Math.pow(2, (m + cents / 100 - 69) / 12);
   async function piano() { await ctx.ensurePiano(); return ctx.getPiano(); }
   async function playMidi(m, dur = 1.4, at = 0, vel = 0.8) {
+    if (abort) return;
     const p = await piano(); try { p.triggerAttackRelease(midiName(m), dur, Tone.now() + at, vel); } catch (_) {}
   }
   async function playHz(m, cents, dur = 1.4, vel = 0.8) {           // microtonal piano (Sampler repitches)
+    if (abort) return;
     const p = await piano(); try { p.triggerAttackRelease(hzOf(m, cents), dur, Tone.now(), vel); } catch (_) {}
   }
   function ensureSine() {
@@ -86,13 +88,16 @@ export function setupCalibrate(ctx) {
     return sine;
   }
   async function playStim(m, timbre, dur = 1.4) {
+    if (abort) return;
     if (timbre === "sine") { try { ensureSine().triggerAttackRelease(hzOf(m), dur, Tone.now()); } catch (_) {} }
     else await playMidi(m, dur);
   }
   async function playChord(midis, dur = 1.8, vel = 0.65) {
+    if (abort) return;
     const p = await piano(); midis.forEach((m) => { try { p.triggerAttackRelease(midiName(m), dur, Tone.now(), vel); } catch (_) {} });
   }
   async function arpeggiate(midis, gap = 0.46) {
+    if (abort) return;
     const p = await piano();
     midis.forEach((m, i) => { try { p.triggerAttackRelease(midiName(m), 0.6, Tone.now() + i * gap, 0.8); } catch (_) {} });
     await sleep(midis.length * gap * 1000 + 300);
@@ -101,6 +106,7 @@ export function setupCalibrate(ctx) {
   // detuned=true scatters them ±50¢ too, so it leaves NO in-tune grid behind to
   // judge the next note against (needed wherever tuning itself is the question).
   async function cleanser(detuned = false) {
+    if (abort) return;
     const p = await piano(); const now = Tone.now(), N = 9;
     for (let i = 0; i < N; i++) {
       const m = 36 + rand(48);
@@ -120,6 +126,7 @@ export function setupCalibrate(ctx) {
     return voices[type];
   }
   async function playTuned(m, cents, type, dur = 1.4) {
+    if (abort) return;
     try { const v = voice(type); v.volume.value = -8 + (Math.random() * 4 - 2); v.triggerAttackRelease(hzOf(m, cents), dur, Tone.now()); } catch (_) {}
   }
   function stopNoise() { if (noiseNode) { try { noiseNode.n.stop(); noiseNode.n.dispose(); noiseNode.g.dispose(); } catch (_) {} noiseNode = null; } }
@@ -138,6 +145,7 @@ export function setupCalibrate(ctx) {
   }
   // Stray notes during a hold (never the held note's own name).
   async function distractors(n, ms, avoidPc) {
+    if (abort) return;
     const p = await piano(), now = Tone.now();
     for (let i = 0; i < n; i++) {
       let m; do { m = 48 + rand(36); } while (pcOf(m) === avoidPc);
@@ -146,10 +154,12 @@ export function setupCalibrate(ctx) {
     await sleep(ms);
   }
   // The PP-MIDI song tag for a pitch class; resolves when the sample ends.
-  async function cueSample(pc) {
+  async function cueSample(pc, wait = true) {
+    if (abort) return;
     try {
       const b = ctx.getBank && ctx.getBank(); if (!b) return;
       const nm = PC[pcOf(pc)], r = b.play(nm, {});
+      if (!wait) return;                                            // fire and go (answer while it plays)
       const buf = r && b.buffers[nm] && b.buffers[nm][r.variantIdx];
       await sleep(Math.min(3500, ((buf && buf.duration) || 1) * 1000) + 120);
     } catch (_) {}
@@ -157,6 +167,8 @@ export function setupCalibrate(ctx) {
   // note → its tag → note again (so the last thing heard is the labeled note).
   async function noteCue(pc, oct = 4) {
     const m = midiOf(pcOf(pc), oct), g0 = gen, alive = () => !abort && gen === g0;
+    if (!alive()) return;
+    exposed(pc);
     await playMidi(m, 0.9); await sleep(750); if (!alive()) return;
     await cueSample(pc); if (!alive()) return;
     await playMidi(m, 1.0); await sleep(700);
@@ -225,15 +237,16 @@ export function setupCalibrate(ctx) {
   // Header: calibration shows overall progress; a drill shows level + live stats.
   function head(skill, info = {}) {
     if (run.mode === "drill") {
-      const acc = run.g ? `${Math.round((run.k / run.g) * 100)}%` : "—";
+      const acc = run.g ? `${Math.round((run.k / run.g) * 100)}%` : "—", hs = run.skill;   // always the host drill's header
       return `<div class="dr-top">
           <button class="cal-x" id="dr-end" title="end">✕</button>
-          <div class="dr-title">${META[skill].icon} ${TITLE[skill]} <span class="dr-lv">L${run.level}</span></div>
+          <div class="dr-title">${META[hs].icon} ${TITLE[hs]} <span class="dr-lv">L${run.level}</span></div>
           <button class="dr-sw" id="dr-switch" title="switch drill">⇄</button>
         </div>
-        <div class="dr-stats">${run.n} done · ${acc} · 🔥 ${run.streak}</div>`;
+        <div class="dr-stats">${run.n} done · ${acc} · 🔥 ${run.streak}</div>
+        ${info.popup ? `<div class="cal-popup">⚓ Pop-up — anchor check</div>` : ""}`;
     }
-    const title = run.stepTitle || TITLE[skill];
+    const title = info.popup ? "⚓ Anchor pop-up" : run.stepTitle || TITLE[skill];
     return `<div class="cal-top">
         <button class="cal-x" id="cal-exit">✕</button>
         <div class="cal-prog"><div class="cal-prog-bar" style="width:${Math.round(((run.step - 1) / CAL.length) * 100)}%"></div></div>
@@ -242,7 +255,7 @@ export function setupCalibrate(ctx) {
       <div class="cal-kicker">${title}${run.plan.focus && run.plan.focus === skill ? " · today's focus" : ""}</div>
       ${info.n ? `<div class="cal-trialcount">${info.i + 1}/${info.n}</div>` : ""}`;
   }
-  const foot = () => (run && run.mode === "drill" ? `<div class="dr-foot"><button id="dr-hard">😵 too hard</button><button id="dr-easy">😴 too easy</button></div>` : "");
+  const foot = (info = {}) => (run && run.mode === "drill" && !info.popup ? `<div class="dr-foot"><button id="dr-hard">😵 too hard</button><button id="dr-easy">😴 too easy</button></div>` : "");
   function setPhase(t) { const el = $("#cal-phase"); if (el) el.textContent = t; }
   function fb(ok, html) { const el = $("#cal-fb"); if (el) { el.innerHTML = html; el.className = "cal-fb " + (ok ? "ok" : "bad"); } }
   async function ask(sel) {
@@ -253,7 +266,20 @@ export function setupCalibrate(ctx) {
     const v = await wait();
     return { v, rt: Math.round(performance.now() - shown) };
   }
+  // A short breather before each question's first sound, so the note you just
+  // answered isn't followed straight away by the next one (no relative shortcut).
+  const BREATH = 700;
+  // "▶ replay (1×)": one extra listen, logged; hidden once you answer.
+  const replayBtn = `<button class="cal-cta ghost-cta cal-r1" id="cal-r1" hidden>▶ replay (1×)</button>`;
+  function armReplay(fn) {
+    const st = { n: 0 }, b = $("#cal-r1");
+    if (b) { b.hidden = false; b.onclick = () => { if (st.n) return; st.n = 1; b.disabled = true; b.textContent = "replayed"; fn(); }; }
+    return st;
+  }
+  // Anchor exposure clock — pop-ups log how long since you last heard today's note.
+  function exposed(pc) { if (run && pcOf(pc) === run.anchor) { run.lastAnchorAt = Date.now(); run.trialsSinceAnchor = 0; } }
   function markChoices(sel, right, chosen) {
+    const r1 = $("#cal-r1"); if (r1) r1.hidden = true;
     root.querySelectorAll(`${sel} [data-v]`).forEach((b) => {
       b.onclick = null;
       if (b.dataset.v === String(right)) b.classList.add("ok"); else if (b.dataset.v === String(chosen)) b.classList.add("bad");
@@ -262,7 +288,7 @@ export function setupCalibrate(ctx) {
   const grid = (opts) => `<div class="cal-grid" id="cal-grid" hidden${opts.length < 12 ? ` style="grid-template-columns:repeat(${opts.length === 4 ? 2 : 3},1fr)"` : ""}>${opts.map((j) => `<button class="cal-key" data-v="${j}">${PC[j]}</button>`).join("")}</div>`;
 
   // ---- levels, conditions, logging ---------------------------------------------
-  const lvlFor = (skill) => (run.mode === "drill" ? run.level : run.plan.levels[skill] || 1);
+  const lvlFor = (skill) => (run.mode === "drill" && skill === run.skill ? run.level : run.plan.levels[skill] || 1);
   const P = (skill) => D.paramsFor(skill, lvlFor(skill));
   // Stratified condition blocks, so randomized contrasts stay balanced in both modes.
   function nextCond(skill) {
@@ -293,7 +319,7 @@ export function setupCalibrate(ctx) {
     D.putTrial({
       id: `${run.session.id}:${run.seq}`, sessionId: run.session.id, schema: D.SCHEMA_VERSION, protocol: D.PROTOCOL,
       mode: run.mode, station: skill, gi: run.seq++, t: now.getTime(), hour: now.getHours(), dow: now.getDay(),
-      level: lvlFor(skill), correct: null, rt: null, ...fields,
+      level: lvlFor(skill), rtFrom: "onset", correct: null, rt: null, ...fields,
     }).catch(() => {});
     pushSoon();
   }
@@ -304,6 +330,7 @@ export function setupCalibrate(ctx) {
     if (typeof correct !== "boolean") return;
     const r = run.tally[skill] || (run.tally[skill] = { n: 0, k: 0 });
     r.n++; if (correct) r.k++;
+    run.trialsSinceAnchor = (run.trialsSinceAnchor || 0) + 1;
   }
   const weightedPc = () => D.weightedPick(run.plan.pcWeights, 1)[0];
 
@@ -319,22 +346,23 @@ export function setupCalibrate(ctx) {
     stage(head("cue", info) + `
       <div class="cal-stage">
         <div class="cal-say">${kind === "cue2note" ? "Which note does this song tag start on?" : "Bare note — what's its song tag? Hear it inside, then name the note."}</div>
-        <div class="cal-phase" id="cal-phase">${p.cleanse ? "🌀 clearing…" : "🎧 listen"}</div>
+        <div class="cal-phase" id="cal-phase">🌀 clearing…</div>
         ${grid(opts)}
+        ${replayBtn}
         <div class="cal-fb" id="cal-fb"></div>
       </div>` + foot());
-    if (p.cleanse) { await cleanser(); if (abort) return null; setPhase("🎧 listen"); }
-    if (kind === "cue2note") await cueSample(pc);
-    else { await playMidi(midiOf(pc, 4), 1.4); setPhase("…its tag?"); await sleep(1700); }
-    if (abort) return null;
-    setPhase("name it ↓");
+    await sleep(BREATH); await cleanser(); if (abort) return null;
+    const hear = () => (kind === "cue2note" ? cueSample(pc, false) : playMidi(midiOf(pc, 4), 1.4));
+    await hear(); if (abort) return null;
+    setPhase(kind === "cue2note" ? "🎧 name its first note ↓" : "🎧 …its tag? name it ↓");
+    const rp = armReplay(hear);
     const { v, rt } = await ask("#cal-grid"); if (abort || v == null) return null;
     const resp = +v, correct = resp === pc;
     record("cue", correct);
-    logTrial("cue", { ti: info.i, stim: { pc, kind, choices: opts.length, cleansed: !!p.cleanse }, resp, correct, rt });
+    logTrial("cue", { ti: info.i, stim: { pc, kind, choices: opts.length, cleansed: true }, resp, correct, rt, replays: rp.n });
     markChoices("#cal-grid", pc, resp);
     fb(correct, `${correct ? "✅" : "❌"} ${PC[pc]} — note · tag · note`);
-    await sleep(300);
+    await sleep(500);
     await noteCue(pc);
     return abort ? null : { correct };
   }
@@ -342,7 +370,7 @@ export function setupCalibrate(ctx) {
   async function trImagine(info) {
     const p = P("imagine"), pc = weightedPc(), sing = singOn();
     stage(head("imagine", info) + `<div class="cal-stage"><div class="cal-phase">🌀 clearing your ear…</div></div>` + foot());
-    await cleanser(); if (abort) return null;
+    await sleep(BREATH); await cleanser(); if (abort) return null;
     stage(head("imagine", info) + `
       <div class="cal-stage">
         <div class="cal-say">Hear this note ringing in your mind:</div>
@@ -394,17 +422,20 @@ export function setupCalibrate(ctx) {
         <div class="cal-say">Is this today's note — exactly <b>${PC[A]}</b>?</div>
         <div class="cal-phase" id="cal-phase">🌀 clearing…</div>
         <div class="cal-choices" id="cal-ch" hidden><button class="cal-choice" data-v="yes">Yes, it's ${PC[A]}</button><button class="cal-choice" data-v="no">No</button></div>
+        ${replayBtn}
         <div class="cal-fb" id="cal-fb"></div>
-      </div>` + foot());
-    await cleanser(true); if (abort) return null;
-    setPhase("🎧 listen");
-    if (vtype) await playTuned(base, offsetCents, vtype, 1.5); else await playHz(base, offsetCents, 1.5);
-    await sleep(800); if (abort) return null;
-    setPhase("your call ↓");
+      </div>` + foot(info));
+    const sinceMs = run.lastAnchorAt ? Date.now() - run.lastAnchorAt : null, sinceTrials = run.trialsSinceAnchor ?? null;
+    await sleep(BREATH); await cleanser(true); if (abort) return null;
+    const hear = () => (vtype ? playTuned(base, offsetCents, vtype, 1.5) : playHz(base, offsetCents, 1.5));
+    setPhase("🎧 your call ↓");
+    await hear(); if (abort) return null;
+    const rp = armReplay(hear);
     const { v, rt } = await ask("#cal-ch"); if (abort || v == null) return null;
     const correct = (v === "yes") === isAnchor;
     record("anchor", correct);
-    logTrial("anchor", { ti: info.i, stim: { pc: pcOf(base + offsetCents / 100), anchorPc: A, isAnchor, offsetCents, oct, voice: vtype || "piano" }, resp: v, correct, rt });
+    logTrial("anchor", { ti: info.i, stim: { pc: pcOf(base + offsetCents / 100), anchorPc: A, isAnchor, offsetCents, oct, voice: vtype || "piano",
+      popup: !!info.popup, host: run.mode === "drill" ? run.skill : run.curSkill || null, sinceAnchorMs: sinceMs, trialsSinceAnchor: sinceTrials }, resp: v, correct, rt, replays: rp.n });
     markChoices("#cal-ch", isAnchor ? "yes" : "no", v);
     fb(correct, `${correct ? "✅ Right" : "❌ Nope"} — that was ${label}. Here's ${PC[A]}:`);
     await sleep(400);
@@ -423,21 +454,25 @@ export function setupCalibrate(ctx) {
         <div class="cal-say">Name it — no reference tone.</div>
         <div class="cal-phase" id="cal-phase">${wash ? "🌀 clearing…" : "…"}</div>
         ${grid(PC.map((_, j) => j))}
+        ${replayBtn}
         <div class="cal-fb" id="cal-fb"></div>
       </div>` + foot());
-    if (wash) await cleanser(); else await sleep(700);
+    // No-cleanser trials (the relative-pitch test) still get a real pause after the last note.
+    const preGapMs = wash ? BREATH : 1800;
+    await sleep(preGapMs); if (wash) await cleanser();
     if (abort) return null;
-    setPhase(timbre === "sine" ? "🎧 listen (pure tone)" : "🎧 listen");
-    await playStim(m, timbre, 1.4); await sleep(900); if (abort) return null;
-    setPhase("name it ↓");
+    setPhase(timbre === "sine" ? "🎧 name it ↓ (pure tone)" : "🎧 name it ↓");
+    await playStim(m, timbre, 1.4); if (abort) return null;
+    const rp = armReplay(() => playStim(m, timbre, 1.4));
     const { v, rt } = await ask("#cal-grid"); if (abort || v == null) return null;
     const resp = +v, correct = resp === pc;
     record("name", correct);
-    logTrial("name", { ti: info.i, stim: { pc, oct, midi: m, wash, timbre, prevMidi, prevPc, prevInt: prevPc == null ? null : D.circ(prevPc, pc) },
-      resp, correct, rt, errSemis: correct ? 0 : D.circ(pc, resp) });
+    logTrial("name", { ti: info.i, stim: { pc, oct, midi: m, wash, timbre, prevMidi, prevPc, prevInt: prevPc == null ? null : D.circ(prevPc, pc), preGapMs },
+      resp, correct, rt, replays: rp.n, errSemis: correct ? 0 : D.circ(pc, resp) });
     markChoices("#cal-grid", pc, resp);
     fb(correct, correct ? `✅ ${PC[pc]}` : `❌ it was ${PC[pc]}`);
     await sleep(400);
+    exposed(pc);
     await playStim(m, timbre, 1.0); await sleep(700);
     await cueSample(pc);
     await playStim(m, timbre, 1.0); await sleep(700);           // end on the labeled note
@@ -460,15 +495,15 @@ export function setupCalibrate(ctx) {
         <div class="cal-choices" id="cal-ch" hidden><button class="cal-choice" data-v="same">Same</button><button class="cal-choice" data-v="diff">Different</button></div>
         <div class="cal-fb" id="cal-fb"></div>
       </div>` + foot());
+    await sleep(BREATH); if (abort) return null;
     await playTuned(m, 0, vtype, 1.3); await sleep(1300); if (abort) return null;
     setPhase(interference === "tones" ? "🎹 ignore these… hold it" : "🌫️ hold it…");
     countdown($("#cal-count"), dur);
     if (interference === "tones") await distractors(p.distractors, dur * 1000, pc); else await noiseBed(dur * 1000);
     if (abort) return null;
     const ce = $("#cal-count"); if (ce) ce.textContent = "";
-    setPhase("🎧 probe");
-    await playTuned(m, probeCents, vtype, 1.3); await sleep(1100); if (abort) return null;
-    setPhase("same note?");
+    setPhase("🎧 probe — same note?");
+    await playTuned(m, probeCents, vtype, 1.3); if (abort) return null;
     const { v, rt } = await ask("#cal-ch"); if (abort || v == null) return null;
     const correct = (v === "same") === same;
     record("hold", correct);
@@ -496,12 +531,13 @@ export function setupCalibrate(ctx) {
     const playSeq = async () => {
       for (let j = 0; j < 3 && !abort; j++) {
         root.querySelectorAll(".cal-dot").forEach((d) => d.classList.toggle("on", +d.dataset.d === j));
-        await playMidi(notes[j], 0.9); await sleep(900);
+        await playMidi(notes[j], 0.9);
+        if (j < 2) await sleep(900);                                 // answer as soon as the 3rd note starts
       }
-      root.querySelectorAll(".cal-dot").forEach((d) => d.classList.remove("on"));
+      setTimeout(() => root.querySelectorAll(".cal-dot").forEach((d) => d.classList.remove("on")), 800);
     };
     $("#cal-replay").onclick = () => { replays++; playSeq(); };
-    await playSeq(); if (abort) return null;
+    await sleep(BREATH); await playSeq(); if (abort) return null;
     const { v, rt } = await ask("#cal-ch"); if (abort || v == null) return null;
     const resp = +v, correct = resp === oddSlot;
     record("twins", correct);
@@ -535,10 +571,9 @@ export function setupCalibrate(ctx) {
         <div class="cal-fb" id="cal-fb"></div>
       </div>` + foot());
     $("#cal-replay").onclick = () => { replays++; playChord(chord); };
-    await cleanser(); if (abort) return null;
-    setPhase("🎧 listen");
-    await playChord(chord); await sleep(1700); if (abort) return null;
-    setPhase("");
+    await sleep(BREATH); await cleanser(); if (abort) return null;
+    setPhase("🎧 where is it? ↓");
+    await playChord(chord); if (abort) return null;
     const { v, rt } = await ask("#cal-ch"); if (abort || v == null) return null;
     const resp = +v, correct = resp === posIdx;
     record("triad", correct);
@@ -547,6 +582,7 @@ export function setupCalibrate(ctx) {
     fb(correct, `${correct ? "✅" : "❌"} ${PC[targetPc]} was the <b>${POS[posIdx]}</b> note`);
     await sleep(400);
     await arpeggiate(chord); if (abort) return null;
+    exposed(targetPc);
     await playMidi(chord[posIdx], 0.9); await sleep(650);
     await cueSample(targetPc);
     lastLabeled = chord[posIdx];
@@ -564,16 +600,17 @@ export function setupCalibrate(ctx) {
         <div class="cal-hint">off by ±${p.cents}¢ when it's off</div>
         <div class="cal-phase" id="cal-phase">🌀 clearing…</div>
         <div class="cal-choices" id="cal-ch" hidden><button class="cal-choice" data-v="in">🎯 In tune</button><button class="cal-choice" data-v="off">〰️ Off</button></div>
+        ${replayBtn}
         <div class="cal-fb" id="cal-fb"></div>
       </div>` + foot());
-    await cleanser(true); if (abort) return null;
-    setPhase("🎧 listen");
-    await playTuned(m, cents, vtype, 1.6); await sleep(1000); if (abort) return null;
-    setPhase("");
+    await sleep(BREATH); await cleanser(true); if (abort) return null;
+    setPhase("🎧 in tune or off? ↓");
+    await playTuned(m, cents, vtype, 1.6); if (abort) return null;
+    const rp = armReplay(() => playTuned(m, cents, vtype, 1.6));
     const { v, rt } = await ask("#cal-ch"); if (abort || v == null) return null;
     const correct = (v === "in") === inTune;
     record("tune", correct);
-    logTrial("tune", { ti: info.i, stim: { pc, oct, inTune, cents, voice: vtype }, resp: v, correct, rt });
+    logTrial("tune", { ti: info.i, stim: { pc, oct, inTune, cents, voice: vtype }, resp: v, correct, rt, replays: rp.n });
     markChoices("#cal-ch", inTune ? "in" : "off", v);
     fb(correct, `${correct ? "✅" : "❌"} ${inTune ? `Right on ${PC[pc]}` : `${cents > 0 ? "+" : ""}${cents}¢ off ${PC[pc]}`} — here's the real one:`);
     await sleep(400);
@@ -597,14 +634,11 @@ export function setupCalibrate(ctx) {
         <div class="cal-fb" id="cal-fb"></div>
       </div>` + foot());
     $("#cal-replay").onclick = () => { replays++; playMidi(m, 1.2); };
-    await cleanser(); if (abort) return null;
-    setPhase("🎧 mystery note");
-    await playMidi(m, 1.4); await sleep(900); if (abort) return null;
-    setPhase(`🧭 imagine ${PC[anchor]}`);
-    const say = $("#tri-say"); if (say) say.innerHTML = `Now hear <b>${PC[anchor]}</b> in your head (don't hum).<br>From ${PC[anchor]}, find the mystery note.`;
+    await sleep(BREATH); await cleanser(); if (abort) return null;
+    setPhase(`🧭 imagine ${PC[anchor]} → name it ↓`);
+    const say = $("#tri-say"); if (say) say.innerHTML = `Mystery note… now hear <b>${PC[anchor]}</b> in your head (don't hum).<br>From ${PC[anchor]}, find the mystery note.`;
+    await playMidi(m, 1.4); if (abort) return null;
     const rb = $("#cal-replay"); if (rb) rb.hidden = false;
-    await sleep(p.secs * 1000); if (abort) return null;
-    setPhase("name it ↓");
     const { v, rt } = await ask("#cal-grid"); if (abort || v == null) return null;
     const resp = +v, correct = resp === target;
     record("tri", correct);
@@ -614,6 +648,7 @@ export function setupCalibrate(ctx) {
     fb(correct, `${correct ? "✅" : "❌"} ${PC[target]} — ${rel}. Hear both with their tags: ${PC[anchor]} → ${PC[target]}`);
     await sleep(400);
     // The real anchor, then the mystery note — each followed by its PP-MIDI tag, in order.
+    exposed(anchor); exposed(target);
     setPhase(`⚓ anchor: ${PC[anchor]}`);
     await playMidi(m - dist, 0.9); await sleep(750); if (abort) return null;
     await cueSample(anchor); if (abort) return null;
@@ -634,17 +669,18 @@ export function setupCalibrate(ctx) {
         <div class="cal-say">Is this <b>${PC[lo]}</b> or <b>${PC[hi]}</b>?</div>
         <div class="cal-phase" id="cal-phase">🌀 clearing…</div>
         <div class="cal-choices" id="cal-ch" hidden>${pair.map((x) => `<button class="cal-choice big-note" data-v="${x}">${PC[x]}</button>`).join("")}</div>
+        ${replayBtn}
         <div class="cal-fb" id="cal-fb"></div>
       </div>` + foot());
-    await cleanser(); if (abort) return null;
-    setPhase(vtype ? "🎧 listen (synth)" : "🎧 listen");
-    if (vtype) await playTuned(m, 0, vtype, p.dur); else await playMidi(m, p.dur);
-    await sleep(Math.max(500, p.dur * 700)); if (abort) return null;
-    setPhase("");
+    await sleep(BREATH); await cleanser(); if (abort) return null;
+    const hear = () => (vtype ? playTuned(m, 0, vtype, p.dur) : playMidi(m, p.dur));
+    setPhase(vtype ? "🎧 which one? (synth)" : "🎧 which one?");
+    await hear(); if (abort) return null;
+    const rp = armReplay(hear);
     const { v, rt } = await ask("#cal-ch"); if (abort || v == null) return null;
     const resp = +v, correct = resp === pc;
     record("pair", correct);
-    logTrial("pair", { ti: info.i, stim: { pc, pair, step: p.step, oct, timbre: vtype || "piano", dur: p.dur }, resp, correct, rt });
+    logTrial("pair", { ti: info.i, stim: { pc, pair, step: p.step, oct, timbre: vtype || "piano", dur: p.dur }, resp, correct, rt, replays: rp.n });
     markChoices("#cal-ch", pc, resp);
     fb(correct, `${correct ? "✅" : "❌"} it was ${PC[pc]}`);
     await sleep(300);
@@ -699,12 +735,26 @@ export function setupCalibrate(ctx) {
   }
   async function calBlock(skill) {
     if (skill === "cue") await calCueLearn();
+    run.curSkill = skill;
     const n = run.plan.counts[skill];
     for (let i = 0; i < n && !abort; i++) {
       clearTimers();
       const r = await TRIAL[skill]({ i, n });
       if (abort || r === null) return;
+      run.slot = (run.slot || 0) + 1;
+      if (run.popSlots && run.popSlots.has(run.slot)) { clearTimers(); const pr = await trAnchor({ popup: true }); if (abort || pr === null) return; }
     }
+  }
+  // Anchor checks no longer come as a block (you'd still hear the last one):
+  // they pop up at random points between other questions, never back to back.
+  function makePopSlots(plan) {
+    const S = ["cue", "imagine", "name", "hold", "twins", "triad"].reduce((a, k) => a + (plan.counts[k] || 0), 0);
+    const K = plan.counts.anchor || 5, picks = new Set();
+    for (const c of shuffle([...Array(Math.max(0, S - 2)).keys()].map((x) => x + 2))) {
+      if (picks.size >= K) break;
+      if (![...picks].some((q) => Math.abs(q - c) < 2)) picks.add(c);
+    }
+    return picks;
   }
   async function calLockin() {
     const pcs = D.weightedPick(run.plan.pcWeights.map((w) => w * w), run.plan.counts.lockin);
@@ -720,7 +770,6 @@ export function setupCalibrate(ctx) {
     { title: "Attune", fn: calAttune },
     { title: "Song anchors", fn: () => calBlock("cue") },
     { title: "Imagine it", fn: () => calBlock("imagine") },
-    { title: "Anchor lock", fn: () => calBlock("anchor") },
     { title: "Blindfold naming", fn: () => calBlock("name") },
     { title: "Hold it", fn: () => calBlock("hold") },
     { title: "Octave twins", fn: () => calBlock("twins") },
@@ -771,7 +820,7 @@ export function setupCalibrate(ctx) {
     await D.putSession(session);
     D.requestPersist();
     abort = false; lastLabeled = null;
-    run = { mode: "calibration", anchor: dayAnchor, session, plan, step: 0, stepTitle: "", sched: {}, tally: {}, seq: 0, intent: null };
+    run = { mode: "calibration", anchor: dayAnchor, popSlots: makePopSlots(plan), slot: 0, session, plan, step: 0, stepTitle: "", sched: {}, tally: {}, seq: 0, intent: null };
     for (let s = 0; s < CAL.length && !abort; s++) {
       run.step = s + 1; run.stepTitle = CAL[s].title;
       await CAL[s].fn();
@@ -906,6 +955,13 @@ export function setupCalibrate(ctx) {
         adapt(r.correct);
       }
       if (run.n % 15 === 0) toast(run.g && run.k / run.g > 0.85 ? "Crushing it — try ⏫ or ⇄ something new" : `${run.n} in — ⇄ switch anytime`);
+      run.sincePop = (run.sincePop || 0) + 1;
+      const popRate = typeof window !== "undefined" && window.__calPopRate != null ? window.__calPopRate : 0.22;   // test hook
+      if (run.sincePop >= 3 && Math.random() < popRate) {         // ⚓ anchor pop-up between drill questions
+        run.sincePop = 0; clearTimers();
+        const pr = await trAnchor({ popup: true });
+        if (abort || pr === null) break;
+      }
     }
     const intent = run.intent || "end";
     const s = await endDrill(intent);
@@ -954,7 +1010,7 @@ export function setupCalibrate(ctx) {
     root.innerHTML = `<div class="cal-picker">
         <div class="dr-top"><button class="cal-x" id="pk-hub">‹</button><div class="dr-title">Switch to…</div><div style="width:2rem"></div></div>
         <div class="cal-coach-mini">Coach suggests <b>${top.title}</b> — ${top.reason}</div>
-        <div class="hub-cards">${D.SKILLS.filter((sk) => sk !== from).map((sk) => drillCard(sk, sk === top.skill ? "suggested" : "")).join("")}</div>
+        <div class="hub-cards">${D.DRILLS.filter((sk) => sk !== from).map((sk) => drillCard(sk, sk === top.skill ? "suggested" : "")).join("")}</div>
       </div>`;
     $("#pk-hub").onclick = () => enter();
     root.querySelectorAll("[data-drill]").forEach((b) => (b.onclick = () => startDrill(b.dataset.drill)));
@@ -1010,8 +1066,8 @@ export function setupCalibrate(ctx) {
                <div class="cc-alt">or: ${coach.ranked.slice(1, 3).map((x) => `<a data-drill="${x.skill}">${x.title}</a>`).join(" · ")}</div>`}
         </div>
 
-        <div class="cal-sec">Drills <span>endless · adaptive · end or switch anytime</span></div>
-        <div class="hub-cards">${D.SKILLS.map((sk) => drillCard(sk, !coach.calibrateFirst && sk === top.skill ? "suggested" : "", `L${drillLevel(sk, plan, data.sessions)}${recentAcc(sk) != null ? ` · ${pct(recentAcc(sk))}` : ""}`)).join("")}</div>
+        <div class="cal-sec">Drills <span>endless · adaptive · ⚓ anchor checks pop up anytime</span></div>
+        <div class="hub-cards">${D.DRILLS.map((sk) => drillCard(sk, !coach.calibrateFirst && sk === top.skill ? "suggested" : "", `L${drillLevel(sk, plan, data.sessions)}${recentAcc(sk) != null ? ` · ${pct(recentAcc(sk))}` : ""}`)).join("")}</div>
 
         <div class="cal-sec">You</div>
         <button class="cal-cta ghost-cta" id="hub-model">📊 Your ear model & data</button>
@@ -1127,7 +1183,7 @@ export function setupCalibrate(ctx) {
         ${card("Register cues", reg.spread != null ? pts(reg.spread) : "—", reg.spread == null ? "Needs ≥5 trials in two octaves." : reg.spread > 0.25 ? "Accuracy swings a lot by octave → you may be using <b>register</b> as a cue." : "Similar across octaves → you're hearing <b>chroma</b>, not height. ✓", reg.byOct.map((r) => `oct ${r.oct}: ${pct(r.acc)}`).join(" · "))}
         ${card("Chroma vs height", pct(ch.acc), ch.n >= 6 ? "Octave twins: spotting the odd note name across octaves." : needs(ch.n, 6, "octave-twins trials"), ch.byOffset.filter((x) => x.n).map((x) => `${x.semis}st: ${pct(x.acc)}`).join(" · "))}
         ${card("Inner pitch", im.nSung ? `${im.meanBiasCents > 0 ? "+" : ""}${Math.round(im.meanBiasCents)}¢` : "—", im.nSung >= 5 ? `Your sung template runs ${Math.abs(im.meanBiasCents) < 15 ? "dead center" : im.meanBiasCents > 0 ? "<b>sharp</b>" : "<b>flat</b>"}; ${pct(im.within50)} within a quarter-tone (avg miss ${Math.round(im.meanAbsCents)}¢).` : `Turn on 🎤 singing to measure your internal template.${im.nSelf ? ` Self-rated "nailed it": ${pct(im.selfNailedRate)}.` : ""}`, im.nSung ? `n=${im.nSung} sung` : "")}
-        ${card("Anchor precision", pct(al.hitRate), al.nHits >= 5 ? `Hit rate on the real anchor note.${fa100 != null ? ` Fooled by a semitone neighbor ${pct(fa100)} of the time.` : ""}${al.byAnchor.length > 1 ? ` By note: ${al.byAnchor.map((x) => `${x.name} ${pct(x.acc)}`).join(", ")}.` : ""}` : needs(al.nHits, 5, "anchor trials"), al.falseAlarmsByCents.filter((x) => x.n).map((x) => `±${x.cents}¢: ${pct(x.faRate)} fooled`).join(" · "))}
+        ${card("Anchor precision", pct(al.hitRate), al.nHits >= 5 ? `Hit rate on the real anchor note.${fa100 != null ? ` Fooled by a semitone neighbor ${pct(fa100)} of the time.` : ""}${al.byAnchor.length > 1 ? ` By note: ${al.byAnchor.map((x) => `${x.name} ${pct(x.acc)}`).join(", ")}.` : ""}` : needs(al.nHits, 5, "anchor trials"), [al.byDelay.filter((x) => x.n).map((x) => `${x.label}: ${pct(x.acc)}`).join(" · "), al.falseAlarmsByCents.filter((x) => x.n).map((x) => `±${x.cents}¢: ${pct(x.faRate)} fooled`).join(" · ")].filter(Boolean).join(" — "))}
         ${card("Mental anchors", ma.best.length ? ma.best[0].name : "—", ma.best.length >= 2 ? `Triangulating from an imagined note works best from <b>${ma.best.map((x) => x.name).join(", ")}</b> and worst from <b>${ma.worst.map((x) => x.name).join(", ")}</b>.` : needs(ma.byAnchor.filter((x) => x.n >= 3).length, 2, "anchors with 3+ Triangulate trials"), ma.byDist.map((x) => `${x.dist}st: ${pct(x.acc)}`).join(" · "))}
         ${card("Neighbors", pct(nb.acc), nb.n >= 8 ? `Telling next-door notes apart with no reference.${nb.pairs.filter((x) => x.n >= 3).length ? ` Muddiest: ${nb.pairs.filter((x) => x.n >= 3).slice(0, 3).map((x) => `${x.pair} ${pct(x.acc)}`).join(", ")}.` : ""}` : needs(nb.n, 8, "Neighbors trials"), `semitone ${pct(nb.semitone.acc)} · whole step ${pct(nb.wholeStep.acc)}`)}
         <div class="cal-sec">Confusions</div>
@@ -1138,7 +1194,7 @@ export function setupCalibrate(ctx) {
         <div class="cal-ins-m" style="margin-bottom:0.4rem">Next calibration${next.focus ? ` · extra reps on <b>${TITLE[next.focus]}</b>` : ""}:</div>
         <div class="cal-chips">${chips(next.levels)}</div>
         <div class="cal-ins-m" style="margin:0.7rem 0 0.4rem">Drill levels (move inside drills + your ⏫/⏬):</div>
-        <div class="cal-chips">${chips(Object.fromEntries(D.SKILLS.map((sk) => [sk, drillLevel(sk, next, data.sessions)])))}</div>
+        <div class="cal-chips">${chips(Object.fromEntries(D.DRILLS.map((sk) => [sk, drillLevel(sk, next, data.sessions)])))}</div>
         <div class="cal-ins-m">Calibration levels move at most one step per day (≥80% up, ≤50% down); weak notes are oversampled.</div>
         <div class="cal-sec">Your data</div>
         <div class="cal-exp">

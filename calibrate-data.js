@@ -14,10 +14,12 @@
 // listeners (tools/test-cal-analysis.mjs). See CALIBRATION.md for the protocol.
 
 export const SCHEMA_VERSION = 2;   // record shape (v2 adds mode, protocol, localDate, sessionOfDay)
-export const PROTOCOL = 2;         // calibration protocol: v1 = first week, v2 = harder hold/anchor + song anchors
+export const PROTOCOL = 3;         // v1 first week · v2 harder hold/anchor + song anchors · v3 anchor pop-ups, breathers, replay-once, RT from onset
 export const SKILLS = ["cue", "name", "imagine", "anchor", "hold", "twins", "triad", "tune", "tri", "pair"];
 export const SKILL_TITLE = { cue: "Song anchors", name: "Blindfold naming", imagine: "Imagine & sing", anchor: "Anchor lock", hold: "Hold it", twins: "Octave twins", triad: "Find the note", tune: "In tune?", tri: "Triangulate", pair: "Neighbors" };
 export const STATIONS_GRADED = SKILLS;
+// Drills you can launch (anchor checks are pop-ups now, not a drill of their own).
+export const DRILLS = SKILLS.filter((s) => s !== "anchor");
 export const localDate = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 export const kindOf = (s) => s.kind || "calibration";      // v1 sessions were all calibrations
 const modeOf = (t) => t.mode || "calibration";
@@ -381,7 +383,10 @@ export function analyze({ sessions = [], trials = [] } = {}) {
     const ds = [...new Set(lures.map((t) => centsDist(anchorOffCents(t))))].sort((x, y) => x - y);
     const anc = (t) => (Number.isFinite(t.stim.anchorPc) ? t.stim.anchorPc : 0);
     const byAnchor = PC.map((nm, pc) => ({ name: nm, ...prop(a.filter((t) => t.stim.isAnchor && anc(t) === pc)) })).filter((x) => x.n);
-    out.indices.anchorLock = { hitRate: hits.acc, nHits: hits.n, byAnchor,
+    // How long does today's note survive? Pop-ups log time since you last heard it.
+    const bucket = (ms) => (ms == null ? null : ms < 60000 ? "<1 min" : ms < 300000 ? "1–5 min" : ">5 min");
+    const byDelay = ["<1 min", "1–5 min", ">5 min"].map((label) => ({ label, ...prop(a.filter((t) => bucket(t.stim.sinceAnchorMs) === label)) }));
+    out.indices.anchorLock = { hitRate: hits.acc, nHits: hits.n, byAnchor, byDelay, popup: prop(a.filter((t) => t.stim.popup)), block: prop(a.filter((t) => !t.stim.popup)),
       falseAlarmsByCents: ds.map((d) => { const g = lures.filter((t) => centsDist(anchorOffCents(t)) === d); return { cents: d, n: g.length, faRate: g.length ? g.filter((t) => t.resp === "yes").length / g.length : null }; }) };
   }
 
@@ -466,7 +471,7 @@ const lvlIdx = (L) => Math.max(1, Math.min(LEVEL_MAX, Math.round(L) || 1)) - 1;
 export function paramsFor(skill, L) {
   const l = lvlIdx(L);
   switch (skill) {
-    case "cue": return { choices: [4, 6, 12, 12, 12][l], mixBare: l >= 1, cleanse: l >= 2 };
+    case "cue": return { choices: [4, 6, 12, 12, 12][l], mixBare: l >= 1, cleanse: true };
     case "imagine": return { secs: [8, 7, 6, 5, 4][l] };
     case "anchor": return { lures: [[-300, -200, -100, 100, 200, 300, 500, 700], [-200, -100, 100, 200], [-200, -100, -100, 100, 100, 200], [-100, -50, 50, 100], [-50, -30, 30, 50]][l], octaves: l >= 2 ? [3, 4, 5] : [4] };
     case "name": return { octaves: [[4], [3, 4], [3, 4, 5], [2, 3, 4, 5], [2, 3, 4, 5, 6]][l], noWashFrac: 0.3, sineFrac: 0.2 };
@@ -545,7 +550,7 @@ export function suggestDrills(data = {}, now = Date.now()) {
   const a = analyze(data), I = a.indices;
   const weak = a.pcMap.filter((p) => p.n >= 3 && p.acc < 0.75).sort((x, y) => x.acc - y.acc).slice(0, 3).map((p) => p.name);
   const drillSess = sessions.filter((s) => kindOf(s) === "drill");
-  const ranked = SKILLS.map((sk) => {
+  const ranked = DRILLS.map((sk) => {
     const g = prop(recent.filter((t) => t.station === sk));
     let score = g.n >= 4 ? 1 - g.acc : 0.45;
     let reason = g.n >= 4 ? `${Math.round(g.acc * 100)}% over the last 3 days` : "not much data on this yet";
