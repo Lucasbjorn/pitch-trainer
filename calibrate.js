@@ -949,7 +949,7 @@ export function setupCalibrate(ctx) {
       return;
     }
     const who = st.name || st.email || "you";
-    if (!st.tableOk) { el.innerHTML = `☁️ Signed in as <b>${who}</b> — <b>one-time setup needed:</b> run <code>db/calibration.sql</code> in Supabase → SQL Editor. Until then everything stays on this device.`; return; }
+    if (!st.tableOk) { el.innerHTML = `☁️ Signed in as <b>${who}</b> — sync isn't available yet: ${st.reason || "unknown error"}. Everything stays safe on this device meanwhile.`; return; }
     if (busy) { el.innerHTML = `☁️ Syncing as <b>${who}</b>…`; return; }
     el.innerHTML = lastSync && !lastSync.ok
       ? `☁️ Sync hiccup — ${lastSync.reason || "try again"}. Your data is safe on this device. <a id="sync-now">Retry</a>`
@@ -1042,7 +1042,7 @@ export function setupCalibrate(ctx) {
     $("#cal-back").onclick = () => enter();
     $("#cal-json").onclick = async () => { msg("preparing…"); const b = await D.exportBundle(); await saveFile(`calibration-${D.localDate(Date.now())}.json`, JSON.stringify(b, null, 1), "application/json"); msg(`Exported ${b.trials.length} trials from ${b.sessions.length} sessions${b.pulledFromCloud ? ` (pulled ${b.pulledFromCloud} new from the cloud first)` : ""}.`); };
     $("#cal-csv").onclick = async () => { const b = await D.exportBundle(); await saveFile(`calibration-trials-${D.localDate(Date.now())}.csv`, D.trialsToCSV(b.trials), "text/csv"); msg(`Exported ${b.trials.length} trials as CSV.`); };
-    $("#cal-syncnow").onclick = async () => { msg("syncing…"); const r = noteSync(await D.syncAll()); msg(r.ok ? `☁️ Synced — ↓${r.pulled} pulled, ↑${r.pushed} pushed.` : `Sync unavailable — ${r.reason}. (Sign in on the hub + run db/calibration.sql once.)`); };
+    $("#cal-syncnow").onclick = async () => { msg("syncing…"); const r = noteSync(await D.syncAll()); msg(r.ok ? `☁️ Synced — ↓${r.pulled} pulled, ↑${r.pushed} pushed.` : `Sync unavailable — ${r.reason}. (Sign in on the hub first.)`); };
   }
   function msg(t) { const el = $("#cal-exp-msg"); if (el) el.textContent = t; }
   async function saveFile(name, text, type) {

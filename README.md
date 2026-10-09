@@ -40,7 +40,7 @@ The home screen has a `🔒 Lucas's Lab` button. Behind the password are the **o
 
 A private AP Training Hub: a ~7-minute daily calibration (PP-MIDI song tags woven through every station), 8 endless adaptive drills you can end or switch anytime, and a rule-based coach that picks the next drill from your data. Every trial is logged on-device; randomized contrasts estimate *how* notes are being named (relative-pitch leak, hidden anchor, sound-vs-name holding, timbre lock…). Friends never see it — **triple-tap the "Pitches" title → `1234`**, or `…/?calibrate=1`. Full protocol, data fields and analysis handoff: **[CALIBRATION.md](CALIBRATION.md)**.
 
-**Key files:** [calibrate.js](calibrate.js) (the routine + "ear model" screen) · [calibrate-data.js](calibrate-data.js) (storage, `analyze()`, adaptive `makePlan()`) · [db/calibration.sql](db/calibration.sql) (optional private cloud backup). Exports go in `calibration-data/` (gitignored).
+**Key files:** [calibrate.js](calibrate.js) (the routine + "ear model" screen) · [calibrate-data.js](calibrate-data.js) (storage, `analyze()`, adaptive `makePlan()`) · sync rides on private self-records in the existing `messages` table (no setup). Exports go in `calibration-data/` (gitignored).
 
 ---
 

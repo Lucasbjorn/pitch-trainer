@@ -65,43 +65,62 @@ export async function leaderboard(gameId, date) {
 }
 export async function myId() { const s = await getSession(); return s ? s.user.id : null; }
 
-// ---- Daily Calibration backup (Lucas-only; RLS = own rows; table in db/calibration.sql) ----
-// rows: [{ kind: "trial" | "session", obj, t }]. Returns false if signed out or the table is missing.
+// ---- Lucas's Training Hub sync (phone ↔ laptop) -------------------------------
+// No extra table or SQL needed: rows are packed into PRIVATE self-addressed
+// records in public.messages (sender = recipient = you). That table's RLS only
+// lets a row's sender or recipient read it, so nobody else can ever see them.
+// They're tagged CALSYNC1 and filtered out of every DM view. created_at is set
+// by the server, which makes "what's new since my last pull" reliable.
+const CAL_PREFIX = "CALSYNC1 ";
+const CAL_CHUNK = 40;          // trial/session rows per record (~30 KB)
+const isCalRecord = (m) => typeof (m && m.body) === "string" && m.body.startsWith(CAL_PREFIX);
+
+// rows: [{ kind: "trial" | "session", obj, t }] → true when stored.
 export async function calUpload(rows) {
   const c = await client(); if (!c) return false;
   const s = await getSession(); if (!s) return false;
-  const payload = rows.map((r) => ({
-    id: r.obj.id, user_id: s.user.id, kind: r.kind,
-    session_id: r.kind === "trial" ? r.obj.sessionId : r.obj.id,
-    at: new Date(r.t || Date.now()).toISOString(), data: r.obj,
-  }));
-  const { error } = await c.from("cal_rows").upsert(payload, { onConflict: "id" });
-  return !error;
+  const me = s.user.id;
+  for (let i = 0; i < rows.length; i += CAL_CHUNK) {
+    const body = CAL_PREFIX + JSON.stringify(rows.slice(i, i + CAL_CHUNK).map((r) => ({ kind: r.kind, data: r.obj })));
+    const { error } = await c.from("messages").insert({ sender: me, recipient: me, body });
+    if (error) return false;
+  }
+  return true;
 }
-// Incremental pull: rows the server touched after `since` (server time), paged.
+// Everything stored after `since` (server time), unpacked → { rows, maxAt }.
 export async function calDownload(since) {
   const c = await client(); if (!c) return null;
   const s = await getSession(); if (!s) return null;
-  const rows = []; let maxAt = since || null;
-  for (let from = 0; ; from += 1000) {
-    let q = c.from("cal_rows").select("kind,data,updated_at");
-    if (since) q = q.gt("updated_at", since);
-    const { data, error } = await q.order("updated_at").order("id").range(from, from + 999);
+  const me = s.user.id, rows = [];
+  let maxAt = since || null;
+  for (let from = 0; ; from += 500) {
+    let q = c.from("messages").select("id,body,created_at").eq("sender", me).eq("recipient", me).like("body", `${CAL_PREFIX}%`);
+    if (since) q = q.gt("created_at", since);
+    const { data, error } = await q.order("created_at").order("id").range(from, from + 499);
     if (error) return null;
-    data.forEach((r) => { rows.push(r); if (!maxAt || r.updated_at > maxAt) maxAt = r.updated_at; });
-    if (data.length < 1000) break;
+    data.forEach((m) => {
+      let packed = []; try { packed = JSON.parse(m.body.slice(CAL_PREFIX.length)); } catch (_) {}
+      packed.forEach((r) => rows.push({ kind: r.kind, data: r.data, updated_at: m.created_at }));
+      if (!maxAt || m.created_at > maxAt) maxAt = m.created_at;
+    });
+    if (data.length < 500) break;
   }
   return { rows, maxAt };
 }
-// Is sync possible right now? (configured → signed in → table exists)
+// Can this device sync right now? (signed in → has a profile row → messages reachable)
 export async function calCloudStatus() {
   const c = await client(); if (!c) return { configured: false };
   const s = await getSession();
   if (!s) return { configured: true, signedIn: false };
   const u = s.user || {}, m = u.user_metadata || {};
-  const { error } = await c.from("cal_rows").select("id").limit(1);
-  return { configured: true, signedIn: true, email: u.email || null, name: m.full_name || m.name || null, tableOk: !error, error: error ? error.message : null };
+  const base = { configured: true, signedIn: true, email: u.email || null, name: m.full_name || m.name || null };
+  const { data: prof, error: pe } = await c.from("profiles").select("id,username").eq("id", u.id).maybeSingle();
+  if (pe) return { ...base, tableOk: false, reason: pe.message };
+  if (!prof) return { ...base, tableOk: false, reason: "finish your Pitches profile (name + photo) in the main app first" };
+  const { error } = await c.from("messages").select("id").eq("sender", u.id).limit(1);
+  return { ...base, name: prof.username || base.name, tableOk: !error, reason: error ? error.message : null };
 }
+export function __setClientForTest(c) { sb = c; }   // node tests only
 
 // Every score row ever (for the cumulative Overall board + per-user streaks).
 export async function allScores() {
@@ -147,7 +166,7 @@ export async function listThreads() {
   const c = await client(); if (!c) return []; const s = await getSession(); if (!s) return [];
   const { data } = await c.from("messages").select("sender,recipient,body,created_at,sp:profiles!messages_sender_fkey(username,avatar_url),rp:profiles!messages_recipient_fkey(username,avatar_url)").or(`sender.eq.${s.user.id},recipient.eq.${s.user.id}`).order("created_at", { ascending: false });
   const seen = new Map();
-  (data || []).forEach((m) => {
+  (data || []).filter((m) => !isCalRecord(m)).forEach((m) => {
     const mine = m.sender === s.user.id;
     const otherId = mine ? m.recipient : m.sender;
     const otherProfile = mine ? m.rp : m.sp;
@@ -160,7 +179,7 @@ export async function fetchThread(otherId) {
   const { data } = await c.from("messages").select("sender,recipient,body,created_at")
     .or(`and(sender.eq.${s.user.id},recipient.eq.${otherId}),and(sender.eq.${otherId},recipient.eq.${s.user.id})`)
     .order("created_at");
-  return data || [];
+  return (data || []).filter((m) => !isCalRecord(m));
 }
 export async function sendMessage(recipient, body) {
   const c = await client(); if (!c) return; const s = await getSession(); if (!s) return;

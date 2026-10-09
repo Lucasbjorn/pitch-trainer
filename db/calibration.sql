@@ -1,3 +1,9 @@
+-- NOT NEEDED — kept only as an optional future upgrade.
+-- Training Hub sync works with zero setup: rows are stored as private
+-- self-addressed records in public.messages (see social.js calUpload). Only run
+-- this if we ever migrate to a dedicated table (that would need a migration of
+-- the existing records too — ask Claude first).
+--
 -- Lucas's AP Training Hub — account-based sync (phone ↔ laptop).
 -- Run once in Supabase → SQL Editor → New query → paste → Run. Safe to re-run.
 --

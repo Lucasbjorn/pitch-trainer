@@ -99,19 +99,21 @@ Everything is written the instant a trial completes, to IndexedDB `pitches-calib
 **Export:** Hub → 📊 Your ear model & data → **Export JSON** (full bundle + analysis) or **CSV** (one row per trial; nested fields flattened to `stim_*` / `sing_*`). On iPhone it opens the share sheet → AirDrop to the Mac.
 
 ## Account sync (phone ↔ laptop)
-One-time setup:
-1. Supabase → SQL Editor → paste [db/calibration.sql](db/calibration.sql) → Run. It's safe to re-run.
-2. On each device, open the hub → ☁️ **Sign in with Google**. You'll come straight back to the hub.
+**Setup:** none beyond signing in. On each device, open the hub → ☁️ **Sign in with Google**. You'll come straight back to the hub. Your Pitches profile (name + photo) must exist, which it already does if you've used the main app.
+
+**Where the data lives:** no extra table and no SQL. Sync rows are packed (40 per record) into **private self-addressed records** in the app's existing `messages` table, with sender = recipient = you. That table's row-level security only lets a row's sender or recipient read it, so only your login can see them. They're tagged `CALSYNC1` and filtered out of every DM view. The server sets `created_at`, which makes incremental pulls reliable.
 
 How it works:
 - **Local first.** Everything is written to the device's IndexedDB instantly, so training works with no signal and syncs when you're back online.
 - **When it syncs:** opening the hub pulls then pushes; every finished calibration or drill syncs again; during a run, trials trickle up every ~45 s.
-- **Push:** this device's own records, changed since its last push.
-- **Pull:** every row the **server** touched since this device's last pull. The `updated_at` timestamp is set by a trigger, so a run uploaded late from the gym is still picked up.
-- **No sync loops.** Pulled records are stored with an internal `_pulled` flag and are never pushed back. A device never overwrites its *own* sessions with cloud copies.
+- **Push:** this device's own records, changed since its last push. The store is append-only, so an updated session is simply re-sent and the newest version wins.
+- **Pull:** every record the server stored since this device's last pull.
+- **No sync loops.** Pulled records carry an internal `_pulled` flag and are never pushed back. A device never overwrites its *own* sessions with cloud copies.
 - **Follows you across devices:** drill levels (from the latest drill session of each skill, on any device), the streak (calibration days from any device), the coach and the ear model.
 - **Device tags.** Every session carries `device {id, kind: phone|desktop}`, so the analysis can compare phone vs laptop.
-- **Privacy.** It's a private `cal_rows` table: row-level security means only your login can read or write your rows, and it never touches the friends' game tables.
+- **Tested:**
+  - `tools/test-cal-dmstore.mjs`: the adapter against a mock Supabase that enforces the real RLS. Checks chunking, incremental and paged pulls, that DMs and other users' rows never leak in, and that the DM views stay clean.
+  - `tools/shot-sync.mjs`: two simulated devices sharing a fake server. Each device's runs appear on the other, levels follow, idle re-syncs upload nothing, and pulled rows are never re-uploaded.
 - Export pulls first, so it includes every device.
 - **Tested** with two simulated devices sharing a fake server (`tools/shot-sync.mjs`):
   - each device's runs appear on the other, and levels follow;
