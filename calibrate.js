@@ -611,11 +611,15 @@ export function setupCalibrate(ctx) {
     logTrial("tri", { ti: info.i, stim: { anchor, target, dist, oct, midi: m }, resp, correct, rt, replays, errSemis: correct ? 0 : D.circ(target, resp) });
     markChoices("#cal-grid", target, resp);
     const rel = `${Math.abs(dist)} semitone${Math.abs(dist) > 1 ? "s" : ""} ${dist > 0 ? "above" : "below"} ${PC[anchor]}`;
-    fb(correct, `${correct ? "✅" : "❌"} ${PC[target]} — ${rel}. Hear it: ${PC[anchor]} → ${PC[target]}`);
+    fb(correct, `${correct ? "✅" : "❌"} ${PC[target]} — ${rel}. Hear both with their tags: ${PC[anchor]} → ${PC[target]}`);
     await sleep(400);
-    await playMidi(m - dist, 0.9); await sleep(800); if (abort) return null;      // the real anchor, then the target
-    await playMidi(m, 1.0); await sleep(800); if (abort) return null;
-    await cueSample(target);
+    // The real anchor, then the mystery note — each followed by its PP-MIDI tag, in order.
+    setPhase(`⚓ anchor: ${PC[anchor]}`);
+    await playMidi(m - dist, 0.9); await sleep(750); if (abort) return null;
+    await cueSample(anchor); if (abort) return null;
+    setPhase(`🎯 mystery: ${PC[target]}`);
+    await playMidi(m, 1.0); await sleep(750); if (abort) return null;
+    await cueSample(target); if (abort) return null;
     lastLabeled = m;
     return abort ? null : { correct };
   }
