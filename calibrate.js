@@ -72,12 +72,21 @@ export function setupCalibrate(ctx) {
   const midiOf = (pc, oct) => (oct + 1) * 12 + pc;               // C4 = 60
   const hzOf = (m, cents = 0) => 440 * Math.pow(2, (m + cents / 100 - 69) / 12);
   async function piano() { await ctx.ensurePiano(); return ctx.getPiano(); }
+  // Sound ledger: every note this session plays, with whether its NAME was showing
+  // (run.answered — feedback, passive stations). Trials log what you'd heard before
+  // each question; sessions keep the full log. src: note | cleanser | tag | distractor.
+  function heard(m, src = "note", cents = 0, atMs = 0) {
+    if (!run) return;
+    (run.sounds || (run.sounds = [])).push({ t: Date.now() + atMs, m: Math.round(m), pc: pcOf(m), src, labeled: !!run.answered, c: Math.round(cents) || 0 });
+  }
   async function playMidi(m, dur = 1.4, at = 0, vel = 0.8) {
     if (abort) return;
+    heard(m, "note", 0, at * 1000);
     const p = await piano(); try { p.triggerAttackRelease(midiName(m), dur, Tone.now() + at, vel); } catch (_) {}
   }
   async function playHz(m, cents, dur = 1.4, vel = 0.8) {           // microtonal piano (Sampler repitches)
     if (abort) return;
+    heard(m, "note", cents);
     const p = await piano(); try { p.triggerAttackRelease(hzOf(m, cents), dur, Tone.now(), vel); } catch (_) {}
   }
   function ensureSine() {
@@ -89,17 +98,18 @@ export function setupCalibrate(ctx) {
   }
   async function playStim(m, timbre, dur = 1.4) {
     if (abort) return;
-    if (timbre === "sine") { try { ensureSine().triggerAttackRelease(hzOf(m), dur, Tone.now()); } catch (_) {} }
+    if (timbre === "sine") { heard(m); try { ensureSine().triggerAttackRelease(hzOf(m), dur, Tone.now()); } catch (_) {} }
     else await playMidi(m, dur);
   }
   async function playChord(midis, dur = 1.8, vel = 0.65) {
     if (abort) return;
+    midis.forEach((m) => heard(m));
     const p = await piano(); midis.forEach((m) => { try { p.triggerAttackRelease(midiName(m), dur, Tone.now(), vel); } catch (_) {} });
   }
   async function arpeggiate(midis, gap = 0.46) {
     if (abort) return;
     const p = await piano();
-    midis.forEach((m, i) => { try { p.triggerAttackRelease(midiName(m), 0.6, Tone.now() + i * gap, 0.8); } catch (_) {} });
+    midis.forEach((m, i) => { heard(m, "note", 0, i * gap * 1000); try { p.triggerAttackRelease(midiName(m), 0.6, Tone.now() + i * gap, 0.8); } catch (_) {} });
     await sleep(midis.length * gap * 1000 + 300);
   }
   // Atonal "palette cleanser": random notes that overwrite pitch working memory.
@@ -109,8 +119,9 @@ export function setupCalibrate(ctx) {
     if (abort) return;
     const p = await piano(); const now = Tone.now(), N = 9;
     for (let i = 0; i < N; i++) {
-      const m = 36 + rand(48);
-      try { p.triggerAttackRelease(detuned ? hzOf(m, Math.random() * 100 - 50) : midiName(m), 0.14, now + i * 0.085, 0.28 + Math.random() * 0.15); } catch (_) {}
+      const m = 36 + rand(48), dc = detuned ? Math.random() * 100 - 50 : 0;
+      heard(m, "cleanser", dc, i * 85);
+      try { p.triggerAttackRelease(detuned ? hzOf(m, dc) : midiName(m), 0.14, now + i * 0.085, 0.28 + Math.random() * 0.15); } catch (_) {}
     }
     await sleep(N * 85 + 650);
   }
@@ -127,6 +138,7 @@ export function setupCalibrate(ctx) {
   }
   async function playTuned(m, cents, type, dur = 1.4) {
     if (abort) return;
+    heard(m, "note", cents);
     try { const v = voice(type); v.volume.value = -8 + (Math.random() * 4 - 2); v.triggerAttackRelease(hzOf(m, cents), dur, Tone.now()); } catch (_) {}
   }
   function stopNoise() { if (noiseNode) { try { noiseNode.n.stop(); noiseNode.n.dispose(); noiseNode.g.dispose(); } catch (_) {} noiseNode = null; } }
@@ -149,6 +161,7 @@ export function setupCalibrate(ctx) {
     const p = await piano(), now = Tone.now();
     for (let i = 0; i < n; i++) {
       let m; do { m = 48 + rand(36); } while (pcOf(m) === avoidPc);
+      heard(m, "distractor", 0, ((i + 0.5) * ms) / n);
       try { p.triggerAttackRelease(midiName(m), 0.35, now + ((i + 0.5) * ms) / n / 1000, 0.45); } catch (_) {}
     }
     await sleep(ms);
@@ -159,6 +172,7 @@ export function setupCalibrate(ctx) {
     try {
       const b = ctx.getBank && ctx.getBank(); if (!b) return;
       const nm = PC[pcOf(pc)], r = b.play(nm, {});
+      heard(midiOf(pcOf(pc), 4), "tag");
       if (!wait) return;                                            // fire and go (answer while it plays)
       const buf = r && b.buffers[nm] && b.buffers[nm][r.variantIdx];
       await sleep(Math.min(3500, ((buf && buf.duration) || 1) * 1000) + 120);
@@ -261,6 +275,7 @@ export function setupCalibrate(ctx) {
   async function ask(sel) {
     const g = $(sel); if (!g) return { v: null, rt: null };
     g.hidden = false;
+    if (run) run.askAt = Date.now();                                 // choices armed ≈ note onset
     const shown = performance.now();
     g.querySelectorAll("[data-v]").forEach((b) => (b.onclick = () => done(b.dataset.v)));
     const v = await wait();
@@ -279,6 +294,7 @@ export function setupCalibrate(ctx) {
   // Anchor exposure clock — pop-ups log how long since you last heard today's note.
   function exposed(pc) { if (run && pcOf(pc) === run.anchor) { run.lastAnchorAt = Date.now(); run.trialsSinceAnchor = 0; } }
   function markChoices(sel, right, chosen) {
+    if (run) run.answered = true;                                   // from here on, sounds come with their name
     const r1 = $("#cal-r1"); if (r1) r1.hidden = true;
     root.querySelectorAll(`${sel} [data-v]`).forEach((b) => {
       b.onclick = null;
@@ -313,8 +329,36 @@ export function setupCalibrate(ctx) {
     if (skill === "tri") idx().forEach((j, r) => { arr[j].anchor = r % 12; });
     return arr;
   }
+  // Mark a question's start: context is computed from what was heard BEFORE it.
+  function beginTrial(labeled = false) { if (!run) return; run.trialStartAt = Date.now(); run.answered = labeled; run.askAt = null; }
+  // What you'd heard before this question: gaps, recent targets, repeats, per-note
+  // exposure (any sound vs. labeled) — separates pitch MEMORY from classification.
+  function trialCtx(skill, st = {}) {
+    const tp = Number.isFinite(st.target) ? st.target : Number.isFinite(st.targetPc) ? st.targetPc : Number.isFinite(st.pc) ? st.pc : null;
+    const t0 = run.trialStartAt || Date.now(), targets = run.targets || [];
+    const before = (run.sounds || []).filter((e) => e.t < t0);
+    const tgt = tp == null ? [] : before.filter((e) => e.pc === tp), lab = tgt.filter((e) => e.labeled);
+    const ago = (arr) => (arr.length ? t0 - arr[arr.length - 1].t : null);
+    let sameRun = 0; for (let i = targets.length - 1; i >= 0 && tp != null && targets[i].pc === tp; i--) sameRun++;
+    return {
+      targetPc: tp, startAt: t0, askAt: run.askAt || null,
+      gapMs: run.lastAnswerAt ? t0 - run.lastAnswerAt : null,                          // last answer → this question starts
+      onsetGapMs: run.lastAnswerAt && run.askAt ? run.askAt - run.lastAnswerAt : null,  // last answer → this note sounds
+      prevTargets: targets.slice(-3).map((x) => x.pc), prevStations: targets.slice(-3).map((x) => x.station),
+      sameRun, askedBefore: tp == null ? null : targets.filter((x) => x.pc === tp).length,
+      heardBefore: tgt.length, labeledBefore: lab.length, sinceHeardMs: ago(tgt), sinceLabeledMs: ago(lab),
+      soundsBefore: before.length, questionNo: targets.length + 1,
+    };
+  }
   function logTrial(skill, fields) {
     if (!run || !run.session) return;
+    const passive = skill === "attune" || skill === "lockin" || (fields.stim && fields.stim.kind === "learn");
+    const ctx = trialCtx(skill, fields.stim);
+    if (!passive) {
+      (run.targets || (run.targets = [])).push({ pc: ctx.targetPc, station: skill, t: Date.now() });
+      run.lastAnswerAt = Date.now();
+    }
+    fields = { ...fields, ctx };
     const now = new Date();
     D.putTrial({
       id: `${run.session.id}:${run.seq}`, sessionId: run.session.id, schema: D.SCHEMA_VERSION, protocol: D.PROTOCOL,
@@ -388,6 +432,7 @@ export function setupCalibrate(ctx) {
       if (abort) return null;
       if (sung.ok) { sung.cents = Math.round(((((sung.midi - pc) % 12) + 18) % 12 - 6) * 100); sung.oct = Math.floor(Math.round(sung.midi) / 12) - 1; }
     }
+    run.answered = true;                                           // the name is on screen for the reveal
     if (sung && sung.ok) {
       const c = sung.cents, correct = Math.abs(c) <= 50;
       record("imagine", correct);
@@ -699,7 +744,7 @@ export function setupCalibrate(ctx) {
   // DAILY CALIBRATION (protocol v2)
   // ===========================================================================
   async function calAttune() {
-    clearTimers();
+    clearTimers(); beginTrial(true);
     const t0 = performance.now(); let skipped = false;
     stage(head("attune") + `
       <div class="cal-stage">
@@ -728,6 +773,7 @@ export function setupCalibrate(ctx) {
     for (const pc of run.plan.cueLearn) {
       if (abort) return;
       clearTimers();
+      beginTrial(true);
       stage(head("cue") + `<div class="cal-stage"><div class="cal-hint">learn</div><div class="cal-big ok-glow">${PC[pc]}</div><div class="cal-say">note · its tag · note</div></div>`);
       await noteCue(pc); await sleep(500);
       logTrial("cue", { stim: { pc, kind: "learn" } });
@@ -738,11 +784,11 @@ export function setupCalibrate(ctx) {
     run.curSkill = skill;
     const n = run.plan.counts[skill];
     for (let i = 0; i < n && !abort; i++) {
-      clearTimers();
+      clearTimers(); beginTrial();
       const r = await TRIAL[skill]({ i, n });
       if (abort || r === null) return;
       run.slot = (run.slot || 0) + 1;
-      if (run.popSlots && run.popSlots.has(run.slot)) { clearTimers(); const pr = await trAnchor({ popup: true }); if (abort || pr === null) return; }
+      if (run.popSlots && run.popSlots.has(run.slot)) { clearTimers(); beginTrial(); const pr = await trAnchor({ popup: true }); if (abort || pr === null) return; }
     }
   }
   // Anchor checks no longer come as a block (you'd still hear the last one):
@@ -761,6 +807,7 @@ export function setupCalibrate(ctx) {
     for (const pc of pcs) {
       if (abort) return;
       clearTimers();
+      beginTrial(true);
       stage(head("lockin") + `<div class="cal-stage"><div class="cal-big ok-glow">${PC[pc]}</div><div class="cal-say">feel where it sits — and its tag</div></div>`);
       await noteCue(pc); await sleep(400);
       logTrial("lockin", { stim: { pc, weight: Math.round(run.plan.pcWeights[pc] * 100) / 100 } });
@@ -839,11 +886,19 @@ export function setupCalibrate(ctx) {
       </div>`;
     await sleep(1100);
   }
+  // Per-note totals for the whole session + a compact full log:
+  // soundLog rows = [msFromStart, midi, src (n/c/t/d), labeled 0|1, cents].
+  function soundSummary(s) {
+    const ev = (run && run.sounds) || [], z = () => Array(12).fill(0), SRC = { note: "n", cleanser: "c", tag: "t", distractor: "d" };
+    const sc = { heard: z(), labeled: z(), bySrc: { n: z(), c: z(), t: z(), d: z() } };
+    ev.forEach((e) => { sc.heard[e.pc]++; if (e.labeled) sc.labeled[e.pc]++; sc.bySrc[SRC[e.src]][e.pc]++; });
+    return { soundCounts: sc, soundLog: ev.map((e) => [e.t - s.startedAt, e.m, SRC[e.src], e.labeled ? 1 : 0, e.c]) };
+  }
   async function endCalibration(completed) {
     if (!run || run.mode !== "calibration" || run.ended) return null;
     run.ended = true;
     const s = run.session;
-    Object.assign(s, { completed, endedAt: Date.now(), summary: { ...run.tally } });
+    Object.assign(s, { completed, endedAt: Date.now(), summary: { ...run.tally }, ...soundSummary(s) });
     s.durSec = Math.round((s.endedAt - s.startedAt) / 1000);
     await D.putSession(s).catch(() => {});
     D.syncAll().then(noteSync).catch(() => {});
@@ -945,7 +1000,7 @@ export function setupCalibrate(ctx) {
     abort = false; lastLabeled = null; clearTimers();
     run = { mode: "drill", anchor: dayAnchor, skill, level, plan, session, events: session.events, n: 0, g: 0, k: 0, streak: 0, best: 0, recent: [], sched: {}, tally: {}, seq: 0, intent: null };
     while (!abort) {
-      clearTimers();
+      clearTimers(); beginTrial();
       const r = await TRIAL[skill]({ i: run.n });
       if (abort || r === null) break;
       run.n++;
@@ -954,26 +1009,69 @@ export function setupCalibrate(ctx) {
         if (r.correct) { run.k++; run.streak++; run.best = Math.max(run.best, run.streak); } else run.streak = 0;
         adapt(r.correct);
       }
-      if (run.n % 15 === 0) toast(run.g && run.k / run.g > 0.85 ? "Crushing it — try ⏫ or ⇄ something new" : `${run.n} in — ⇄ switch anytime`);
+      if (run.n % 12 === 0) {                                     // check-in: keep going / next drill / score over time
+        const ck = await checkpoint();
+        if (abort || ck == null) break;
+        if (ck === "next" || ck === "history") { run.intent = ck; break; }
+      }
       run.sincePop = (run.sincePop || 0) + 1;
       const popRate = typeof window !== "undefined" && window.__calPopRate != null ? window.__calPopRate : 0.22;   // test hook
       if (run.sincePop >= 3 && Math.random() < popRate) {         // ⚓ anchor pop-up between drill questions
-        run.sincePop = 0; clearTimers();
+        run.sincePop = 0; clearTimers(); beginTrial();
         const pr = await trAnchor({ popup: true });
         if (abort || pr === null) break;
       }
     }
-    const intent = run.intent || "end";
+    const intent = run.intent || "end", nextSkill = run.nextSkill;
     const s = await endDrill(intent);
     if (intent === "exit") return;
     if (intent === "switch") return showPicker(skill);
+    if (intent === "next" && nextSkill) return startDrill(nextSkill);
+    if (intent === "history") return renderInsights();
     return drillSummary(s);
+  }
+  // Every 12 drill questions: keep going, jump to the coach's next pick, or see
+  // this drill's score over time. The choice is logged as a drill event.
+  async function checkpoint() {
+    const data = await D.allData();
+    if (abort || !run) return null;
+    const sk = run.skill, coach = D.suggestDrills(data);
+    const nx = coach.ranked.find((x) => x.skill !== sk) || coach.ranked[0];
+    const byDay = new Map();
+    data.trials.filter((t) => t.station === sk && typeof t.correct === "boolean").forEach((t) => {
+      const d = D.localDate(t.t), r = byDay.get(d) || { n: 0, k: 0 }; r.n++; if (t.correct) r.k++; byDay.set(d, r);
+    });
+    const days = [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-14), today = D.localDate(Date.now());
+    const lv = data.sessions.filter((x) => D.kindOf(x) === "drill" && x.skill === sk && x.endLevel).slice(-8).map((x) => x.endLevel).concat(run.level);
+    const acc = run.g ? run.k / run.g : null;
+    const box = document.createElement("div");
+    box.className = "cal-ckpt";
+    box.innerHTML = `<div class="cal-ckpt-card">
+        <div class="cal-ckpt-k">${run.n} in · ${META[sk].icon} ${TITLE[sk]}</div>
+        <div class="cal-ckpt-t">${acc == null ? "Nice set." : acc >= 0.85 ? "You're cooking. 🔥" : acc >= 0.6 ? "Solid run." : "Tough one — that's where the gains are."}</div>
+        <div class="cal-ckpt-s">${pct(acc)} this set · level ${run.level} · best streak ${run.best}</div>
+        <div class="cal-sec" style="margin:1rem 0 0.4rem">${TITLE[sk]} over time</div>
+        ${days.length ? `<div class="cal-trend ckpt">${days.map(([d, r]) => `<div class="cal-tbar${d === today ? " today" : ""}" title="${d}: ${pct(r.k / r.n)} of ${r.n}"><div style="height:${Math.max(3, Math.round((r.k / r.n) * 100))}%"></div><span>${d.slice(8)}</span></div>`).join("")}</div>
+          <div class="cal-ins-m">daily accuracy, all runs${lv.length > 1 ? ` · level ${lv.join(" → ")}` : ""}</div>` : `<div class="cal-hint">First day on this one — the chart fills in as you go.</div>`}
+        <button class="cal-cta" data-ck="go">Keep going</button>
+        <button class="cal-cta ghost-cta" data-ck="next">⇄ Next: ${META[nx.skill].icon} ${nx.title}</button>
+        <div class="cal-ins-m">${nx.reason}</div>
+        <button class="cal-cta ghost-cta" data-ck="history">📊 Full ear model</button>
+      </div>`;
+    root.appendChild(box);
+    box.querySelectorAll("[data-ck]").forEach((b) => (b.onclick = () => done(b.dataset.ck)));
+    const choice = await wait();
+    box.remove();
+    if (choice == null || !run) return null;
+    run.events.push({ t: Date.now(), type: "checkpoint", choice, atTrial: run.n, accSoFar: acc });
+    if (choice === "next") run.nextSkill = nx.skill;
+    return choice;
   }
   async function endDrill(reason) {
     if (!run || run.mode !== "drill" || run.ended) return null;
     run.ended = true;
     const s = run.session;
-    Object.assign(s, { completed: true, endedAt: Date.now(), endReason: reason, n: run.n, graded: run.g, k: run.k, endLevel: run.level, bestStreak: run.best, summary: { ...run.tally } });
+    Object.assign(s, { completed: true, endedAt: Date.now(), endReason: reason, n: run.n, graded: run.g, k: run.k, endLevel: run.level, bestStreak: run.best, summary: { ...run.tally }, ...soundSummary(s) });
     s.durSec = Math.round((s.endedAt - s.startedAt) / 1000);
     const r = { ...s, skill: run.skill };
     run = null;

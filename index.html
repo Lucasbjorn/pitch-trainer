@@ -417,6 +417,18 @@
     .dr-stats + .cal-popup { display: table; }
     .cal-r1 { margin-top: 0.6rem; font-size: 0.85rem !important; padding: 0.5rem 1rem !important; }
     .cal-r1:disabled { opacity: 0.45; }
+    /* drill check-in (every 12 questions) */
+    .cal-ckpt { position: fixed; inset: 0; z-index: 80; background: rgba(20,30,24,0.45); display: flex; align-items: flex-end; justify-content: center; padding: 1rem; animation: fadeIn 0.2s ease; }
+    .cal-ckpt-card { width: 100%; max-width: 440px; background: var(--card); border-radius: 24px; padding: 1.3rem 1.2rem 1.1rem; text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,0.25); max-height: 92vh; overflow-y: auto; }
+    .cal-ckpt-k { font-size: 0.75rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: #7c3aed; }
+    .cal-ckpt-t { font-size: 1.45rem; font-weight: 800; letter-spacing: -0.02em; margin: 0.3rem 0 0.2rem; }
+    .cal-ckpt-s { color: var(--muted); font-weight: 700; font-size: 0.9rem; }
+    .cal-ckpt-card .cal-sec { text-align: left; }
+    .cal-ckpt-card .cal-cta { display: block; width: 100%; margin: 0.6rem 0 0; }
+    .cal-trend.ckpt { height: 90px; padding-bottom: 1.2rem; }
+    .cal-trend .cal-tbar { position: relative; }
+    .cal-trend .cal-tbar span { position: absolute; bottom: -1.1rem; left: 0; right: 0; text-align: center; font-size: 0.6rem; color: var(--muted); font-weight: 700; }
+    .cal-tbar.today > div { background: linear-gradient(180deg,#f59e0b,#d97706); }
     .cal-picker { padding-bottom: 2rem; }
     .cal-picker .hub-cards { margin-top: 0.8rem; }
     .cal-finish .cal-coach-mini { margin-top: 1.2rem; }

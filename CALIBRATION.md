@@ -87,6 +87,12 @@ Each skill also runs as an **endless adaptive drill**, launched from the hub, th
 - **In-drill staircase:** 3 right in a row → level up; 2 of the last 3 wrong → level down.
 - **😴 too easy / 😵 too hard:** move one level immediately. Logged as events — this is data too.
 - **✕** ends the drill (shows a summary plus the coach's next pick); **⇄** switches drills mid-trial.
+- **Check-in every 12 questions:** a card with this set's accuracy, level and best streak, plus **this drill's score over time** (daily accuracy bars, all runs, today highlighted, and level history). Choices:
+  - **Keep going**;
+  - **⇄ Next: [coach's pick]**, with the reason, which jumps straight into it;
+  - **📊 Full ear model**.
+
+  Each choice is logged as a drill event `{type: "checkpoint", choice: go|next|history, atTrial, accSoFar}`. The drill's `endReason` becomes `next` or `history` when used.
 - Drill levels are stored per skill (`pt.cal.drillLv`) and start from the calibration level. Drills **never** change calibration levels.
 - **In tune?** is drill-only: is this note exactly on a pitch, or ±50¢ → ±10¢ off?
 - **Triangulate 🧭** (drill-only): hear a mystery note, then **imagine an assigned anchor** and find the note from it.
@@ -158,11 +164,33 @@ How it works:
 
 ### Sessions
 - Calibration: `kind: "calibration", protocol, localDate, sessionOfDay, dayIndex, checkin, plan, summary {skill:{n,k}}, completed, durSec, env, device {id, kind}`
+- Both kinds also store the session's full **sound ledger**:
+  - `soundCounts {heard[12], labeled[12], bySrc {n, c, t, d}[12]}`: per-note totals;
+  - `soundLog`: one row per sound, `[msFromStart, midi, src, labeled 0|1, cents]`.
+  - `src` is n = question/feedback note, c = cleanser, t = PP-MIDI tag, d = hold distractor.
+  - A sound is `labeled` when its name was on screen: feedback after you answered, Attune / learn / Lock-in, and the Imagine reveal.
 - Drill: `kind: "drill", skill, startLevel, endLevel, events [{t, type: tooEasy|tooHard|autoUp|autoDown, from, to, atTrial}], n, graded, k, bestStreak, endReason (end|switch|exit), durSec`
 - v1 sessions have no `kind` and count as calibrations.
 
 ### Trials
-Common fields: `id, sessionId, mode (calibration|drill), protocol, station, gi, ti, t, hour, dow, level, correct (true/false/null), rt (ms from choices shown → tap)`.
+Common fields: `id, sessionId, mode (calibration|drill), protocol, station, gi, ti, t, hour, dow, level, correct (true/false/null), rt (ms from note onset → tap, v3+), rtFrom, replays`.
+
+**`ctx`: what you'd heard before each question.** It's computed from sounds *before* the question started, so the question's own note and feedback don't count.
+- **Target and timing:**
+  - `targetPc`: the note being asked (target / targetPc / pc, by station);
+  - `startAt`, `askAt`: question start, and when the answer buttons were armed (≈ note onset);
+  - `gapMs`: from your last answer to this question's start; `onsetGapMs`: from your last answer to this note sounding;
+  - `questionNo`: this question's number in the session.
+- **Repeats:**
+  - `prevTargets` / `prevStations`: the last 3 questions;
+  - `sameRun`: how many questions in a row just before this one asked the same note;
+  - `askedBefore`: how many times this note was already asked this session.
+- **Exposure:**
+  - `heardBefore` / `labeledBefore`: times this note had sounded this session, at all and with its name showing;
+  - `sinceHeardMs` / `sinceLabeledMs`: time since it last sounded, and since it last sounded labeled;
+  - `soundsBefore`: everything heard this session before this question.
+
+These let analysis separate **pitch memory** from **classification**. Example signs of memory: a run of repeats, or the note heard labeled a few seconds earlier. Also look for relative-pitch use from recently heard references and whether cleanser exposure matters. The test `tools/shot-v5.mjs` recomputes every trial's ctx from the session `soundLog` and checks that they match exactly.
 
 | station | `stim` | other |
 | --- | --- | --- |
@@ -210,6 +238,13 @@ The usual cause is a cue leak that lets a non-AP strategy pass. Examples so far:
 - the last note replayed straight into the next question.
 
 Check ceiling accuracy, RT distributions, replay use and "too easy" events by station × level × protocol.
+
+Using `ctx`:
+- **Memory vs classification:** compare accuracy on `sameRun > 0` or short `sinceLabeledMs` trials (memory-assisted) against cold ones (`labeledBefore = 0`).
+- **Exposure effects:** check whether `heardBefore` (e.g. from cleansers) helps or hurts.
+- **Pacing:** look at how `onsetGapMs` relates to accuracy and RT.
+
+These are *candidate* explanations to test, not conclusions.
 
 1. Export JSON (from the device you use, or the Mac browser if the cloud backup is on). Drop it into `calibration-data/` in this repo; that folder is gitignored and never committed.
 2. Ask Claude to "analyze my calibration data." The plan:
