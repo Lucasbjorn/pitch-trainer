@@ -17,7 +17,7 @@ You land on the **Training Hub**, which has three parts:
 
 **Account sync:** sign in with Google once on each device (from the hub's ☁️ card). After that, the phone, the laptop and the iPhone home-screen app all share one dataset (see *Account sync* below).
 
-## Daily Calibration — protocol v3 (~7 min, 8 stations + ⚓ pop-ups)
+## Daily Calibration — protocol v4 (~8 min, 9 stations + ⚓ pop-ups)
 
 0. **Check-in**: energy, music heard today, headphones vs speaker.
 1. **Attune**: today's note → its PP-MIDI song tag → note, three times.
@@ -28,10 +28,11 @@ You land on the **Training Hub**, which has three parts:
    - from L2, also **bare note → tag**: hear the plain piano note, recall its tag, name it. This is the bridge to real AP.
 3. **Imagine it**: hear a named note internally; optionally sing it (mic → signed cents).
 4. **Blindfold naming**: the diagnostic core (below).
-5. **Hold it**: keep a pitch alive for 3–16 s, then same/different by **60¢ → 12¢**. Half the holds play **stray notes** in the gap, half play noise.
-6. **Octave twins**: three notes in three octaves; which one has a different note name?
-7. **Find the note**: "there's an E♭ in this chord — bottom, middle or top?" Higher levels add inversions, then dim/aug, then spread voicings.
-8. **Lock it in**: your weakest notes, note · tag · note.
+5. **Neighbors** (v4): 4 next-door questions (see *Drills*). It joined the calibration because it measures chroma with no reference in any octave and timbre, which you can't fake with your vocal range. Its calibration level starts one step below where the Neighbors drill had got to, not at L1.
+6. **Hold it**: keep a pitch alive for 3–16 s, then same/different by **60¢ → 12¢**. Half the holds play **stray notes** in the gap, half play noise.
+7. **Octave twins**: three notes in three octaves; which one has a different note name?
+8. **Find the note**: "there's an E♭ in this chord — bottom, middle or top?" Higher levels add inversions, then dim/aug, then spread voicings.
+9. **Lock it in**: your weakest notes, note · tag · note.
 
 **Every answer, in every station, ends with note · song tag · note.** The tags are 0.74 s, so this costs little time. Ending on the labeled note keeps the "last heard note" clean for the relative-pitch test.
 
@@ -54,6 +55,7 @@ You land on the **Training Hub**, which has three parts:
 - **v1** (first week): no Song anchors station, tags only at the end, hold = ±1 semitone through noise, anchor lures in whole semitones, always C.
 - **v2:** Song anchors, cents-level hold/anchor, rotating daily anchor, tuning-cue fixes.
 - **v3:** pop-ups, pacing, replay, RT from onset.
+- **v4:** Neighbors station in the calibration; Neighbors trios (three next-door notes, names shown only once the note sounds); coach weights Neighbors up.
 
 Every record carries its `protocol`. Compare like with like.
 
@@ -99,8 +101,9 @@ Each skill also runs as an **endless adaptive drill**, launched from the hub, th
   - Anchors are stratified so each of the 12 comes up once per 12 trials, which shows which mental anchors work best for you.
   - Levels widen the anchor→target distance (±2 → ±6 semitones) and the octave spread, and shorten imagery time.
   - Feedback plays the real anchor → target, then the tag.
-- **Neighbors 👯** (drill-only): "Is this E♭ or D?" Next-door chroma with no reference.
-  - Levels go whole step → semitone → more octaves → random synth timbres → 0.5 s notes.
+- **Neighbors 👯** (drill + calibration station since v4): "Is this E♭ or D?" Next-door chroma with no reference.
+  - L1 whole-step pair → L2 semitone pair in octaves 3–5 → **L3 trio**: three next-door notes (e.g. D, E♭, E) whose names only appear once the note sounds → L4 trio + octaves 3–5 + random synth timbres → L5 trio + 0.5 s notes in octaves 2–6.
+  - Why the reveal: with the names on screen first you can pre-imagine the candidates and just compare. Revealing them at the note forces recognition first, then a short check among three. RT is from onset, as everywhere.
 
 ## The coach (`suggestDrills` in [calibrate-data.js](calibrate-data.js))
 Rule-based, from your data:
@@ -114,7 +117,9 @@ Rule-based, from your data:
   - hidden anchor → naming;
   - timbre lock → naming;
   - stray notes wreck your holds → Hold it;
-  - weak notes → Song anchors.
+  - weak notes → Song anchors;
+  - ≥40% of naming misses are next-door notes → Neighbors.
+- **Neighbors is weighted up (+0.35) while you're building.** It's pure chroma recognition with no reference, in any octave and timbre. A specific diagnosis (like a relative-pitch leak) can still outrank it.
 
 ## Doing it several times a day
 Every run is stamped with `localDate` and `sessionOfDay` (1, 2, 3…).
@@ -131,7 +136,8 @@ Every run is stamped with `localDate` and `sessionOfDay` (1, 2, 3…).
   - triad inversions;
   - song-anchor choices (4 → 6 → 12, then bare-note recall, then cleanser);
   - imagery prep time;
-  - in-tune cents.
+  - in-tune cents;
+  - Neighbors choices (pair → trio), octaves, timbre, note length.
 - **Weak notes oversampled:** Beta-smoothed error over the last 200 naming + song-anchor trials.
 - **Budget:** the weakest station over the last 3 calibrations gets +2 trials, the strongest −1.
 
@@ -147,7 +153,8 @@ Everything is written the instant a trial completes, to IndexedDB `pitches-calib
 
 How it works:
 - **Local first.** Everything is written to the device's IndexedDB instantly, so training works with no signal and syncs when you're back online.
-- **When it syncs:** opening the hub pulls then pushes; every finished calibration or drill syncs again; during a run, trials trickle up every ~45 s.
+- **When it syncs:** opening the hub pulls then pushes; **opening the ear model syncs first (up to 8 s)**, so it never shows one browser's stale slice; every finished calibration or drill syncs again; during a run, trials trickle up every ~45 s.
+- **The ear model says what it's showing:** a coverage line with sync status, how many sessions from how many devices/browsers, and the latest run's time. It turns amber when sync was skipped or failed.
 - **Push:** this device's own records, changed since its last push. The store is append-only, so an updated session is simply re-sent and the newest version wins.
 - **Pull:** every record the server stored since this device's last pull.
 - **No sync loops.** Pulled records carry an internal `_pulled` flag and are never pushed back. A device never overwrites its *own* sessions with cloud copies.
@@ -157,10 +164,6 @@ How it works:
   - `tools/test-cal-dmstore.mjs`: the adapter against a mock Supabase that enforces the real RLS. Checks chunking, incremental and paged pulls, that DMs and other users' rows never leak in, and that the DM views stay clean.
   - `tools/shot-sync.mjs`: two simulated devices sharing a fake server. Each device's runs appear on the other, levels follow, idle re-syncs upload nothing, and pulled rows are never re-uploaded.
 - Export pulls first, so it includes every device.
-- **Tested** with two simulated devices sharing a fake server (`tools/shot-sync.mjs`):
-  - each device's runs appear on the other, and levels follow;
-  - idle re-syncs upload nothing;
-  - pulled rows are never re-uploaded.
 
 ### Sessions
 - Calibration: `kind: "calibration", protocol, localDate, sessionOfDay, dayIndex, checkin, plan, summary {skill:{n,k}}, completed, durSec, env, device {id, kind}`
@@ -204,27 +207,30 @@ These let analysis separate **pitch memory** from **classification**. Example si
 | triad | `rootPc, quality, inversion, spread, chord, targetPc, posIdx` | `resp, replays` |
 | tune | `pc, oct, inTune, cents, voice` | `resp` in/off |
 | tri | `anchor, target, dist, oct, midi` | `resp, replays, errSemis` |
-| pair | `pc, pair [lo, hi], step, oct, timbre, dur` | `resp` |
+| pair | `pc, set` (low → high; `pair` is the same list, kept for old readers)`, nChoices (2/3), pos (target's index in set), reveal (names shown only at the note), step, oct, timbre, dur` | `resp, replays, errSemis` |
 
 ## What `analyze()` estimates
-Validated against simulated listeners in `tools/test-cal-analysis.mjs`, which has 23 checks.
+Validated against simulated listeners in `tools/test-cal-analysis.mjs`.
 
 | Index | Method | Reads as |
 | --- | --- | --- |
-| Daily reading | first completed calibration per day; slope per day | real progress, not same-day practice |
+| Scorecard | each station's accuracy, Wilson 95% range, and chance (per-trial: 1/12, 1/choices, 1/3; yes/no tasks: the more common answer's rate). Leaky versions excluded: anchor block (non-pop-up), In tune? without `voice` | what's clearly above guessing |
+| Progress (fixed test) | naming in octave 4, piano, cleanser on, per day; slope over days with ≥4 trials | improvement that difficulty changes can't fake |
+| Daily reading | first completed calibration per day, at that day's levels; ▲ marks days a level went up | real progress, not same-day practice (read with the ▲s) |
+| How you know a note | naming and Neighbors accuracy by answer time (<1.5 / 1.5–3 / 3–6 / >6 s) | fast + right = recognition; slow + right = generate-and-compare |
 | Relative-pitch leak | acc(no cleanser) − acc(cleanser), 95% CI; perseveration | >0 → computing from the last note |
 | Hidden anchor | RT ~ distance from each of 12 notes; permutation p | slope at X → counting from X; flat → direct recognition |
 | Gut vs compute | median RT correct vs wrong; % fast-correct | fast + right = categorical |
 | Song anchors | tag→note vs bare-note→tag accuracy, per note | association strength; the bare direction is the AP bridge |
 | Hold it | noise − stray-notes accuracy (tone-interference cost); accuracy by cents | big cost → holding the sound, not the name |
-| In tune? | accuracy by cents off | tuning-template resolution |
+| In tune? | accuracy by cents off; fixed version only (`stim.voice`) | tuning-template resolution |
 | Mental anchors | Triangulate accuracy + RT per imagined anchor; by distance | which internal reference notes you can actually use |
-| Neighbors | accuracy per next-door pair; semitone vs whole step | which chroma boundaries are muddy |
+| Neighbors | 2-choice (semitone vs whole step, per pair) and trio (overall, middle vs edge note, per set) | which chroma boundaries are muddy |
 | Timbre lock | piano − sine | >0 → piano-bound |
 | Register cues | accuracy spread across octaves | height vs chroma |
 | Chroma | octave twins by offset | — |
 | Inner pitch | sung signed cents bias / abs error | template drift |
-| Anchor precision | hit rate (per anchor note); **by time since last heard** (<1 min / 1–5 min / >5 min); pop-up vs old block; false alarms by lure cents | how sharp each daily anchor is, and how long it lasts |
+| Anchor precision | pop-ups only: accuracy, hit rate (per anchor note), **by time since last heard** (<1 min / 1–5 min / >5 min), false alarms by lure cents; the old block is kept apart as `legacy` | how sharp each daily anchor is, and how long it lasts |
 | Confusions | top true→answered pairs; mean signed error | semitone vs tonal confusions |
 | Context | time of day, energy, music today, run of the day, mode, device (phone vs laptop), warm-up | when your AP is best |
 

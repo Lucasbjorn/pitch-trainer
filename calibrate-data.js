@@ -14,12 +14,14 @@
 // listeners (tools/test-cal-analysis.mjs). See CALIBRATION.md for the protocol.
 
 export const SCHEMA_VERSION = 2;   // record shape (v2 adds mode, protocol, localDate, sessionOfDay)
-export const PROTOCOL = 3;         // v1 first week · v2 harder hold/anchor + song anchors · v3 anchor pop-ups, breathers, replay-once, RT from onset
+export const PROTOCOL = 4;         // v1 first week · v2 harder hold/anchor + song anchors · v3 anchor pop-ups, breathers, replay-once, RT from onset · v4 Neighbors station + trios
 export const SKILLS = ["cue", "name", "imagine", "anchor", "hold", "twins", "triad", "tune", "tri", "pair"];
 export const SKILL_TITLE = { cue: "Song anchors", name: "Blindfold naming", imagine: "Imagine & sing", anchor: "Anchor lock", hold: "Hold it", twins: "Octave twins", triad: "Find the note", tune: "In tune?", tri: "Triangulate", pair: "Neighbors" };
 export const STATIONS_GRADED = SKILLS;
 // Drills you can launch (anchor checks are pop-ups now, not a drill of their own).
 export const DRILLS = SKILLS.filter((s) => s !== "anchor");
+// Graded stations in the daily calibration (protocol 4), in running order.
+export const CAL_STATIONS = ["cue", "imagine", "name", "pair", "hold", "twins", "triad", "anchor"];
 export const localDate = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 export const kindOf = (s) => s.kind || "calibration";      // v1 sessions were all calibrations
 const modeOf = (t) => t.mode || "calibration";
@@ -229,6 +231,11 @@ function diffCI(a, b) {        // a − b with an approximate 95% CI (two propor
   const d = a.acc - b.acc, se = Math.sqrt((a.acc * (1 - a.acc)) / a.n + (b.acc * (1 - b.acc)) / b.n);
   return { d, lo: d - 1.96 * se, hi: d + 1.96 * se };
 }
+function wilson(k, n, z = 1.96) {        // 95% interval for a proportion that behaves at small n
+  if (!n) return null;
+  const p = k / n, d = 1 + (z * z) / n, c = (p + (z * z) / (2 * n)) / d, h = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / d;
+  return { lo: Math.max(0, c - h), hi: Math.min(1, c + h) };
+}
 function seeded(seed) { let s = seed >>> 0 || 1; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
 
 // =============================================================================
@@ -236,6 +243,20 @@ function seeded(seed) { let s = seed >>> 0 || 1; return () => ((s = (s * 1664525
 // =============================================================================
 // Handles protocol v1 (first week) and v2 records side by side.
 const graded = (t) => typeof t.correct === "boolean";
+// What pure guessing scores on one trial (yes/no tasks: 50%; imagine/sung: none).
+const nChoicesOf = (t) => t.stim.nChoices || (Array.isArray(t.stim.pair) ? t.stim.pair.length : 2);
+function chanceOf(t) {
+  switch (t.station) {
+    case "name": case "tri": return 1 / 12;
+    case "cue": return 1 / (t.stim.choices || 12);
+    case "pair": return 1 / nChoicesOf(t);
+    case "twins": case "triad": return 1 / 3;
+    case "hold": case "anchor": case "tune": return 0.5;
+    default: return 0;
+  }
+}
+// Trials from versions with a known leak don't count toward headline numbers.
+const validTrial = (t) => (t.station === "anchor" ? !!(t.stim && t.stim.popup) : t.station === "tune" ? !!(t.stim && t.stim.voice) : true);
 const anchorOffCents = (t) => (t.stim.offsetCents != null ? t.stim.offsetCents : (t.stim.offset || 0) * 100);
 const centsDist = (c) => { const m = ((c % 1200) + 1200) % 1200; return Math.min(m, 1200 - m); };
 const holdCents = (t) => (t.stim.probeCents != null ? Math.abs(t.stim.probeCents) : Math.abs(t.stim.probeOffset || 0) * 100);
@@ -270,8 +291,14 @@ export function analyze({ sessions = [], trials = [] } = {}) {
     const cals = xs.filter((x) => x.kind === "calibration" && x.completed);
     const dayTrials = T.filter((t) => localDate(t.t) === date);
     return { date, calRuns: cals.length, drillRuns: xs.filter((x) => x.kind === "drill").length,
-      cold: cals.length ? cals[0].acc : null, coldName: cals.length ? cals[0].nameAcc : null,
+      cold: cals.length ? cals[0].acc : null, coldName: cals.length ? cals[0].nameAcc : null, coldLevels: cals.length ? cals[0].levels : null,
       all: prop(dayTrials).acc, nTrials: dayTrials.length };
+  });
+  // The cold reading is scored at that day's difficulty, so it dips when levels go up — flag those days.
+  let prevLv = null;
+  out.daily.forEach((d) => {
+    d.levelUps = prevLv && d.coldLevels ? CAL_STATIONS.filter((st) => d.coldLevels[st] > (prevLv[st] || 1)) : [];
+    if (d.coldLevels) prevLv = d.coldLevels;
   });
   const td = out.daily.filter((d) => d.cold != null);
   const tr = ols(td.map((_, i) => i), td.map((d) => d.cold));
@@ -279,6 +306,41 @@ export function analyze({ sessions = [], trials = [] } = {}) {
 
   out.stations = {};
   SKILLS.forEach((st) => { out.stations[st] = prop(by(st)); });
+
+  // ---- same test every day: naming in the middle octave, piano, cleanser on --------
+  // Difficulty can't move this one, so it's the fair "am I improving?" line.
+  {
+    const fixed = nameClean.filter((t) => t.stim.oct === 4 && graded(t));
+    const ds = [...new Set(fixed.map((t) => localDate(t.t)))].sort();
+    const rows = ds.map((date) => ({ date, ...prop(fixed.filter((t) => localDate(t.t) === date)) }));
+    const used = rows.filter((r) => r.n >= 4), f = ols(used.map((_, i) => i), used.map((r) => r.acc));
+    out.fixedNaming = { rows, ...prop(fixed), slopePerDay: f.slope, daysUsed: used.length };
+  }
+
+  // ---- scorecard: every station against what guessing would get --------------------
+  // Only the valid version of each task counts (the old anchor block let you hear the
+  // last anchor; the old In tune? leaked a tuning grid). Yes/no tasks use the stricter
+  // "always give the more common answer" baseline.
+  {
+    const yesNo = { hold: (t) => !!t.stim.same, anchor: (t) => !!t.stim.isAnchor, tune: (t) => !!t.stim.inTune };
+    const rows = ["name", "pair", "cue", "tri", "twins", "triad", "hold", "anchor", "tune"].map((st) => {
+      const g = by(st).filter((t) => graded(t) && validTrial(t)), p = prop(g);
+      if (!p.n) return null;
+      const yes = yesNo[st] ? g.filter(yesNo[st]).length / g.length : null;
+      const chance = yes != null ? Math.max(yes, 1 - yes) : mean(g.map(chanceOf));
+      const ci = wilson(p.k, p.n);
+      return { station: st, ...p, chance, lo: ci.lo, hi: ci.hi, beatsChance: ci.lo > chance, excluded: by(st).filter((t) => graded(t) && !validTrial(t)).length };
+    }).filter(Boolean);
+    out.scorecard = rows;
+  }
+
+  // ---- two ways of knowing: accuracy by answer time ---------------------------------
+  // Instant recognition shows up as fast + right; generate-and-compare as slow + right.
+  {
+    const bins = [[0, 1500, "<1.5s"], [1500, 3000, "1.5–3s"], [3000, 6000, "3–6s"], [6000, 6e5, ">6s"]];
+    const split = (arr) => bins.map(([a, b, label]) => ({ label, ...prop(arr.filter((t) => Number.isFinite(t.rt) && t.rt >= a && t.rt < b)) }));
+    out.indices.strategy = { name: split(name.filter(graded)), pair: split(by("pair").filter(graded)), medRtName: median(name.filter(graded).map((t) => t.rt).filter(Number.isFinite)) };
+  }
 
   // ---- pitch map (naming, all conditions/modes) -----------------------------------
   out.pcMap = PC.map((nm, pc) => {
@@ -377,17 +439,22 @@ export function analyze({ sessions = [], trials = [] } = {}) {
 
   // ---- 9. Anchor precision: hit rate + false alarms by lure distance (cents) ----------------
   {
+    // Headline numbers come from pop-ups only: the old back-to-back block let you
+    // hear the previous anchor's echo, so it's kept separately as "legacy".
     const a = by("anchor").filter(graded);
-    const hits = prop(a.filter((t) => t.stim.isAnchor));
-    const lures = a.filter((t) => !t.stim.isAnchor);
-    const ds = [...new Set(lures.map((t) => centsDist(anchorOffCents(t))))].sort((x, y) => x - y);
     const anc = (t) => (Number.isFinite(t.stim.anchorPc) ? t.stim.anchorPc : 0);
-    const byAnchor = PC.map((nm, pc) => ({ name: nm, ...prop(a.filter((t) => t.stim.isAnchor && anc(t) === pc)) })).filter((x) => x.n);
+    const stats = (arr) => {
+      const hits = prop(arr.filter((t) => t.stim.isAnchor)), lures = arr.filter((t) => !t.stim.isAnchor);
+      const ds = [...new Set(lures.map((t) => centsDist(anchorOffCents(t))))].sort((x, y) => x - y);
+      return { hitRate: hits.acc, nHits: hits.n, ...prop(arr),
+        byAnchor: PC.map((nm, pc) => ({ name: nm, ...prop(arr.filter((t) => t.stim.isAnchor && anc(t) === pc)) })).filter((x) => x.n),
+        falseAlarmsByCents: ds.map((d) => { const g = lures.filter((t) => centsDist(anchorOffCents(t)) === d); return { cents: d, n: g.length, faRate: g.length ? g.filter((t) => t.resp === "yes").length / g.length : null }; }) };
+    };
+    const pop = a.filter((t) => t.stim.popup), block = a.filter((t) => !t.stim.popup);
     // How long does today's note survive? Pop-ups log time since you last heard it.
     const bucket = (ms) => (ms == null ? null : ms < 60000 ? "<1 min" : ms < 300000 ? "1–5 min" : ">5 min");
-    const byDelay = ["<1 min", "1–5 min", ">5 min"].map((label) => ({ label, ...prop(a.filter((t) => bucket(t.stim.sinceAnchorMs) === label)) }));
-    out.indices.anchorLock = { hitRate: hits.acc, nHits: hits.n, byAnchor, byDelay, popup: prop(a.filter((t) => t.stim.popup)), block: prop(a.filter((t) => !t.stim.popup)),
-      falseAlarmsByCents: ds.map((d) => { const g = lures.filter((t) => centsDist(anchorOffCents(t)) === d); return { cents: d, n: g.length, faRate: g.length ? g.filter((t) => t.resp === "yes").length / g.length : null }; }) };
+    const byDelay = ["<1 min", "1–5 min", ">5 min"].map((label) => ({ label, ...prop(pop.filter((t) => bucket(t.stim.sinceAnchorMs) === label)) }));
+    out.indices.anchorLock = { ...stats(pop), byDelay, popup: prop(pop), block: prop(block), legacy: stats(block) };
   }
 
   // ---- 10. Song anchors (PP-MIDI association) -------------------------------------------
@@ -399,10 +466,10 @@ export function analyze({ sessions = [], trials = [] } = {}) {
 
   // ---- 11. In tune? (categorical tuning template) -------------------------------------------
   {
-    const tu = by("tune").filter(graded);
+    const all = by("tune").filter(graded), tu = all.filter(validTrial);      // pre-fix trials leaked a tuning grid
     const off = tu.filter((t) => !t.stim.inTune);
     const cs = [...new Set(off.map((t) => Math.abs(t.stim.cents)))].sort((a, b) => a - b);
-    out.indices.tune = { ...prop(tu), inTune: prop(tu.filter((t) => t.stim.inTune)), detuned: prop(off),
+    out.indices.tune = { ...prop(tu), excluded: all.length - tu.length, inTune: prop(tu.filter((t) => t.stim.inTune)), detuned: prop(off),
       byCents: cs.map((c) => ({ cents: c, ...prop(off.filter((t) => Math.abs(t.stim.cents) === c)) })) };
   }
 
@@ -420,10 +487,16 @@ export function analyze({ sessions = [], trials = [] } = {}) {
   }
   // ---- 11c. Neighbors: which next-door chroma pairs are muddy? ----------------------------
   {
+    // Two-choice (pair, choices shown first) vs three-choice (trio, choices appear with the note).
     const pr = by("pair").filter(graded);
-    const key = (t) => [...t.stim.pair].sort((a, b) => a - b).map((x) => PC[x]).join("/");
-    const pairs = [...new Set(pr.map(key))].map((k) => ({ pair: k, ...prop(pr.filter((t) => key(t) === k)) })).sort((a, b) => a.acc - b.acc);
-    out.indices.neighbors = { ...prop(pr), semitone: prop(pr.filter((t) => t.stim.step === 1)), wholeStep: prop(pr.filter((t) => t.stim.step === 2)), pairs };
+    const set = (t) => t.stim.set || t.stim.pair, nCh = (t) => t.stim.nChoices || set(t).length;
+    const key = (t) => set(t).map((x) => PC[x]).join("/");                  // logged low → high
+    const groups = (arr) => [...new Set(arr.map(key))].map((k) => ({ pair: k, ...prop(arr.filter((t) => key(t) === k)) })).sort((a, b) => a.acc - b.acc);
+    const two = pr.filter((t) => nCh(t) === 2), trio = pr.filter((t) => nCh(t) === 3);
+    const pos = (t) => set(t).indexOf(t.stim.pc);
+    out.indices.neighbors = { ...prop(pr), two: prop(two), semitone: prop(two.filter((t) => t.stim.step === 1)), wholeStep: prop(two.filter((t) => t.stim.step === 2)), pairs: groups(two),
+      trio: { ...prop(trio), middle: prop(trio.filter((t) => pos(t) === 1)), edge: prop(trio.filter((t) => pos(t) !== 1)), sets: groups(trio),
+        farMiss: trio.filter((t) => t.correct === false && Number.isFinite(t.resp) && cdist(t.stim.pc, t.resp) === 2).length } };
   }
 
   // ---- 12. Confusions + systematic shift ---------------------------------------------------
@@ -481,8 +554,10 @@ export function paramsFor(skill, L) {
     case "tune": return { cents: [50, 35, 25, 15, 10][l] };
     // Triangulate: max distance target↔imagined anchor, octave spread, imagine time
     case "tri": return { maxDist: [2, 3, 4, 5, 6][l], octaves: [[4], [3, 4], [3, 4, 5], [3, 4, 5], [2, 3, 4, 5]][l], secs: [3, 3, 2, 2, 2][l] };
-    // Neighbors: whole step → semitone, then more octaves, synth timbres, shorter notes
-    case "pair": return { step: [2, 1, 1, 1, 1][l], octaves: [[4], [4], [3, 4, 5], [3, 4, 5], [2, 3, 4, 5, 6]][l], synth: l >= 3, dur: [1.4, 1.4, 1.2, 1.0, 0.5][l] };
+    // Neighbors: whole-step pair → semitone pair → three next-door notes whose names
+    // only appear WITH the note (no pre-imagining the candidates), then more octaves,
+    // synth timbres, shorter notes.
+    case "pair": return { n: [2, 2, 3, 3, 3][l], step: [2, 1, 1, 1, 1][l], reveal: l >= 2, octaves: [[4], [3, 4, 5], [4], [3, 4, 5], [2, 3, 4, 5, 6]][l], synth: l >= 3, dur: [1.4, 1.2, 1.2, 1.0, 0.5][l] };
     default: return {};
   }
 }
@@ -498,6 +573,14 @@ export function stationLevels(sessions = []) {
     if (!days.has(d)) days.set(d, {});
     const agg = days.get(d);
     Object.entries(s.summary).forEach(([st, r]) => { if (!agg[st]) agg[st] = { n: 0, k: 0 }; agg[st].n += r.n; agg[st].k += r.k; });
+  });
+  // A station that joins the calibration later (Neighbors in v4) starts one step
+  // below where its drill had got to before that day, not from scratch.
+  const firstDay = {};
+  [...days.keys()].sort().forEach((d) => Object.entries(days.get(d)).forEach(([st, r]) => { if (r.n && !firstDay[st]) firstDay[st] = d; }));
+  SKILLS.forEach((st) => {
+    const before = sessions.filter((s) => kindOf(s) === "drill" && s.skill === st && Number.isFinite(s.endLevel) && (!firstDay[st] || (s.localDate || localDate(s.startedAt)) < firstDay[st]));
+    if (before.length) L[st] = Math.max(1, Math.min(LEVEL_MAX, before[before.length - 1].endLevel - 1));
   });
   [...days.keys()].sort().forEach((d) => {
     const agg = days.get(d);
@@ -524,10 +607,10 @@ export function noteWeights(trials = []) {
 export function makePlan({ sessions = [], trials = [] } = {}) {
   const L = stationLevels(sessions);
   const pcWeights = noteWeights(trials);
-  const counts = { cue: 4, imagine: 3, anchor: 5, name: 6, hold: 4, twins: 4, triad: 4, lockin: 2 };
+  const counts = { cue: 4, imagine: 3, anchor: 5, name: 6, pair: 4, hold: 4, twins: 4, triad: 4, lockin: 2 };
   const last3 = sessions.filter((s) => kindOf(s) === "calibration" && s.completed && s.summary).slice(-3);
   const accOf = (st) => { let n = 0, k = 0; last3.forEach((s) => { const r = s.summary[st]; if (r) { n += r.n; k += r.k; } }); return n >= 4 ? k / n : null; };
-  const ranked = ["cue", "anchor", "hold", "name", "twins", "triad"].map((st) => [st, accOf(st)]).filter(([, a]) => a != null).sort((x, y) => x[1] - y[1]);
+  const ranked = ["cue", "anchor", "hold", "name", "pair", "twins", "triad"].map((st) => [st, accOf(st)]).filter(([, a]) => a != null).sort((x, y) => x[1] - y[1]);
   let focus = null;
   if (ranked.length >= 3) {
     focus = ranked[0][0]; counts[focus] += 2;
@@ -551,9 +634,12 @@ export function suggestDrills(data = {}, now = Date.now()) {
   const weak = a.pcMap.filter((p) => p.n >= 3 && p.acc < 0.75).sort((x, y) => x.acc - y.acc).slice(0, 3).map((p) => p.name);
   const drillSess = sessions.filter((s) => kindOf(s) === "drill");
   const ranked = DRILLS.map((sk) => {
-    const g = prop(recent.filter((t) => t.station === sk));
-    let score = g.n >= 4 ? 1 - g.acc : 0.45;
-    let reason = g.n >= 4 ? `${Math.round(g.acc * 100)}% over the last 3 days` : "not much data on this yet";
+    // Scored on accuracy ABOVE GUESSING, so 79% on a 2-choice task isn't mistaken
+    // for strong when it's about as far above chance as 60% naming out of 12.
+    const gt = recent.filter((t) => t.station === sk && validTrial(t)), g = prop(gt), ch = gt.length ? mean(gt.map(chanceOf)) : 0;
+    const adj = g.n >= 4 ? Math.max(0, Math.min(1, (g.acc - ch) / (1 - ch))) : null;
+    let score = adj != null ? 1 - adj : 0.45;
+    let reason = g.n >= 4 ? `${Math.round(g.acc * 100)}% over the last 3 days${ch >= 0.2 ? ` (guessing gets ${Math.round(ch * 100)}%)` : ""}` : "not much data on this yet";
     const flag = (bonus, why) => { score += bonus; reason = why; };
     const last = Math.max(0, ...drillSess.filter((s) => s.skill === sk).map((s) => s.endedAt || s.startedAt));
     if (!last || now - last > 2 * DAY) score += 0.15;
@@ -567,9 +653,12 @@ export function suggestDrills(data = {}, now = Date.now()) {
       if (rp.enough && rp.ci && rp.ci.lo > 0.05) flag(0.35, "you name better right after hearing a labeled note — train without that crutch");
     }
     if (sk === "pair") {
+      // Weighted up while you're building: no reference, any octave, any timbre —
+      // it's chroma recognition you can't fake with your voice range.
+      score += 0.35; reason += " · weighted up: pure chroma, no reference";
       const wrong = trials.filter((t) => t.station === "name" && t.correct === false && Number.isFinite(t.resp));
       const nb = wrong.filter((t) => cdist(t.stim.pc, t.resp) === 1).length;
-      if (wrong.length >= 6 && nb / wrong.length >= 0.4) flag(0.25, `${Math.round((nb / wrong.length) * 100)}% of your naming misses are next-door notes — sharpen the neighbors`);
+      if (wrong.length >= 6 && nb / wrong.length >= 0.4) flag(0.1, `${Math.round((nb / wrong.length) * 100)}% of your naming misses are next-door notes — sharpen the neighbors`);
     }
     if (sk === "hold" && I.hold.enoughCost && I.hold.toneCost && I.hold.toneCost.d > 0.2) flag(0.2, "notes in between knock the pitch out of memory — practice holding it by name");
     return { skill: sk, title: SKILL_TITLE[sk], score: Math.round(score * 100) / 100, reason };

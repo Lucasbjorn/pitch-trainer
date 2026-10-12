@@ -36,7 +36,7 @@ export function setupCalibrate(ctx) {
     triad:   { icon: "🎹", color: "#fde2c8", blurb: "There's an E♭ in this chord — bottom, middle or top?" },
     tune:    { icon: "🎚️", color: "#dff3d8", blurb: "Exactly on a note, or a hair off? (pure pitch — no timbre tells)" },
     tri:     { icon: "🧭", color: "#e0e7ff", blurb: "Hear a note, imagine an anchor, find it from there. Which mental anchors work best?" },
-    pair:    { icon: "👯", color: "#fef3c7", blurb: "E♭ or D? Tell next-door notes apart with no reference." },
+    pair:    { icon: "👯", color: "#fef3c7", blurb: "E♭ or D? Then three next-door notes, named only once you hear it." },
   };
   // window.__calTestCloud lets the Playwright sync test stand in a fake server for Supabase.
   D.setCloud((typeof window !== "undefined" && window.__calTestCloud) || { upload: calUpload, download: calDownload, status: calCloudStatus });
@@ -705,15 +705,19 @@ export function setupCalibrate(ctx) {
   }
 
   // Neighbors: "E♭ or D?" — chroma between next-door notes, no reference.
+  // From L3 it's three next-door notes, and their names only appear once the note
+  // sounds, so you can't pre-imagine the candidates — you recognize, then check.
   async function trPair(info) {
-    const p = P("pair"), lo = rand(12), hi = (lo + p.step) % 12, pair = [lo, hi];
-    const pc = Math.random() < 0.5 ? lo : hi, oct = pick(p.octaves), m = midiOf(pc, oct);
+    const p = P("pair"), n = p.n || 2, lo = rand(12);
+    const set = Array.from({ length: n }, (_, j) => (lo + j * p.step) % 12);
+    const pos = rand(n), pc = set[pos], oct = pick(p.octaves), m = midiOf(pc, oct);
     const vtype = p.synth && Math.random() < 0.5 ? pick(VOICES) : null;
+    const names = (xs) => xs.map((x) => `<b>${PC[x]}</b>`).join(xs.length > 2 ? ", " : " or ").replace(/, (?=[^,]*$)/, " or ");
     stage(head("pair", info) + `
       <div class="cal-stage">
-        <div class="cal-say">Is this <b>${PC[lo]}</b> or <b>${PC[hi]}</b>?</div>
+        <div class="cal-say" id="pair-say">${p.reveal ? "Which next-door note? The three names appear with it." : `Is this ${names(set)}?`}</div>
         <div class="cal-phase" id="cal-phase">🌀 clearing…</div>
-        <div class="cal-choices" id="cal-ch" hidden>${pair.map((x) => `<button class="cal-choice big-note" data-v="${x}">${PC[x]}</button>`).join("")}</div>
+        <div class="cal-choices${n > 2 ? " trio" : ""}" id="cal-ch" hidden>${set.map((x) => `<button class="cal-choice big-note" data-v="${x}">${PC[x]}</button>`).join("")}</div>
         ${replayBtn}
         <div class="cal-fb" id="cal-fb"></div>
       </div>` + foot());
@@ -721,11 +725,12 @@ export function setupCalibrate(ctx) {
     const hear = () => (vtype ? playTuned(m, 0, vtype, p.dur) : playMidi(m, p.dur));
     setPhase(vtype ? "🎧 which one? (synth)" : "🎧 which one?");
     await hear(); if (abort) return null;
+    const say = $("#pair-say"); if (p.reveal && say) say.innerHTML = `${names(set)}?`;
     const rp = armReplay(hear);
     const { v, rt } = await ask("#cal-ch"); if (abort || v == null) return null;
     const resp = +v, correct = resp === pc;
     record("pair", correct);
-    logTrial("pair", { ti: info.i, stim: { pc, pair, step: p.step, oct, timbre: vtype || "piano", dur: p.dur }, resp, correct, rt, replays: rp.n });
+    logTrial("pair", { ti: info.i, stim: { pc, set, pair: set, nChoices: n, pos, reveal: !!p.reveal, step: p.step, oct, timbre: vtype || "piano", dur: p.dur }, resp, correct, rt, replays: rp.n, errSemis: correct ? 0 : D.circ(pc, resp) });
     markChoices("#cal-ch", pc, resp);
     fb(correct, `${correct ? "✅" : "❌"} it was ${PC[pc]}`);
     await sleep(300);
@@ -794,7 +799,7 @@ export function setupCalibrate(ctx) {
   // Anchor checks no longer come as a block (you'd still hear the last one):
   // they pop up at random points between other questions, never back to back.
   function makePopSlots(plan) {
-    const S = ["cue", "imagine", "name", "hold", "twins", "triad"].reduce((a, k) => a + (plan.counts[k] || 0), 0);
+    const S = ["cue", "imagine", "name", "pair", "hold", "twins", "triad"].reduce((a, k) => a + (plan.counts[k] || 0), 0);
     const K = plan.counts.anchor || 5, picks = new Set();
     for (const c of shuffle([...Array(Math.max(0, S - 2)).keys()].map((x) => x + 2))) {
       if (picks.size >= K) break;
@@ -818,6 +823,7 @@ export function setupCalibrate(ctx) {
     { title: "Song anchors", fn: () => calBlock("cue") },
     { title: "Imagine it", fn: () => calBlock("imagine") },
     { title: "Blindfold naming", fn: () => calBlock("name") },
+    { title: "Neighbors", fn: () => calBlock("pair") },
     { title: "Hold it", fn: () => calBlock("hold") },
     { title: "Octave twins", fn: () => calBlock("twins") },
     { title: "Find the note", fn: () => calBlock("triad") },
@@ -1150,7 +1156,7 @@ export function setupCalibrate(ctx) {
         <button class="cal-hub-cal" id="hub-cal">
           <div class="chc-k">DAILY CALIBRATION</div>
           <div class="chc-t">${lastCal ? `✓ Done at ${fmtTime(lastCal.startedAt)}${sumAcc(lastCal) != null ? ` · ${pct(sumAcc(lastCal))}` : ""}` : "Today's reading"}</div>
-          <div class="chc-s">${lastCal ? `Run it again — extra runs count as practice (run #${calsToday.length + 1}).` : "~7 min · song tags, imagery, naming, holds, chords. Your clean daily data point."}</div>
+          <div class="chc-s">${lastCal ? `Run it again — extra runs count as practice (run #${calsToday.length + 1}).` : "~8 min · song tags, imagery, naming, neighbors, holds, chords. Your clean daily data point."}</div>
           <div class="chc-anchor">⚓ Today's note: <b>${PC[dayAnchor]}</b>${anchorMode() === "fixed" ? " (always C)" : " · rotates daily, weakest first"}</div>
           <div class="chc-go">${lastCal ? "↻ Run again" : "▶ Start"}</div>
         </button>
@@ -1183,21 +1189,29 @@ export function setupCalibrate(ctx) {
   }
 
   // ---- account sync (phone ↔ laptop) --------------------------------------------
-  let lastSync = null, lastStatus = null, syncing = false;
+  let lastSync = null, lastStatus = null, syncP = null;
   function noteSync(r) { lastSync = { at: Date.now(), ...r }; return r; }
   const agoText = (t) => { const x = Math.round((Date.now() - t) / 1000); return x < 60 ? "just now" : x < 3600 ? `${Math.round(x / 60)}m ago` : `${Math.round(x / 3600)}h ago`; };
+  // One sync at a time; the hub and the ear model share it. Never throws.
+  function syncCore(onStatus) {
+    if (syncP) return syncP;
+    syncP = (async () => {
+      let st = { configured: false }, r = null;
+      try {
+        st = await D.cloudStatus(); lastStatus = st;
+        if (onStatus) onStatus(st);
+        if (st.signedIn && st.tableOk) r = noteSync(await D.syncAll());
+      } catch (_) {}
+      syncP = null;
+      return { st, r };
+    })();
+    return syncP;
+  }
+  const within = (p, ms) => Promise.race([p, new Promise((res) => setTimeout(() => res(null), ms))]);
   async function backgroundSync() {
-    if (syncing) return; syncing = true;
-    let st = { configured: false };
-    try {
-      st = await D.cloudStatus();
-      renderSync(st, true);
-      if (st.signedIn && st.tableOk) {
-        const r = noteSync(await D.syncAll());
-        if (r.pulled > 0 && $(".cal-hub")) { syncing = false; return enter({ skipSync: true }); }   // show the other device's runs
-      }
-    } catch (_) {}
-    syncing = false;
+    if (syncP) return;
+    const { st, r } = await syncCore((x) => renderSync(x, true));
+    if (r && r.pulled > 0 && $(".cal-hub")) return enter({ skipSync: true });   // show the other device's runs
     renderSync(st, false);
   }
   function renderSync(st, busy) {
@@ -1227,20 +1241,70 @@ export function setupCalibrate(ctx) {
   }
   const needs = (have, need, what) => `Needs more data — ${have}/${need} ${what}.`;
 
+  // Where the numbers come from: sync status + which devices' runs are included.
+  function coverageLine(sres, data) {
+    const devs = new Set(data.sessions.map((x) => x.device && x.device.id).filter(Boolean));
+    const fromOther = data.sessions.filter((x) => x._pulled).length;
+    const last = data.sessions[data.sessions.length - 1];
+    const when = (ms) => new Date(ms).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    const st = sres && sres.st, r = sres && sres.r;
+    const head = !sres ? "⚠️ Couldn't reach sync in time — showing this device only; your other device's newest runs may be missing."
+      : !st.configured ? "This device's data only (sync isn't set up)."
+      : !st.signedIn ? "Not signed in — this device's data only. Sign in on the hub to merge phone + laptop."
+      : !st.tableOk || !r ? "Sync unavailable — this device's data only."
+      : !r.ok ? `⚠️ Sync hiccup (${r.reason || "try again"}) — your other device's newest runs may be missing.`
+      : `☁️ Synced just now${r.pulled ? ` · pulled ${r.pulled} new records` : ""}.`;
+    const body = last ? ` Includes ${data.sessions.length} sessions from ${devs.size || 1} device${devs.size > 1 ? "s/browsers" : ""}${fromOther ? ` (${fromOther} from your other one)` : ""} · latest run ${when(last.startedAt)}.` : "";
+    return `<div class="cal-cover${sres && r && r.ok ? "" : " warn"}">${head}${body}</div>`;
+  }
+
   async function renderInsights() {
     clearTimers();
-    root.innerHTML = `<div class="cal-stage cal-trans"><div class="cal-big">📊</div><div class="cal-say">reading your data…</div></div>`;
+    root.innerHTML = `<div class="cal-stage cal-trans"><div class="cal-big">📊</div><div class="cal-say">syncing your devices…</div></div>`;
+    // Pull first, so this page shows every device's runs, not just this browser's.
+    const sres = await within(syncCore(), 8000);
+    if (!$(".cal-trans")) return;                                      // left while syncing
     const data = await D.allData();
-    const a = D.analyze(data), next = D.makePlan(data), I = a.indices, dl = drillLevels();
-    const days = a.daily.filter((d) => d.cold != null).slice(-14);
+    const a = D.analyze(data), next = D.makePlan(data), I = a.indices;
 
-    const trend = days.length ? `<div class="cal-trend">${days.map((d) => `<div class="cal-tbar" title="${d.date}: ${pct(d.cold)}${d.calRuns > 1 ? ` (+${d.calRuns - 1} more runs)` : ""}"><div style="height:${Math.round((d.cold || 0) * 100)}%"></div></div>`).join("")}</div>
-      <div class="cal-ins-m">First calibration of each day (the cold reading)${a.trend.coldSlopePerDay != null ? ` · ${a.trend.coldSlopePerDay >= 0 ? "+" : ""}${(a.trend.coldSlopePerDay * 100).toFixed(1)} pts/day` : ""}. ${a.nDrills} drill sets logged.</div>` : `<div class="cal-hint">No calibrations yet.</div>`;
+    // ---- scorecard: you vs guessing --------------------------------------------------
+    const SC_NAME = { anchor: "Anchor pop-ups" };
+    const scRows = a.scorecard.filter((r) => r.n >= 5).map((r) => {
+      const L = (x) => `${Math.round(x * 1000) / 10}%`;
+      return `<div class="cal-sc-row" title="${TITLE[r.station]}: ${r.k}/${r.n}, 95% range ${pct(r.lo)}–${pct(r.hi)}, guessing ${pct(r.chance)}${r.excluded ? ` · ${r.excluded} leaky-version trials not counted` : ""}">
+          <span class="cal-sc-name">${SC_NAME[r.station] || TITLE[r.station]}</span>
+          <div class="cal-sc-bar"><div class="cal-sc-ci" style="left:${L(r.lo)};width:${L(r.hi - r.lo)}"></div><div class="cal-sc-ch" style="left:${L(r.chance)}"></div><div class="cal-sc-you" style="left:${L(r.acc)}"></div></div>
+          <span class="cal-sc-v">${pct(r.acc)}<i>${r.beatsChance ? "✓ " : ""}vs ${pct(r.chance)} · n=${r.n}</i></span>
+        </div>`;
+    }).join("");
+    const scorecard = scRows ? `<div class="cal-sc">${scRows}</div>
+      <div class="cal-ins-m">Dot = you · shaded = 95% range · tick = what guessing scores (yes/no tasks: always giving the more common answer). ✓ = clearly above guessing. Only the fixed versions of each task count.</div>` : `<div class="cal-hint">Needs a few more trials.</div>`;
+
+    // ---- progress: a fixed test, and the daily reading (with its difficulty changes) ---
+    const fx = a.fixedNaming, fxDays = fx.rows.slice(-14);
+    const dayNum = (d) => +d.slice(8);
+    const fixedTrend = fxDays.length ? `<div class="cal-trend ckpt">${fxDays.map((d) => `<div class="cal-tbar" title="${d.date}: ${d.k}/${d.n}"><div style="height:${Math.round((d.acc || 0) * 100)}%;opacity:${d.n >= 4 ? 1 : 0.4}"></div><span>${dayNum(d.date)}</span></div>`).join("")}</div>
+      <div class="cal-ins-m">Same test every day — naming in the middle octave, piano, cleanser on — so difficulty can't move it. ${pct(fx.acc)} overall (n=${fx.n}, guessing 8%).${fx.daysUsed >= 3 && fx.slopePerDay != null ? ` Trend ${fx.slopePerDay >= 0 ? "+" : ""}${(fx.slopePerDay * 100).toFixed(1)} pts/day over ${fx.daysUsed} days.` : " A trend needs 4+ of these on 3+ days (faded bars have fewer)."}</div>` : `<div class="cal-hint">No middle-octave naming yet.</div>`;
+    const days = a.daily.filter((d) => d.cold != null).slice(-14);
+    const trend = days.length ? `<div class="cal-trend ckpt">${days.map((d) => `<div class="cal-tbar" title="${d.date}: ${pct(d.cold)}${d.calRuns > 1 ? ` (+${d.calRuns - 1} more runs)` : ""}${d.levelUps.length ? ` · harder today: ${d.levelUps.map((x) => TITLE[x]).join(", ")}` : ""}"><div style="height:${Math.round((d.cold || 0) * 100)}%"></div><span>${d.levelUps.length ? "▲" : ""}${dayNum(d.date)}</span></div>`).join("")}</div>
+      <div class="cal-ins-m">First calibration each day, scored at <i>that day's</i> difficulty. ▲ = levels went up that day, so a dip there isn't a slump. ${a.nDrills} drill sets logged.</div>` : `<div class="cal-hint">No calibrations yet.</div>`;
 
     const pcMap = `<div class="cal-pcmap">${a.pcMap.map((p) => {
       const col = p.n >= 3 ? `hsl(${Math.round(p.acc * 120)},70%,${p.acc > 0.5 ? 40 : 50}%)` : "var(--card2)";
       return `<div class="cal-pc" style="background:${col};color:${p.n >= 3 ? "#fff" : "var(--muted)"}"><b>${p.name}</b><span>${p.n >= 3 ? pct(p.acc) : `n=${p.n}`}</span></div>`;
     }).join("")}</div>`;
+
+    // ---- two ways of knowing a note ------------------------------------------------
+    const sg = I.strategy;
+    const comb = (bs) => { const n = bs.reduce((x, b) => x + b.n, 0), k = bs.reduce((x, b) => x + b.k, 0); return { n, k, acc: n ? k / n : null }; };
+    const fast = comb(sg.name.slice(0, 2)), mid = sg.name[2], slow = sg.name[3];
+    const dip = fast.n >= 8 && mid.n >= 5 && slow.n >= 5 && mid.acc + 0.2 <= Math.min(fast.acc, slow.acc);
+    const rtRow = (label, bins) => `<div class="cal-rt-l">${label}</div>${bins.map((b) => `<div class="cal-rt-c" style="background:${b.n >= 3 ? `hsla(${Math.round(b.acc * 120)},70%,45%,0.18)` : "transparent"}">${b.n ? pct(b.acc) : "—"}<i>n=${b.n}</i></div>`).join("")}`;
+    const strategy = `<div class="cal-ins-card"><div class="cal-ins-t">How you know a note <span class="cal-ins-m" style="margin:0">accuracy by answer time</span></div>
+        <div class="cal-rt"><div></div>${sg.name.map((b) => `<div class="cal-rt-h">${b.label}</div>`).join("")}${rtRow("Naming (12)", sg.name)}${rtRow("Neighbors", sg.pair)}</div>
+        <div class="cal-ins-r">${fast.n + mid.n + slow.n < 20 ? needs(fast.n + mid.n + slow.n, 20, "naming trials") : dip
+          ? `Two routes: <b>instant recognition</b> (under 3s, ${pct(fast.acc)}) and a <b>slow deliberate check</b> (over 6s, ${pct(slow.acc)}). The in-between zone (${pct(mid.acc)}) is where neither kicks in. With only 2–3 candidates (Neighbors) the check is short enough to work fast.`
+          : `Fast + right is recognition; slow + right is generating candidates in your head and checking. Fast answers: ${pct(fast.acc)} · slow (>6s): ${pct(slow.acc)}.`}</div></div>`;
 
     const rp = I.rpLeak;
     const rpRead = !rp.enough ? needs(rp.noWash.n + rp.wash.n, 23, "naming trials (with & without the cleanser)")
@@ -1258,6 +1322,15 @@ export function setupCalibrate(ctx) {
       ? (hd.toneCost.lo > 0.1 ? "Stray notes during the hold hurt much more than noise → you're holding the <b>sound</b>, not the <b>name</b>." : "Stray notes hurt about as much as noise → you're holding the pitch <b>by name</b>. ✓")
       : needs(Math.min(hd.noise.n, hd.tones.n), 8, "holds of each kind (noise / stray notes)");
     const fa100 = (al.falseAlarmsByCents.find((x) => x.cents === 100) || {}).faRate;
+    const alRead = al.n >= 5 ? `Pop-up checks between other questions — can you still tell today's note from look-alikes?${al.nHits ? ` Real note recognized ${pct(al.hitRate)}.` : ""}${fa100 != null ? ` Fooled by a semitone neighbor ${pct(fa100)}.` : ""}` : needs(al.n, 5, "pop-up checks");
+    const alMeta = [al.byDelay.filter((x) => x.n).map((x) => `${x.label}: ${pct(x.acc)}`).join(" · "), al.falseAlarmsByCents.filter((x) => x.n).map((x) => `±${x.cents}¢: ${pct(x.faRate)} fooled`).join(" · "),
+      al.block.n ? `old back-to-back block ${pct(al.block.acc)} (n=${al.block.n}) not counted — you could hear the last one` : ""].filter(Boolean).join(" — ");
+    const tuRead = tu.n >= 8 ? `Spotting a detuned note with no reference — your tuning template. Right-on notes called right ${pct(tu.inTune.acc)}.` : needs(tu.n, 8, "trials of the fixed version");
+    const tuMeta = [tu.byCents.map((x) => `±${x.cents}¢: ${pct(x.acc)}`).join(" · "), tu.excluded ? `${tu.excluded} older trials not counted (that version leaked a tuning grid)` : ""].filter(Boolean).join(" — ");
+    const nbVal = nb.trio.n >= 5 ? `${pct(nb.trio.acc)} <small>of 3</small>` : pct(nb.two.acc);
+    const nbRead = nb.n >= 8 ? `Next-door notes, no reference, any octave. 2 choices: ${pct(nb.two.acc)} (guessing 50%)${nb.trio.n ? ` · 3 choices, named only once you hear it: ${pct(nb.trio.acc)} (guessing 33%)${nb.trio.n >= 6 ? ` — middle note ${pct(nb.trio.middle.acc)}, edges ${pct(nb.trio.edge.acc)}` : ""}` : ""}.` : needs(nb.n, 8, "Neighbors trials");
+    const muddy = [...nb.pairs, ...nb.trio.sets].filter((x) => x.n >= 3).sort((x, y) => x.acc - y.acc).slice(0, 3);
+    const nbMeta = [`semitone ${pct(nb.semitone.acc)} · whole step ${pct(nb.wholeStep.acc)}`, muddy.length ? `muddiest: ${muddy.map((x) => `${x.pair} ${pct(x.acc)}`).join(", ")}` : ""].filter(Boolean).join(" — ");
     const ctxBest = (rows) => { const r = rows.filter((x) => x.n >= 8).sort((x, y) => y.acc - x.acc); return r.length >= 2 ? `${r[0].key} (${pct(r[0].acc)}) vs ${r[r.length - 1].key} (${pct(r[r.length - 1].acc)})` : null; };
     const C = a.context, wu = C.warmup;
     const lines = [ctxBest(C.timeOfDay) && `Time of day: ${ctxBest(C.timeOfDay)}`, ctxBest(C.energy) && `Energy: ${ctxBest(C.energy)}`,
@@ -1268,29 +1341,33 @@ export function setupCalibrate(ctx) {
     root.innerHTML = `<div class="cal-ins">
         <div class="cal-top"><button class="cal-x" id="cal-back">‹</button><div class="cal-ins-h">Your ear model</div><div style="width:2rem"></div></div>
         <div class="cal-ins-sum">${a.nSessions} calibrations · ${a.nDrills} drill sets · ${a.nTrials} trials · 🔥 ${streakFrom(data.sessions)}</div>
-        <div class="cal-sec">Daily reading</div>${trend}
+        ${coverageLine(sres, data)}
+        <div class="cal-sec">Scorecard <span>you vs guessing</span></div>${scorecard}
+        <div class="cal-sec">Progress <span>same test every day</span></div>${fixedTrend}
+        <div class="cal-sec">Daily reading <span>cold run, at that day's level</span></div>${trend}
         <div class="cal-sec">Pitch map <span>naming accuracy by note</span></div>${pcMap}
         <div class="cal-sec">How you're getting notes <span>mechanism tests</span></div>
+        ${strategy}
         ${card("Relative-pitch leak", rp.enough ? pts(rp.diff) : "—", rpRead + persev, rp.enough ? `no cleanser ${pct(rp.noWash.acc)} (n=${rp.noWash.n}) · cleanser ${pct(rp.wash.acc)} (n=${rp.wash.n})` : "")}
         ${card("Hidden anchor", an.verdict === "counting-from-anchor" ? an.anchorName : an.verdict === "flat" ? "Flat ✓" : "—", anRead, an.n ? `n=${an.n} correct trials` : "")}
+        ${card("Neighbors", nbVal, nbRead, nbMeta)}
         ${card("Gut vs compute", gut.medRtCorrect ? `${(gut.medRtCorrect / 1000).toFixed(1)}s` : "—", gut.n >= 10 ? `Median time on correct answers. ${pct(gut.fastCorrectRate)} are fast (<1.5s) hits — fast + right is what categorical AP looks like.` : needs(gut.n, 10, "naming trials"), gut.medRtWrong ? `wrong answers: ${(gut.medRtWrong / 1000).toFixed(1)}s` : "")}
         ${card("Song anchors", pct(so.acc), so.n >= 8 ? `Tag → note ${pct(so.cueToNote.acc)} · bare note → tag ${pct(so.noteToCue.acc)}. The bare-note direction is the real AP bridge.` : needs(so.n, 8, "song-anchor trials"), so.byPc.filter((x) => x.n >= 2).sort((x, y) => x.acc - y.acc).slice(0, 4).map((x) => `${x.name} ${pct(x.acc)}`).join(" · "))}
         ${card("Hold it", hd.enoughCost ? pts(hd.toneCost.d) : "—", holdRead, `noise ${pct(hd.noise.acc)} (n=${hd.noise.n}) · stray notes ${pct(hd.tones.acc)} (n=${hd.tones.n})${hd.byCents.length ? " · " + hd.byCents.map((x) => `${x.cents}¢ ${pct(x.acc)}`).join(" · ") : ""}`)}
-        ${card("In tune?", pct(tu.acc), tu.n >= 8 ? `Spotting a detuned note with no reference — your tuning template. Right-on notes called right ${pct(tu.inTune.acc)}.` : needs(tu.n, 8, "in-tune trials"), tu.byCents.map((x) => `±${x.cents}¢: ${pct(x.acc)}`).join(" · "))}
+        ${card("Anchor precision", al.n ? pct(al.acc) : "—", alRead, alMeta)}
+        ${card("In tune?", tu.n ? pct(tu.acc) : "—", tuRead, tuMeta)}
         ${card("Timbre lock", tb.enough ? pts(tb.diff.d) : "—", tbRead, `piano ${pct(tb.piano.acc)} · sine ${pct(tb.sine.acc)} (n=${tb.sine.n})`)}
         ${card("Register cues", reg.spread != null ? pts(reg.spread) : "—", reg.spread == null ? "Needs ≥5 trials in two octaves." : reg.spread > 0.25 ? "Accuracy swings a lot by octave → you may be using <b>register</b> as a cue." : "Similar across octaves → you're hearing <b>chroma</b>, not height. ✓", reg.byOct.map((r) => `oct ${r.oct}: ${pct(r.acc)}`).join(" · "))}
         ${card("Chroma vs height", pct(ch.acc), ch.n >= 6 ? "Octave twins: spotting the odd note name across octaves." : needs(ch.n, 6, "octave-twins trials"), ch.byOffset.filter((x) => x.n).map((x) => `${x.semis}st: ${pct(x.acc)}`).join(" · "))}
         ${card("Inner pitch", im.nSung ? `${im.meanBiasCents > 0 ? "+" : ""}${Math.round(im.meanBiasCents)}¢` : "—", im.nSung >= 5 ? `Your sung template runs ${Math.abs(im.meanBiasCents) < 15 ? "dead center" : im.meanBiasCents > 0 ? "<b>sharp</b>" : "<b>flat</b>"}; ${pct(im.within50)} within a quarter-tone (avg miss ${Math.round(im.meanAbsCents)}¢).` : `Turn on 🎤 singing to measure your internal template.${im.nSelf ? ` Self-rated "nailed it": ${pct(im.selfNailedRate)}.` : ""}`, im.nSung ? `n=${im.nSung} sung` : "")}
-        ${card("Anchor precision", pct(al.hitRate), al.nHits >= 5 ? `Hit rate on the real anchor note.${fa100 != null ? ` Fooled by a semitone neighbor ${pct(fa100)} of the time.` : ""}${al.byAnchor.length > 1 ? ` By note: ${al.byAnchor.map((x) => `${x.name} ${pct(x.acc)}`).join(", ")}.` : ""}` : needs(al.nHits, 5, "anchor trials"), [al.byDelay.filter((x) => x.n).map((x) => `${x.label}: ${pct(x.acc)}`).join(" · "), al.falseAlarmsByCents.filter((x) => x.n).map((x) => `±${x.cents}¢: ${pct(x.faRate)} fooled`).join(" · ")].filter(Boolean).join(" — "))}
         ${card("Mental anchors", ma.best.length ? ma.best[0].name : "—", ma.best.length >= 2 ? `Triangulating from an imagined note works best from <b>${ma.best.map((x) => x.name).join(", ")}</b> and worst from <b>${ma.worst.map((x) => x.name).join(", ")}</b>.` : needs(ma.byAnchor.filter((x) => x.n >= 3).length, 2, "anchors with 3+ Triangulate trials"), ma.byDist.map((x) => `${x.dist}st: ${pct(x.acc)}`).join(" · "))}
-        ${card("Neighbors", pct(nb.acc), nb.n >= 8 ? `Telling next-door notes apart with no reference.${nb.pairs.filter((x) => x.n >= 3).length ? ` Muddiest: ${nb.pairs.filter((x) => x.n >= 3).slice(0, 3).map((x) => `${x.pair} ${pct(x.acc)}`).join(", ")}.` : ""}` : needs(nb.n, 8, "Neighbors trials"), `semitone ${pct(nb.semitone.acc)} · whole step ${pct(nb.wholeStep.acc)}`)}
         <div class="cal-sec">Confusions</div>
         ${a.confusions.length ? `<div class="cal-conf">${a.confusions.map((c) => `<div><b>${c.from} → ${c.to}</b> ×${c.n} <span>${c.kind}</span></div>`).join("")}</div>${sh.nWrong >= 6 ? `<div class="cal-ins-m">Errors lean ${sh.meanSignedSemis > 0.3 ? "sharp" : sh.meanSignedSemis < -0.3 ? "flat" : "neither way"} (mean ${sh.meanSignedSemis.toFixed(2)} st).</div>` : ""}` : `<div class="cal-hint">No naming errors logged yet.</div>`}
         <div class="cal-sec">When you're sharpest</div>
         <div class="cal-ins-r">${lines.join("<br>") || "Needs a few more sessions."}</div>
         <div class="cal-sec">Program</div>
         <div class="cal-ins-m" style="margin-bottom:0.4rem">Next calibration${next.focus ? ` · extra reps on <b>${TITLE[next.focus]}</b>` : ""}:</div>
-        <div class="cal-chips">${chips(next.levels)}</div>
+        <div class="cal-chips">${chips(Object.fromEntries(D.CAL_STATIONS.map((st) => [st, next.levels[st]])))}</div>
         <div class="cal-ins-m" style="margin:0.7rem 0 0.4rem">Drill levels (move inside drills + your ⏫/⏬):</div>
         <div class="cal-chips">${chips(Object.fromEntries(D.DRILLS.map((sk) => [sk, drillLevel(sk, next, data.sessions)])))}</div>
         <div class="cal-ins-m">Calibration levels move at most one step per day (≥80% up, ≤50% down); weak notes are oversampled.</div>
@@ -1300,12 +1377,17 @@ export function setupCalibrate(ctx) {
           <button class="cal-cta ghost-cta" id="cal-csv">⬇ Export CSV</button>
           <button class="cal-cta ghost-cta" id="cal-syncnow">☁️ Sync now</button>
         </div>
-        <div class="cal-ins-m" id="cal-exp-msg">Everything is saved on this device as you go. Export when you want me to analyze it.</div>
+        <div class="cal-ins-m" id="cal-exp-msg">Everything is saved on this device as you go and synced to your account. Export when you want me to analyze it.</div>
       </div>`;
     $("#cal-back").onclick = () => enter();
     $("#cal-json").onclick = async () => { msg("preparing…"); const b = await D.exportBundle(); await saveFile(`calibration-${D.localDate(Date.now())}.json`, JSON.stringify(b, null, 1), "application/json"); msg(`Exported ${b.trials.length} trials from ${b.sessions.length} sessions${b.pulledFromCloud ? ` (pulled ${b.pulledFromCloud} new from the cloud first)` : ""}.`); };
     $("#cal-csv").onclick = async () => { const b = await D.exportBundle(); await saveFile(`calibration-trials-${D.localDate(Date.now())}.csv`, D.trialsToCSV(b.trials), "text/csv"); msg(`Exported ${b.trials.length} trials as CSV.`); };
-    $("#cal-syncnow").onclick = async () => { msg("syncing…"); const r = noteSync(await D.syncAll()); msg(r.ok ? `☁️ Synced — ↓${r.pulled} pulled, ↑${r.pushed} pushed.` : `Sync unavailable — ${r.reason}. (Sign in on the hub first.)`); };
+    $("#cal-syncnow").onclick = async () => {
+      msg("syncing…");
+      const { st, r } = await syncCore();
+      if (r && r.ok && r.pulled) return renderInsights();                // new runs from the other device → redraw
+      msg(r && r.ok ? `☁️ Synced — ↓${r.pulled} pulled, ↑${r.pushed} pushed.` : `Sync unavailable — ${(r && r.reason) || (st.signedIn ? "try again" : "sign in on the hub first")}.`);
+    };
   }
   function msg(t) { const el = $("#cal-exp-msg"); if (el) el.textContent = t; }
   async function saveFile(name, text, type) {
