@@ -14,14 +14,20 @@
 // listeners (tools/test-cal-analysis.mjs). See CALIBRATION.md for the protocol.
 
 export const SCHEMA_VERSION = 2;   // record shape (v2 adds mode, protocol, localDate, sessionOfDay)
-export const PROTOCOL = 4;         // v1 first week · v2 harder hold/anchor + song anchors · v3 anchor pop-ups, breathers, replay-once, RT from onset · v4 Neighbors station + trios
-export const SKILLS = ["cue", "name", "imagine", "anchor", "hold", "twins", "triad", "tune", "tri", "pair"];
-export const SKILL_TITLE = { cue: "Song anchors", name: "Blindfold naming", imagine: "Imagine & sing", anchor: "Anchor lock", hold: "Hold it", twins: "Octave twins", triad: "Find the note", tune: "In tune?", tri: "Triangulate", pair: "Neighbors" };
+export const PROTOCOL = 5;         // v1 first week · v2 harder hold/anchor + song anchors · v3 anchor pop-ups, breathers, replay-once, RT from onset · v4 Neighbors station + trios · v5 cold draws, naming core, Gut & check, Inner tuner, Tag at home, Name or hold, note-lure anchor pop-ups
+export const SKILLS = ["cue", "name", "imagine", "anchor", "hold", "twins", "triad", "tune", "tri", "pair", "gut", "tuner", "taghome", "nhold"];
+export const SKILL_TITLE = { cue: "Song anchors", name: "Blindfold naming", imagine: "Imagine & sing", anchor: "Anchor lock", hold: "Hold it", twins: "Octave twins", triad: "Find the note", tune: "In tune?", tri: "Triangulate", pair: "Neighbors", gut: "Gut & check", tuner: "Inner tuner", taghome: "Tag at home?", nhold: "Name or hold?" };
 export const STATIONS_GRADED = SKILLS;
-// Drills you can launch (anchor checks are pop-ups now, not a drill of their own).
-export const DRILLS = SKILLS.filter((s) => s !== "anchor");
-// Graded stations in the daily calibration (protocol 4), in running order.
-export const CAL_STATIONS = ["cue", "imagine", "name", "pair", "hold", "twins", "triad", "anchor"];
+// Drills you can launch. Anchor checks are pop-ups, not a drill; Triangulate was
+// retired in v5 (imagining an anchor turned close guesses into off-by-ones —
+// its old data still shows in the ear model). Gut & check replaces it.
+export const RETIRED = ["tri"];
+export const DRILLS = SKILLS.filter((s) => s !== "anchor" && !RETIRED.includes(s));
+// Graded stations in the daily calibration (protocol 5), in running order.
+export const CAL_STATIONS = ["cue", "taghome", "tuner", "name", "pair", "hold", "twins", "triad", "anchor"];
+// Questions whose notes were heard WITH their names this recently count as "warm"
+// (short-term memory can answer them). Cold draws avoid them.
+export const WARM_MS = 60000;
 export const localDate = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 export const kindOf = (s) => s.kind || "calibration";      // v1 sessions were all calibrations
 const modeOf = (t) => t.mode || "calibration";
@@ -247,13 +253,40 @@ const graded = (t) => typeof t.correct === "boolean";
 const nChoicesOf = (t) => t.stim.nChoices || (Array.isArray(t.stim.pair) ? t.stim.pair.length : 2);
 function chanceOf(t) {
   switch (t.station) {
-    case "name": case "tri": return 1 / 12;
+    case "name": case "tri": case "gut": return 1 / 12;
     case "cue": return 1 / (t.stim.choices || 12);
     case "pair": return 1 / nChoicesOf(t);
     case "twins": case "triad": return 1 / 3;
-    case "hold": case "anchor": case "tune": return 0.5;
+    case "hold": case "anchor": case "tune": case "tuner": case "taghome": case "nhold": return 0.5;
     default: return 0;
   }
+}
+// The notes a question's answer could be read off from short-term memory: the
+// target, plus (Neighbors) every choice, since hearing a distractor rules it out.
+const choiceSet = (t) => (t.station === "pair" ? t.stim.set || t.stim.pair || [] : [Number.isFinite(t.stim.pc) ? t.stim.pc : t.stim.target]);
+// Was this question "warm"? v5 trials log it; older ones (with a session sound
+// log, v3.5+) are rebuilt from that log with the same rule; otherwise unknown (null).
+// targetOnly: just the asked note (Neighbors logs that separately as targetWarm).
+export function warmOf(t, sessById, targetOnly = false) {
+  if (!t.stim) return null;
+  const logged = targetOnly && t.station === "pair" ? t.stim.targetWarm : t.stim.warm;
+  if (typeof logged === "boolean") return logged;
+  const s = sessById && sessById.get(t.sessionId);
+  if (!s || !Array.isArray(s.soundLog) || !t.ctx || !t.ctx.startAt) return null;
+  const start = t.ctx.startAt - s.startedAt, pcs = new Set(targetOnly ? [t.stim.pc] : choiceSet(t));
+  return s.soundLog.some(([at, m, , lab]) => lab && at < start && at >= start - WARM_MS && pcs.has(((m % 12) + 12) % 12));
+}
+// Pick an item none of whose notes are warm (weighted); if every item is warm,
+// fall back to any. Pure, so the trial code and tests share it.
+// `staleness(x)` (e.g. ms since its notes were last heard named): with no cold
+// option, the stalest item wins instead of a random warm one.
+export function chooseCold(items, isWarm, { weight = () => 1, rnd = Math.random, staleness = null } = {}) {
+  const cold = items.filter((x) => !isWarm(x));
+  if (!cold.length && staleness) { const top = Math.max(...items.map(staleness)); return { item: items.find((x) => staleness(x) === top), cold: false }; }
+  const pool = cold.length ? cold : items;
+  const w = pool.map((x) => Math.max(1e-6, weight(x))), tot = w.reduce((a, b) => a + b, 0);
+  let r = rnd() * tot, i = 0; while (i < pool.length - 1 && r >= w[i]) { r -= w[i]; i++; }
+  return { item: pool[i], cold: cold.length > 0 };
 }
 // Trials from versions with a known leak don't count toward headline numbers.
 const validTrial = (t) => (t.station === "anchor" ? !!(t.stim && t.stim.popup) : t.station === "tune" ? !!(t.stim && t.stim.voice) : true);
@@ -264,6 +297,9 @@ const holdCents = (t) => (t.stim.probeCents != null ? Math.abs(t.stim.probeCents
 export function analyze({ sessions = [], trials = [] } = {}) {
   const T = trials.filter((t) => !t.practice);
   const by = (st) => T.filter((t) => t.station === st);
+  const sessById = new Map(sessions.map((s) => [s.id, s]));
+  const warm = (t) => warmOf(t, sessById);
+  const coldWarm = (arr) => ({ cold: prop(arr.filter((t) => warm(t) === false)), warm: prop(arr.filter((t) => warm(t) === true)), unknown: arr.filter((t) => warm(t) == null).length });
   const name = by("name");
   const nameClean = name.filter((t) => t.stim && t.stim.wash !== false && t.stim.timbre !== "sine"); // canonical condition
   const out = {
@@ -300,6 +336,9 @@ export function analyze({ sessions = [], trials = [] } = {}) {
     d.levelUps = prevLv && d.coldLevels ? CAL_STATIONS.filter((st) => d.coldLevels[st] > (prevLv[st] || 1)) : [];
     if (d.coldLevels) prevLv = d.coldLevels;
   });
+  // First day each protocol shows up, so charts can mark where the games changed.
+  out.protocolStarts = {};
+  [...T].sort((a, b) => a.t - b.t).forEach((t) => { const pv = t.protocol || 1; if (!out.protocolStarts[pv]) out.protocolStarts[pv] = localDate(t.t); });
   const td = out.daily.filter((d) => d.cold != null);
   const tr = ols(td.map((_, i) => i), td.map((d) => d.cold));
   out.trend = { daysUsed: td.length, coldSlopePerDay: tr.slope, r: tr.r };
@@ -314,7 +353,8 @@ export function analyze({ sessions = [], trials = [] } = {}) {
     const ds = [...new Set(fixed.map((t) => localDate(t.t)))].sort();
     const rows = ds.map((date) => ({ date, ...prop(fixed.filter((t) => localDate(t.t) === date)) }));
     const used = rows.filter((r) => r.n >= 4), f = ols(used.map((_, i) => i), used.map((r) => r.acc));
-    out.fixedNaming = { rows, ...prop(fixed), slopePerDay: f.slope, daysUsed: used.length };
+    // v5 adds 6 of these per calibration ("core", cold target) — same definition, so the line continues.
+    out.fixedNaming = { rows, ...prop(fixed), slopePerDay: f.slope, daysUsed: used.length, core: prop(fixed.filter((t) => t.stim.core)), ...coldWarm(fixed) };
   }
 
   // ---- scorecard: every station against what guessing would get --------------------
@@ -322,14 +362,28 @@ export function analyze({ sessions = [], trials = [] } = {}) {
   // last anchor; the old In tune? leaked a tuning grid). Yes/no tasks use the stricter
   // "always give the more common answer" baseline.
   {
-    const yesNo = { hold: (t) => !!t.stim.same, anchor: (t) => !!t.stim.isAnchor, tune: (t) => !!t.stim.inTune };
-    const rows = ["name", "pair", "cue", "tri", "twins", "triad", "hold", "anchor", "tune"].map((st) => {
-      const g = by(st).filter((t) => graded(t) && validTrial(t)), p = prop(g);
+    const yesNo = { nhold: (t) => !!t.stim.same, hold: (t) => !!t.stim.same, anchor: (t) => !!t.stim.isAnchor, tune: (t) => !!t.stim.inTune, tuner: (t) => t.stim.cents > 0, taghome: (t) => !!t.stim.home };
+    // Neighbors counts only COLD questions (warm ones can be answered from short-term
+    // memory); Song anchors is split by direction (tag → note is song recognition).
+    const SPEC = [
+      { key: "name", station: "name" },
+      { key: "pair", station: "pair", label: "Neighbors · cold", keep: (t) => warm(t) === false },
+      { key: "note2cue", station: "cue", label: "Song anchors · note → tag", keep: (t) => t.stim.kind === "note2cue" },
+      { key: "taghome", station: "taghome" }, { key: "tuner", station: "tuner" }, { key: "gut", station: "gut", label: "Gut & check · final" },
+      { key: "twins", station: "twins" }, { key: "triad", station: "triad" }, { key: "hold", station: "hold" },
+      { key: "anchor", station: "anchor", label: "Anchor pop-ups", keep: (t) => t.stim.lureKind === "note" },
+      { key: "anchorCents", station: "anchor", label: "Anchor pop-ups · cents (≤v4)", keep: (t) => t.stim.lureKind !== "note" },
+      { key: "nhold", station: "nhold" }, { key: "tune", station: "tune" },
+      { key: "cue2note", station: "cue", label: "Song anchors · tag → note", keep: (t) => t.stim.kind === "cue2note" },
+      { key: "tri", station: "tri", label: "Triangulate (retired)" },
+    ];
+    const rows = SPEC.map(({ key, station: st, label, keep }) => {
+      const all = by(st).filter(graded), g = all.filter((t) => validTrial(t) && (!keep || keep(t))), p = prop(g);
       if (!p.n) return null;
       const yes = yesNo[st] ? g.filter(yesNo[st]).length / g.length : null;
       const chance = yes != null ? Math.max(yes, 1 - yes) : mean(g.map(chanceOf));
       const ci = wilson(p.k, p.n);
-      return { station: st, ...p, chance, lo: ci.lo, hi: ci.hi, beatsChance: ci.lo > chance, excluded: by(st).filter((t) => graded(t) && !validTrial(t)).length };
+      return { key, station: st, label: label || null, ...p, chance, lo: ci.lo, hi: ci.hi, beatsChance: ci.lo > chance, excluded: keep ? 0 : all.length - g.length };
     }).filter(Boolean);
     out.scorecard = rows;
   }
@@ -451,10 +505,17 @@ export function analyze({ sessions = [], trials = [] } = {}) {
         falseAlarmsByCents: ds.map((d) => { const g = lures.filter((t) => centsDist(anchorOffCents(t)) === d); return { cents: d, n: g.length, faRate: g.length ? g.filter((t) => t.resp === "yes").length / g.length : null }; }) };
     };
     const pop = a.filter((t) => t.stim.popup), block = a.filter((t) => !t.stim.popup);
+    // v5 pop-ups use whole-note lures (lureKind "note") + a guess; ≤v4 used cent lures.
+    const popNote = pop.filter((t) => t.stim.lureKind === "note"), popCents = pop.filter((t) => t.stim.lureKind !== "note");
+    const said = popNote.filter((t) => !t.stim.isAnchor && t.resp === "no"), named = said.filter((t) => Number.isFinite(t.guess));
+    const guess = { n: said.length, idk: said.filter((t) => t.guess === "idk").length, named: named.length, right: named.filter((t) => t.guess === t.stim.pc).length,
+      within1: named.filter((t) => cdist(t.guess, t.stim.pc) <= 1).length };
     // How long does today's note survive? Pop-ups log time since you last heard it.
     const bucket = (ms) => (ms == null ? null : ms < 60000 ? "<1 min" : ms < 300000 ? "1–5 min" : ">5 min");
     const byDelay = ["<1 min", "1–5 min", ">5 min"].map((label) => ({ label, ...prop(pop.filter((t) => bucket(t.stim.sinceAnchorMs) === label)) }));
-    out.indices.anchorLock = { ...stats(pop), byDelay, popup: prop(pop), block: prop(block), legacy: stats(block) };
+    const bySemis = [1, 2, 3, 4, 5, 6].map((d) => { const g = popNote.filter((t) => !t.stim.isAnchor && cdist(t.stim.pc, t.stim.anchorPc) === d); return { semis: d, n: g.length, faRate: g.length ? g.filter((t) => t.resp === "yes").length / g.length : null }; }).filter((x) => x.n);
+    out.indices.anchorLock = { ...stats(pop), byDelay, popup: prop(pop), block: prop(block), legacy: stats(block),
+      current: { ...stats(popNote), falseAlarmsBySemis: bySemis, guess }, cents: stats(popCents) };
   }
 
   // ---- 10. Song anchors (PP-MIDI association) -------------------------------------------
@@ -494,9 +555,73 @@ export function analyze({ sessions = [], trials = [] } = {}) {
     const groups = (arr) => [...new Set(arr.map(key))].map((k) => ({ pair: k, ...prop(arr.filter((t) => key(t) === k)) })).sort((a, b) => a.acc - b.acc);
     const two = pr.filter((t) => nCh(t) === 2), trio = pr.filter((t) => nCh(t) === 3);
     const pos = (t) => set(t).indexOf(t.stim.pc);
-    out.indices.neighbors = { ...prop(pr), two: prop(two), semitone: prop(two.filter((t) => t.stim.step === 1)), wholeStep: prop(two.filter((t) => t.stim.step === 2)), pairs: groups(two),
+    const tw = (t) => warmOf(t, sessById, true);
+    out.indices.neighbors = { ...prop(pr), ...coldWarm(pr), targetCold: prop(pr.filter((t) => tw(t) === false)), targetWarm: prop(pr.filter((t) => tw(t) === true)), twoCW: coldWarm(two), trioCW: coldWarm(trio), two: prop(two), semitone: prop(two.filter((t) => t.stim.step === 1)), wholeStep: prop(two.filter((t) => t.stim.step === 2)), pairs: groups(two),
       trio: { ...prop(trio), middle: prop(trio.filter((t) => pos(t) === 1)), edge: prop(trio.filter((t) => pos(t) !== 1)), sets: groups(trio),
         farMiss: trio.filter((t) => t.correct === false && Number.isFinite(t.resp) && cdist(t.stim.pc, t.resp) === 2).length } };
+  }
+
+  // ---- 11d. Naming: warm vs cold target -------------------------------------------------
+  out.indices.nameWarm = coldWarm(name.filter(graded));
+
+  // ---- 11e. Gut & check: does the deliberate check help or hurt? ------------------------
+  //  The gut answer is locked in first; then you may change it. Wrong→right vs
+  //  right→wrong says whether your "internal MIDI" check adds information.
+  {
+    const g = by("gut").filter((t) => graded(t) && Number.isFinite(t.gut));
+    const gc = (t) => t.gut === t.stim.pc;
+    const ch = g.filter((t) => t.resp !== t.gut);
+    const dir = (t) => circ(t.gut, t.resp);
+    const errs = (arr, f) => { const e = arr.map(f).filter((x) => x); return { n: e.length, sharp: e.filter((x) => x > 0).length, flat: e.filter((x) => x < 0).length }; };
+    out.indices.checking = { n: g.length, gut: prop(g.map((t) => ({ correct: gc(t) }))), final: prop(g),
+      changedRate: g.length ? ch.length / g.length : null, nChanged: ch.length,
+      wrongToRight: ch.filter((t) => !gc(t) && t.correct).length, rightToWrong: ch.filter((t) => gc(t) && !t.correct).length,
+      wrongToWrong: ch.filter((t) => !gc(t) && !t.correct).length, changedUp: ch.filter((t) => dir(t) > 0).length, changedDown: ch.filter((t) => dir(t) < 0).length,
+      gutErr: errs(g, (t) => circ(t.stim.pc, t.gut)), finalErr: errs(g, (t) => circ(t.stim.pc, t.resp)),
+      medRtGut: median(g.map((t) => t.rt).filter(Number.isFinite)), medRtCheck: median(g.map((t) => t.rtCheck).filter(Number.isFinite)) };
+  }
+
+  // ---- 11f. Inner tuner: where do your IMAGINED notes sit? ------------------------------
+  //  P("higher than imagined") vs true offset → the 50% point (PSE) is your imagined
+  //  note's offset from true pitch. Negative = you imagine flat.
+  {
+    const tn = by("tuner").filter((t) => graded(t) && Number.isFinite(t.stim.cents));
+    const fit = (arr) => {
+      if (arr.length < 8) return null;
+      let best = null;
+      for (let pse = -150; pse <= 150; pse += 1) for (const sl of [5, 8, 12, 18, 25, 35, 50, 70]) {
+        let ll = 0;
+        arr.forEach((t) => { const pu = Math.min(1 - 1e-4, Math.max(1e-4, 1 / (1 + Math.exp(-(t.stim.cents - pse) / sl)))); ll += Math.log(t.resp === "up" ? pu : 1 - pu); });
+        if (!best || ll > best.ll) best = { pse, slope: sl, ll };
+      }
+      return { pse: best.pse, slope: best.slope, n: arr.length };
+    };
+    const mags = [...new Set(tn.map((t) => Math.abs(t.stim.cents)))].sort((a, b) => a - b);
+    out.indices.tuner = { ...prop(tn), fit: fit(tn), byCents: mags.map((c) => ({ cents: c, ...prop(tn.filter((t) => Math.abs(t.stim.cents) === c)) })),
+      byPc: PC.map((nm, pc) => { const g = tn.filter((t) => t.stim.pc === pc); return { name: nm, n: g.length, fit: g.length >= 8 ? fit(g) : null }; }).filter((x) => x.fit) };
+  }
+
+  // ---- 11g. Tag at home? — does a song tag carry its PITCH, or only its tune? -----------
+  {
+    const th = by("taghome").filter(graded), shifted = th.filter((t) => !t.stim.home);
+    const mags = [...new Set(shifted.map((t) => Math.abs(t.stim.cents)))].sort((a, b) => a - b);
+    out.indices.tagHome = { ...prop(th), home: prop(th.filter((t) => t.stim.home)), shifted: prop(shifted),
+      byCents: mags.map((c) => ({ cents: c, ...prop(shifted.filter((t) => Math.abs(t.stim.cents) === c)) })),
+      up: prop(shifted.filter((t) => t.stim.cents > 0)), down: prop(shifted.filter((t) => t.stim.cents < 0)) };
+  }
+
+  // ---- 11h. Name or hold?: does knowing the NAME help hold a note? -----------------------
+  //  2×2: name shown or not × noise or stray notes. Stray notes wipe a sound (echoic)
+  //  memory but not a name, so the name should help most under tones.
+  {
+    const nh = by("nhold").filter(graded);
+    const cell = (lab, intf) => prop(nh.filter((t) => !!t.stim.labeled === lab && (!intf || t.stim.interference === intf)));
+    const named = cell(true), unnamed = cell(false);
+    const strat = ["sound", "name", "both"].map((k) => ({ key: k, ...prop(nh.filter((t) => t.strategy === k)), labeled: nh.filter((t) => t.strategy === k && t.stim.labeled).length }));
+    const durs = [...new Set(nh.map((t) => t.stim.dur))].sort((x, y) => x - y);
+    out.indices.nameHold = { ...prop(nh), named, unnamed, benefit: diffCI(named, unnamed),
+      tones: { named: cell(true, "tones"), unnamed: cell(false, "tones") }, noise: { named: cell(true, "noise"), unnamed: cell(false, "noise") },
+      strategy: strat.filter((x) => x.n), byDur: durs.map((d) => ({ dur: d, named: prop(nh.filter((t) => t.stim.dur === d && t.stim.labeled)), unnamed: prop(nh.filter((t) => t.stim.dur === d && !t.stim.labeled)) })) };
   }
 
   // ---- 12. Confusions + systematic shift ---------------------------------------------------
@@ -546,7 +671,12 @@ export function paramsFor(skill, L) {
   switch (skill) {
     case "cue": return { choices: [4, 6, 12, 12, 12][l], mixBare: l >= 1, cleanse: true };
     case "imagine": return { secs: [8, 7, 6, 5, 4][l] };
-    case "anchor": return { lures: [[-300, -200, -100, 100, 200, 300, 500, 700], [-200, -100, 100, 200], [-200, -100, -100, 100, 100, 200], [-100, -50, 50, 100], [-50, -30, 30, 50]][l], octaves: l >= 2 ? [3, 4, 5] : [4] };
+    // Anchor pop-ups (v5): today's note or a DIFFERENT note (50/50), no cents. Lures
+    // are ≥minDist semitones away, plus a share of semitone neighbors at higher levels.
+    case "anchor": return { minDist: [3, 2, 2, 1, 1][l], nearFrac: [0, 0, 0.25, 0.4, 0.5][l], octaves: [[4], [4], [3, 4, 5], [3, 4, 5], [2, 3, 4, 5, 6]][l] };
+    // Name or hold?: the probe is always a full semitone off (or the same); levels
+    // lengthen the hold and add stray notes.
+    case "nhold": return { range: [[4, 7], [6, 10], [8, 13], [10, 16], [12, 20]][l], distractors: [3, 4, 5, 6, 8][l], semis: 1 };
     case "name": return { octaves: [[4], [3, 4], [3, 4, 5], [2, 3, 4, 5], [2, 3, 4, 5, 6]][l], noWashFrac: 0.3, sineFrac: 0.2 };
     case "hold": return { range: [[3, 6], [4, 8], [5, 10], [6, 13], [8, 16]][l], cents: [60, 45, 30, 20, 12][l], tonesFrac: 0.5, distractors: [3, 4, 5, 6, 7][l] };
     case "twins": return { offsets: [[3, 4, 5, 6, 7, 8, 9], [2, 3, 4, 5, 9, 10], [1, 2, 3, 9, 10, 11], [1, 2, 10, 11], [1, 11]][l] };
@@ -557,6 +687,12 @@ export function paramsFor(skill, L) {
     // Neighbors: whole-step pair → semitone pair → three next-door notes whose names
     // only appear WITH the note (no pre-imagining the candidates), then more octaves,
     // synth timbres, shorter notes.
+    // Gut & check: plain naming octaves; the check is the manipulation.
+    case "gut": return { octaves: [[4], [3, 4], [3, 4, 5], [2, 3, 4, 5], [2, 3, 4, 5, 6]][l] };
+    // Inner tuner: how far off true pitch the probe is (both signs), imagine time.
+    case "tuner": return { cents: [[100, 70], [70, 50], [50, 35], [35, 25], [25, 15]][l], secs: [3, 3, 3, 2, 2][l], octaves: l >= 2 ? [3, 4, 5] : [4] };
+    // Tag at home?: how far the shifted tags are moved.
+    case "taghome": return { cents: [[200], [100], [100, 70], [70, 50], [50, 35]][l] };
     case "pair": return { n: [2, 2, 3, 3, 3][l], step: [2, 1, 1, 1, 1][l], reveal: l >= 2, octaves: [[4], [3, 4, 5], [4], [3, 4, 5], [2, 3, 4, 5, 6]][l], synth: l >= 3, dur: [1.4, 1.2, 1.2, 1.0, 0.5][l] };
     default: return {};
   }
@@ -607,13 +743,17 @@ export function noteWeights(trials = []) {
 export function makePlan({ sessions = [], trials = [] } = {}) {
   const L = stationLevels(sessions);
   const pcWeights = noteWeights(trials);
-  const counts = { cue: 4, imagine: 3, anchor: 5, name: 6, pair: 4, hold: 4, twins: 4, triad: 4, lockin: 2 };
+  // v5: naming 6 → 10 (6 "core": middle octave, piano, cleanser, cold target); Imagine
+  // moved to drills (Inner tuner measures the same template without a mic);
+  // twins/triad trimmed; Song anchors is bare note → tag only.
+  const counts = { cue: 3, taghome: 4, tuner: 4, anchor: 5, name: 10, nameCore: 6, pair: 4, hold: 4, twins: 3, triad: 3, lockin: 2 };
   const last3 = sessions.filter((s) => kindOf(s) === "calibration" && s.completed && s.summary).slice(-3);
   const accOf = (st) => { let n = 0, k = 0; last3.forEach((s) => { const r = s.summary[st]; if (r) { n += r.n; k += r.k; } }); return n >= 4 ? k / n : null; };
-  const ranked = ["cue", "anchor", "hold", "name", "pair", "twins", "triad"].map((st) => [st, accOf(st)]).filter(([, a]) => a != null).sort((x, y) => x[1] - y[1]);
+  const ranked = ["cue", "taghome", "tuner", "anchor", "hold", "name", "pair", "twins", "triad"].map((st) => [st, accOf(st)]).filter(([, a]) => a != null).sort((x, y) => x[1] - y[1]);
   let focus = null;
   if (ranked.length >= 3) {
     focus = ranked[0][0]; counts[focus] += 2;
+    if (focus === "name") counts.nameCore += 1;
     const top = ranked[ranked.length - 1][0]; counts[top] = Math.max(3, counts[top] - 1);
   }
   const params = Object.fromEntries(SKILLS.map((s) => [s, paramsFor(s, L[s])]));
@@ -633,10 +773,15 @@ export function suggestDrills(data = {}, now = Date.now()) {
   const a = analyze(data), I = a.indices;
   const weak = a.pcMap.filter((p) => p.n >= 3 && p.acc < 0.75).sort((x, y) => x.acc - y.acc).slice(0, 3).map((p) => p.name);
   const drillSess = sessions.filter((s) => kindOf(s) === "drill");
+  const sessById = new Map(sessions.map((s) => [s.id, s]));
   const ranked = DRILLS.map((sk) => {
     // Scored on accuracy ABOVE GUESSING, so 79% on a 2-choice task isn't mistaken
     // for strong when it's about as far above chance as 60% naming out of 12.
-    const gt = recent.filter((t) => t.station === sk && validTrial(t)), g = prop(gt), ch = gt.length ? mean(gt.map(chanceOf)) : 0;
+    // Neighbors/naming: judge on COLD questions when there are enough (warm ones flatter you).
+    let gt = recent.filter((t) => t.station === sk && validTrial(t));
+    const coldOnly = gt.filter((t) => warmOf(t, sessById) === false);
+    if ((sk === "pair" || sk === "name") && coldOnly.length >= 6) gt = coldOnly;
+    const g = prop(gt), ch = gt.length ? mean(gt.map(chanceOf)) : 0;
     const adj = g.n >= 4 ? Math.max(0, Math.min(1, (g.acc - ch) / (1 - ch))) : null;
     let score = adj != null ? 1 - adj : 0.45;
     let reason = g.n >= 4 ? `${Math.round(g.acc * 100)}% over the last 3 days${ch >= 0.2 ? ` (guessing gets ${Math.round(ch * 100)}%)` : ""}` : "not much data on this yet";
@@ -660,6 +805,16 @@ export function suggestDrills(data = {}, now = Date.now()) {
       const nb = wrong.filter((t) => cdist(t.stim.pc, t.resp) === 1).length;
       if (wrong.length >= 6 && nb / wrong.length >= 0.4) flag(0.1, `${Math.round((nb / wrong.length) * 100)}% of your naming misses are next-door notes — sharpen the neighbors`);
     }
+    if (sk === "gut") {
+      // The live test of "is my slow internal-MIDI check helping?"
+      score += 0.2; reason += " · tests whether your slow check helps or hurts";
+      const w = trials.filter((t) => t.station === "name" && t.correct === false && Number.isFinite(t.resp) && t.rt >= 3000);
+      const up = w.filter((t) => circ(t.stim.pc, t.resp) > 0).length;
+      if (w.length >= 8 && up / w.length >= 0.7) flag(0.1, `${up} of ${w.length} slow naming misses went sharp — train trusting the gut answer`);
+    }
+    if (sk === "tuner") { score += 0.15; if (I.imagery.nSung >= 8 && Math.abs(I.imagery.meanBiasCents) >= 15) flag(0.1, `your sung notes run ${Math.round(I.imagery.meanBiasCents)}¢ — tune the notes you imagine`); }
+    if (sk === "taghome") score += 0.1;
+    if (sk === "nhold") { score += 0.15; reason += " · does knowing the name help you hold it?"; }
     if (sk === "hold" && I.hold.enoughCost && I.hold.toneCost && I.hold.toneCost.d > 0.2) flag(0.2, "notes in between knock the pitch out of memory — practice holding it by name");
     return { skill: sk, title: SKILL_TITLE[sk], score: Math.round(score * 100) / 100, reason };
   }).sort((x, y) => y.score - x.score);

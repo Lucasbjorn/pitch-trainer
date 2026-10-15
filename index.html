@@ -320,6 +320,9 @@
     .cal-choices.trio .cal-choice { flex: 1 1 0; min-width: 0; }
     .cal-choice { flex: 1; min-width: 120px; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 14px; padding: 0.9rem 1rem; font-weight: 800; font-size: 1rem; cursor: pointer; box-shadow: var(--shadow); touch-action: manipulation; font-family: inherit; }
     .cal-choice.ok, .cal-key.ok { background: var(--good); border-color: var(--good); color: #fff; }
+    #calibrate .cal-key.gut { box-shadow: 0 0 0 3px #f59e0b inset; }
+    #calibrate .cal-key.gut::after { content: "gut"; display: block; font-size: 0.55rem; font-weight: 800; color: #b45309; line-height: 1; }
+    #calibrate .cal-key.gut.ok::after, #calibrate .cal-key.gut.bad::after { color: #fff; }
     .cal-choice.bad, .cal-key.bad { background: var(--bad); border-color: var(--bad); color: #fff; }
     /* Scoped to #calibrate: the friends' calendar also uses .cal-grid, and these
        elements toggle the [hidden] attribute, which their display rules would override. */
