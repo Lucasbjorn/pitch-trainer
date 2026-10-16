@@ -17,7 +17,7 @@ You land on the **Training Hub**, which has three parts:
 
 **Account sync:** sign in with Google once on each device (from the hub's ☁️ card). After that, the phone, the laptop and the iPhone home-screen app all share one dataset (see *Account sync* below).
 
-## Daily Calibration — protocol v5 (~9 min, 10 stations + ⚓ pop-ups)
+## Daily Calibration — protocol v6 (~9 min, 10 stations + ⚓ pop-ups)
 
 0. **Check-in**: energy, music heard today, headphones vs speaker.
 1. **Attune**: today's note → its PP-MIDI song tag → note, three times.
@@ -28,7 +28,7 @@ You land on the **Training Hub**, which has three parts:
 4. **Inner tuner** (v5): 4 imagine-then-judge questions (see *Drills*). Replaces *Imagine it*, which is now drill-only; the tuner measures the same internal template without a mic.
 5. **Blindfold naming**: the diagnostic core (below). **10 questions since v5** (was 6–8): 6 **core** (middle octave, piano, cleanser, cold note — exactly the "same test every day" condition, logged `core: true`) + 4 from the usual randomized mix (no-cleanser, pure tone, octave spread).
 6. **Neighbors** (v4): 4 next-door questions (see *Drills*). It joined the calibration because it measures chroma with no reference in any octave and timbre, which you can't fake with your vocal range. Its calibration level starts one step below where the Neighbors drill had got to, not at L1.
-7. **Hold it**: keep a pitch alive for 3–16 s, then same/different by **60¢ → 12¢**. Half the holds play **stray notes** in the gap, half play noise.
+7. **Hold it**: keep a note alive for 4–7 s (L1) → 10–18 s (L5), then: **the same note, or a different note?** (v6; Lucas: "too focused on making the note slightly different".) Different notes are ≥3 semitones away at L1, ≥2 at L2–3, and from L3 a share (30% → 60%) are semitone neighbors. Half the holds play **stray notes** in the gap (never the held note's or the probe's name), half play noise. ≤v5 the probe was 60¢ → 12¢ off; that data is kept apart (`probeKind`).
 8. **Octave twins** (3 since v5): three notes in three octaves; which one has a different note name?
 9. **Find the note** (3 since v5): "there's an E♭ in this chord — bottom, middle or top?" Higher levels add inversions, then dim/aug, then spread voicings.
 10. **Lock it in**: your weakest notes, note · tag · note.
@@ -56,6 +56,7 @@ You land on the **Training Hub**, which has three parts:
 - **v2:** Song anchors, cents-level hold/anchor, rotating daily anchor, tuning-cue fixes.
 - **v3:** pop-ups, pacing, replay, RT from onset.
 - **v4:** Neighbors station in the calibration; Neighbors trios (three next-door notes, names shown only once the note sounds); coach weights Neighbors up.
+- **v6:** Hold it probes are the same note or a different note (no cents).
 - **v5:** cold draws; naming core (10 naming per calibration); Song anchors bare-only in the calibration; new games Gut & check, Inner tuner, Tag at home?, Name or hold?; anchor pop-ups use whole-note lures + "which note?"; Imagine → drills; Triangulate retired.
 
 Every record carries its `protocol`. Compare like with like.
@@ -221,7 +222,7 @@ These let analysis separate **pitch memory** from **classification**. Example si
 | anchor | `pc, anchorPc, isAnchor, offsetCents, oct, voice` (v1: `offset` semitones, anchor always C) · v5: `lureKind, lureSemis` | `resp` yes/no · v5: `guess` (pc / "idk"), `guessCorrect, rtGuess` |
 | nhold | `pc, oct, dur, labeled, interference, distractors, same, probeSemis, voice, draw, warm, warmAgoMs` | `resp` same/diff, `strategy` (sound / name / both / null) |
 | name | `pc, oct, midi, wash, timbre, prevMidi, prevPc, prevInt` | `resp, errSemis` |
-| hold | `pc, dur, same, probeCents, interference (noise/tones), distractors, voice` (v1: `probeOffset`) | `resp` |
+| hold | `pc, dur, same, probeCents, interference (noise/tones), distractors, voice` (v1: `probeOffset`) · v6: `probeKind: "note", probeSemis, probePc` (`probeCents` = semitones × 100) | `resp` |
 | twins | `a, b, offset, octs, oddSlot, notes` | `resp, replays` |
 | triad | `rootPc, quality, inversion, spread, chord, targetPc, posIdx` | `resp, replays` |
 | tune | `pc, oct, inTune, cents, voice` | `resp` in/off |
@@ -245,7 +246,7 @@ Validated against simulated listeners in `tools/test-cal-analysis.mjs`.
 | Hidden anchor | RT ~ distance from each of 12 notes; permutation p | slope at X → counting from X; flat → direct recognition |
 | Gut vs compute | median RT correct vs wrong; % fast-correct | fast + right = categorical |
 | Song anchors | tag→note vs bare-note→tag accuracy, per note | association strength; the bare direction is the AP bridge |
-| Hold it | noise − stray-notes accuracy (tone-interference cost); accuracy by cents | big cost → holding the sound, not the name |
+| Hold it | noise − stray-notes accuracy (tone-interference cost); accuracy by semitone distance (v6) or by cents (≤v5). Versions kept apart: `hold.current` (note) vs `hold.cents`; the headline switches to the note version at 8 holds | big cost → holding the sound, not the name |
 | In tune? | accuracy by cents off; fixed version only (`stim.voice`) | tuning-template resolution |
 | Mental anchors | Triangulate accuracy + RT per imagined anchor; by distance | which internal reference notes you can actually use |
 | Neighbors | **cold vs warm** (any choice; and target-only), 2-choice (semitone vs whole step, per pair) and trio (overall, middle vs edge, per set) | real chroma (cold) vs short-term memory (warm); muddy boundaries |

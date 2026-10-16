@@ -31,7 +31,7 @@ export function setupCalibrate(ctx) {
     name:    { icon: "🎯", color: "#c8d8ff", blurb: "Name a note cold. No reference, cleanser in between." },
     imagine: { icon: "🧠", color: "#e6dbff", blurb: "Hear a named note inside, then sing it — the mic grades you." },
     anchor:  { icon: "⚓", color: "#bfe9cf", blurb: "Is this today's note? If not, which one?" },
-    hold:    { icon: "🧊", color: "#d4f1f4", blurb: "Hold a pitch through noise or stray notes. Cents-fine." },
+    hold:    { icon: "🧊", color: "#d4f1f4", blurb: "Hold a note through noise or stray notes — then the same note, or a different one?" },
     twins:   { icon: "🪞", color: "#ffd9e6", blurb: "Three octaves, one odd note name out." },
     triad:   { icon: "🎹", color: "#fde2c8", blurb: "There's an E♭ in this chord — bottom, middle or top?" },
     tune:    { icon: "🎚️", color: "#dff3d8", blurb: "Exactly on a note, or a hair off? (pure pitch — no timbre tells)" },
@@ -159,12 +159,13 @@ export function setupCalibrate(ctx) {
       sleep(ms + 80).then(() => { stopNoise(); res(); });
     });
   }
-  // Stray notes during a hold (never the held note's own name).
+  // Stray notes during a hold (never the held note's own name, nor the probe's).
   async function distractors(n, ms, avoidPc) {
     if (abort) return;
+    const avoid = [].concat(avoidPc);                               // never the held note's (or probe's) name
     const p = await piano(), now = Tone.now();
     for (let i = 0; i < n; i++) {
-      let m; do { m = 48 + rand(36); } while (pcOf(m) === avoidPc);
+      let m; do { m = 48 + rand(36); } while (avoid.includes(pcOf(m)));
       heard(m, "distractor", 0, ((i + 0.5) * ms) / n);
       try { p.triggerAttackRelease(midiName(m), 0.35, now + ((i + 0.5) * ms) / n / 1000, 0.45); } catch (_) {}
     }
@@ -598,37 +599,44 @@ export function setupCalibrate(ctx) {
     return abort ? null : { correct };
   }
 
+  // Hold it (v6): keep a note alive through noise or stray notes, then: the SAME
+  // note, or a DIFFERENT one? (≤v5 the probe was a few cents off.)
   async function trHold(info) {
     const p = P("hold"), cond = nextCond("hold");
     const dur = run.mode === "calibration" && run.plan.holdDurs[info.i] ? run.plan.holdDurs[info.i] : p.range[0] + rand(p.range[1] - p.range[0] + 1);
     const pc = rand(12), m = midiOf(pc, 4), same = !!cond.same, interference = cond.interference || "noise";
-    const probeCents = same ? 0 : (Math.random() < 0.5 ? -1 : 1) * p.cents;
-    const vtype = pick(VOICES);                                      // same voice for both → only pitch can differ
+    let probeSemis = 0;
+    if (!same) {
+      const near = Math.random() < p.nearFrac, opts = [];
+      for (let d = -5; d <= 6; d++) if (d && (near ? Math.abs(d) === 1 : Math.abs(d) >= p.minDist)) opts.push(d);
+      probeSemis = pick(opts);
+    }
+    const probePc = pcOf(m + probeSemis), vtype = pick(VOICES);           // same voice for both → only the note can differ
     stage(head("hold", info) + `
       <div class="cal-stage">
-        <div class="cal-hint">${dur}s hold · ${interference === "tones" ? "stray notes" : "noise"} · ±${p.cents}¢</div>
+        <div class="cal-hint">${dur}s hold · ${interference === "tones" ? "stray notes" : "noise"} · same note or a different one?</div>
         <div class="cal-say">Lock onto this note. Keep it alive — don't hum.</div>
         <div class="cal-phase" id="cal-phase">🎧 listen</div>
         <div class="cal-count" id="cal-count"></div>
-        <div class="cal-choices" id="cal-ch" hidden><button class="cal-choice" data-v="same">Same</button><button class="cal-choice" data-v="diff">Different</button></div>
+        <div class="cal-choices" id="cal-ch" hidden><button class="cal-choice" data-v="same">Same note</button><button class="cal-choice" data-v="diff">Different note</button></div>
         <div class="cal-fb" id="cal-fb"></div>
       </div>` + foot());
     await sleep(BREATH); if (abort) return null;
     await playTuned(m, 0, vtype, 1.3); await sleep(1300); if (abort) return null;
     setPhase(interference === "tones" ? "🎹 ignore these… hold it" : "🌫️ hold it…");
     countdown($("#cal-count"), dur);
-    if (interference === "tones") await distractors(p.distractors, dur * 1000, pc); else await noiseBed(dur * 1000);
+    if (interference === "tones") await distractors(p.distractors, dur * 1000, [pc, probePc]); else await noiseBed(dur * 1000);
     if (abort) return null;
     const ce = $("#cal-count"); if (ce) ce.textContent = "";
-    setPhase("🎧 probe — same note?");
-    await playTuned(m, probeCents, vtype, 1.3); if (abort) return null;
+    setPhase("🎧 same note?");
+    await playTuned(m + probeSemis, 0, vtype, 1.3); if (abort) return null;
     const { v, rt } = await ask("#cal-ch"); if (abort || v == null) return null;
     const correct = (v === "same") === same;
     record("hold", correct);
-    logTrial("hold", { ti: info.i, stim: { pc, dur, same, probeCents, interference, distractors: interference === "tones" ? p.distractors : 0, voice: vtype }, resp: v, correct, rt });
+    logTrial("hold", { ti: info.i, stim: { pc, dur, same, probeKind: "note", probeSemis, probePc, probeCents: probeSemis * 100, interference, distractors: interference === "tones" ? p.distractors : 0, voice: vtype }, resp: v, correct, rt });
     markChoices("#cal-ch", same ? "same" : "diff", v);
-    fb(correct, `${correct ? "✅" : "❌"} ${same ? "Same note" : `Different — probe was ${probeCents > 0 ? "+" : ""}${probeCents}¢`} (${midiName(m)})`);
-    lastLabeled = m;
+    fb(correct, `${correct ? "✅" : "❌"} ${same ? `Same note — ${midiName(m)}` : `Different — ${PC[pc]} then ${PC[probePc]} (${Math.abs(probeSemis)} semitone${Math.abs(probeSemis) > 1 ? "s" : ""} ${probeSemis > 0 ? "up" : "down"})`}`);
+    lastLabeled = m + probeSemis;
     await sleep(2000);
     return abort ? null : { correct };
   }
@@ -1608,7 +1616,7 @@ export function setupCalibrate(ctx) {
         ${card("Tag at home?", th.n ? pct(th.acc) : "—", thRead, th.byCents.map((x) => `±${x.cents}¢: ${pct(x.acc)} caught`).join(" · "))}
         ${card("Gut vs compute", gut.medRtCorrect ? `${(gut.medRtCorrect / 1000).toFixed(1)}s` : "—", gut.n >= 10 ? `Median time on correct answers. ${pct(gut.fastCorrectRate)} are fast (<1.5s) hits — fast + right is what categorical AP looks like.` : needs(gut.n, 10, "naming trials"), gut.medRtWrong ? `wrong answers: ${(gut.medRtWrong / 1000).toFixed(1)}s` : "")}
         ${card("Song anchors", so.noteToCue.n ? `${pct(so.noteToCue.acc)} <small>note → tag</small>` : pct(so.acc), so.n >= 8 ? `Bare note → tag ${pct(so.noteToCue.acc)} (n=${so.noteToCue.n}) · tag → note ${pct(so.cueToNote.acc)} (n=${so.cueToNote.n}). Tag → note is mostly recognizing the song, so the calibration asks only note → tag since v5.` : needs(so.n, 8, "song-anchor trials"), so.byPc.filter((x) => x.n >= 2).sort((x, y) => x.acc - y.acc).slice(0, 4).map((x) => `${x.name} ${pct(x.acc)}`).join(" · "))}
-        ${card("Hold it", hd.enoughCost ? pts(hd.toneCost.d) : "—", holdRead, `noise ${pct(hd.noise.acc)} (n=${hd.noise.n}) · stray notes ${pct(hd.tones.acc)} (n=${hd.tones.n})${hd.byCents.length ? " · " + hd.byCents.map((x) => `${x.cents}¢ ${pct(x.acc)}`).join(" · ") : ""}`)}
+        ${card("Hold it", hd.enoughCost ? pts(hd.toneCost.d) : "—", (hd.version === "note" ? "Same note or a different note. " : hd.current.n ? `Older cents version shown until the same/different-note version has 8 holds (${hd.current.n} so far). ` : "") + holdRead, `noise ${pct(hd.noise.acc)} (n=${hd.noise.n}) · stray notes ${pct(hd.tones.acc)} (n=${hd.tones.n})${hd.version === "note" ? (hd.bySemis.length ? " · different by " + hd.bySemis.map((x) => `${x.semis}st ${pct(x.acc)}`).join(" · ") : "") : hd.byCents.length ? " · " + hd.byCents.map((x) => `${x.cents}¢ ${pct(x.acc)}`).join(" · ") : ""}${hd.version === "note" && hd.cents.n ? ` — old cents version ${pct(hd.cents.acc)} (n=${hd.cents.n})` : ""}`)}
         ${card("Anchor precision", alx.n ? pct(alx.acc) : "—", alRead, alMeta)}
         ${card("Name or hold?", nh.n ? pts(nh.benefit ? nh.benefit.d : null) : "—", nhRead, nhMeta)}
         ${card("In tune?", tu.n ? pct(tu.acc) : "—", tuRead, tuMeta)}

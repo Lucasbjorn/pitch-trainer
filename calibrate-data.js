@@ -14,7 +14,7 @@
 // listeners (tools/test-cal-analysis.mjs). See CALIBRATION.md for the protocol.
 
 export const SCHEMA_VERSION = 2;   // record shape (v2 adds mode, protocol, localDate, sessionOfDay)
-export const PROTOCOL = 5;         // v1 first week · v2 harder hold/anchor + song anchors · v3 anchor pop-ups, breathers, replay-once, RT from onset · v4 Neighbors station + trios · v5 cold draws, naming core, Gut & check, Inner tuner, Tag at home, Name or hold, note-lure anchor pop-ups
+export const PROTOCOL = 6;         // v1 first week · v2 harder hold/anchor + song anchors · v3 anchor pop-ups, breathers, replay-once, RT from onset · v4 Neighbors station + trios · v5 cold draws, naming core, Gut & check, Inner tuner, Tag at home, Name or hold, note-lure anchor pop-ups · v6 Hold it: same note or a different note (no cents)
 export const SKILLS = ["cue", "name", "imagine", "anchor", "hold", "twins", "triad", "tune", "tri", "pair", "gut", "tuner", "taghome", "nhold"];
 export const SKILL_TITLE = { cue: "Song anchors", name: "Blindfold naming", imagine: "Imagine & sing", anchor: "Anchor lock", hold: "Hold it", twins: "Octave twins", triad: "Find the note", tune: "In tune?", tri: "Triangulate", pair: "Neighbors", gut: "Gut & check", tuner: "Inner tuner", taghome: "Tag at home?", nhold: "Name or hold?" };
 export const STATIONS_GRADED = SKILLS;
@@ -370,7 +370,9 @@ export function analyze({ sessions = [], trials = [] } = {}) {
       { key: "pair", station: "pair", label: "Neighbors · cold", keep: (t) => warm(t) === false },
       { key: "note2cue", station: "cue", label: "Song anchors · note → tag", keep: (t) => t.stim.kind === "note2cue" },
       { key: "taghome", station: "taghome" }, { key: "tuner", station: "tuner" }, { key: "gut", station: "gut", label: "Gut & check · final" },
-      { key: "twins", station: "twins" }, { key: "triad", station: "triad" }, { key: "hold", station: "hold" },
+      { key: "twins", station: "twins" }, { key: "triad", station: "triad" },
+      { key: "hold", station: "hold", label: "Hold it", keep: (t) => t.stim.probeKind === "note" },
+      { key: "holdCents", station: "hold", label: "Hold it · cents (≤v5)", keep: (t) => t.stim.probeKind !== "note" },
       { key: "anchor", station: "anchor", label: "Anchor pop-ups", keep: (t) => t.stim.lureKind === "note" },
       { key: "anchorCents", station: "anchor", label: "Anchor pop-ups · cents (≤v4)", keep: (t) => t.stim.lureKind !== "note" },
       { key: "nhold", station: "nhold" }, { key: "tune", station: "tune" },
@@ -470,15 +472,23 @@ export function analyze({ sessions = [], trials = [] } = {}) {
   //  Intervening tones wreck an echoic trace but not a labeled one, so the
   //  noise-vs-tones gap says whether you're holding the SOUND or the NAME.
   {
-    const h = by("hold").filter(graded);
-    const intf = (t) => t.stim.interference || "noise";
-    const durs = [...new Set(h.map((t) => t.stim.dur))].sort((a, b) => a - b);
-    const f = ols(h.map((t) => t.stim.dur), h.map((t) => (t.correct ? 1 : 0)));
-    const noise = prop(h.filter((t) => intf(t) === "noise")), tones = prop(h.filter((t) => intf(t) === "tones"));
-    const cents = [...new Set(h.filter((t) => !t.stim.same).map(holdCents))].sort((a, b) => a - b);
-    out.indices.hold = { n: h.length, byDur: durs.map((d) => ({ dur: d, ...prop(h.filter((t) => t.stim.dur === d)) })), accPerSecond: f.slope,
-      noise, tones, toneCost: diffCI(noise, tones), enoughCost: noise.n >= 8 && tones.n >= 8,
-      byCents: cents.map((c) => ({ cents: c, ...prop(h.filter((t) => !t.stim.same && holdCents(t) === c)) })) };
+    // v6: the probe is the same note or a DIFFERENT note (probeKind "note"); ≤v5 it
+    // was a few cents off. Versions are kept apart; the headline uses the note
+    // version once it has ≥8 trials.
+    const all = by("hold").filter(graded), isNote = (t) => t.stim.probeKind === "note";
+    const stats = (h) => {
+      const intf = (t) => t.stim.interference || "noise";
+      const durs = [...new Set(h.map((t) => t.stim.dur))].sort((a, b) => a - b);
+      const f = ols(h.map((t) => t.stim.dur), h.map((t) => (t.correct ? 1 : 0)));
+      const noise = prop(h.filter((t) => intf(t) === "noise")), tones = prop(h.filter((t) => intf(t) === "tones"));
+      const cents = [...new Set(h.filter((t) => !t.stim.same).map(holdCents))].sort((a, b) => a - b);
+      return { ...prop(h), byDur: durs.map((d) => ({ dur: d, ...prop(h.filter((t) => t.stim.dur === d)) })), accPerSecond: f.slope,
+        noise, tones, toneCost: diffCI(noise, tones), enoughCost: noise.n >= 8 && tones.n >= 8,
+        byCents: cents.map((c) => ({ cents: c, ...prop(h.filter((t) => !t.stim.same && holdCents(t) === c)) })) };
+    };
+    const note = all.filter(isNote), old = all.filter((t) => !isNote(t)), cur = stats(note);
+    cur.bySemis = [1, 2, 3, 4, 5, 6].map((d) => ({ semis: d, ...prop(note.filter((t) => !t.stim.same && Math.abs(t.stim.probeSemis) === d)) })).filter((x) => x.n);
+    out.indices.hold = { ...(note.length >= 8 ? cur : stats(old)), version: note.length >= 8 ? "note" : "cents", current: cur, cents: stats(old) };
   }
 
   // ---- 8. Inner pitch (sung production) ----------------------------------------------------
@@ -678,7 +688,10 @@ export function paramsFor(skill, L) {
     // lengthen the hold and add stray notes.
     case "nhold": return { range: [[4, 7], [6, 10], [8, 13], [10, 16], [12, 20]][l], distractors: [3, 4, 5, 6, 8][l], semis: 1 };
     case "name": return { octaves: [[4], [3, 4], [3, 4, 5], [2, 3, 4, 5], [2, 3, 4, 5, 6]][l], noWashFrac: 0.3, sineFrac: 0.2 };
-    case "hold": return { range: [[3, 6], [4, 8], [5, 10], [6, 13], [8, 16]][l], cents: [60, 45, 30, 20, 12][l], tonesFrac: 0.5, distractors: [3, 4, 5, 6, 7][l] };
+    // Hold it (v6): same note or a DIFFERENT note. Different notes start ≥3 semitones
+    // away and get closer (some semitone neighbors from L3); holds get longer and
+    // stray notes more numerous.
+    case "hold": return { range: [[4, 7], [5, 9], [6, 11], [8, 14], [10, 18]][l], minDist: [3, 2, 2, 1, 1][l], nearFrac: [0, 0, 0.3, 0.5, 0.6][l], tonesFrac: 0.5, distractors: [3, 4, 5, 6, 8][l] };
     case "twins": return { offsets: [[3, 4, 5, 6, 7, 8, 9], [2, 3, 4, 5, 9, 10], [1, 2, 3, 9, 10, 11], [1, 2, 10, 11], [1, 11]][l] };
     case "triad": return { firstInv: l >= 1, secondInv: l >= 2, dimAug: l >= 3, spread: l >= 4 };
     case "tune": return { cents: [50, 35, 25, 15, 10][l] };
