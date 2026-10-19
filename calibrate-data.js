@@ -14,17 +14,20 @@
 // listeners (tools/test-cal-analysis.mjs). See CALIBRATION.md for the protocol.
 
 export const SCHEMA_VERSION = 2;   // record shape (v2 adds mode, protocol, localDate, sessionOfDay)
-export const PROTOCOL = 6;         // v1 first week · v2 harder hold/anchor + song anchors · v3 anchor pop-ups, breathers, replay-once, RT from onset · v4 Neighbors station + trios · v5 cold draws, naming core, Gut & check, Inner tuner, Tag at home, Name or hold, note-lure anchor pop-ups · v6 Hold it: same note or a different note (no cents)
-export const SKILLS = ["cue", "name", "imagine", "anchor", "hold", "twins", "triad", "tune", "tri", "pair", "gut", "tuner", "taghome", "nhold", "aptest"];
-export const SKILL_TITLE = { cue: "Song anchors", name: "Blindfold naming", imagine: "Imagine & sing", anchor: "Anchor lock", hold: "Hold it", twins: "Octave twins", triad: "Find the note", tune: "In tune?", tri: "Triangulate", pair: "Neighbors", gut: "Gut & check", tuner: "Inner tuner", taghome: "Tag at home?", nhold: "Name or hold?", aptest: "Daily AP test" };
+export const PROTOCOL = 7;         // v1 first week · v2 harder hold/anchor + song anchors · v3 anchor pop-ups, breathers, replay-once, RT from onset · v4 Neighbors station + trios · v5 cold draws, naming core, Gut & check, Inner tuner, Tag at home, Name or hold, note-lure anchor pop-ups · v6 Hold it: same note or a different note (no cents) · v7 "What key?" replaces Octave twins; misclick flag
+export const SKILLS = ["cue", "name", "imagine", "anchor", "hold", "twins", "triad", "tune", "tri", "pair", "gut", "tuner", "taghome", "nhold", "aptest", "key"];
+export const SKILL_TITLE = { cue: "Song anchors", name: "Blindfold naming", imagine: "Imagine & sing", anchor: "Anchor lock", hold: "Hold it", twins: "Octave twins", triad: "Find the note", tune: "In tune?", tri: "Triangulate", pair: "Neighbors", gut: "Gut & check", tuner: "Inner tuner", taghome: "Tag at home?", nhold: "Name or hold?", aptest: "Daily AP test", key: "What key?" };
 export const STATIONS_GRADED = SKILLS;
 // Drills you can launch. Anchor checks are pop-ups, not a drill; Triangulate was
 // retired in v5 (imagining an anchor turned close guesses into off-by-ones —
 // its old data still shows in the ear model). Gut & check replaces it.
-export const RETIRED = ["tri"];
+// Octave twins retired in v7 (too easy, and answerable by relative pitch); "What key?" replaces it.
+export const RETIRED = ["tri", "twins"];
+// Lucas's favorites (Oct 19): first in the hub, weighted up by the coach.
+export const FAVORITES = ["imagine", "pair", "taghome", "tuner"];
 export const DRILLS = SKILLS.filter((s) => s !== "anchor" && s !== "aptest" && !RETIRED.includes(s));
 // Graded stations in the daily calibration (protocol 5), in running order.
-export const CAL_STATIONS = ["cue", "taghome", "tuner", "name", "pair", "hold", "twins", "triad", "anchor"];
+export const CAL_STATIONS = ["cue", "taghome", "tuner", "name", "pair", "hold", "key", "triad", "anchor"];
 // Questions whose notes were heard WITH their names this recently count as "warm"
 // (short-term memory can answer them). Cold draws avoid them.
 export const WARM_MS = 60000;
@@ -253,7 +256,7 @@ const graded = (t) => typeof t.correct === "boolean";
 const nChoicesOf = (t) => t.stim.nChoices || (Array.isArray(t.stim.pair) ? t.stim.pair.length : 2);
 function chanceOf(t) {
   switch (t.station) {
-    case "name": case "tri": case "gut": case "aptest": return 1 / 12;
+    case "name": case "tri": case "gut": case "aptest": case "key": return 1 / 12;
     case "cue": return 1 / (t.stim.choices || 12);
     case "pair": return 1 / nChoicesOf(t);
     case "twins": case "triad": return 1 / 3;
@@ -295,7 +298,8 @@ const centsDist = (c) => { const m = ((c % 1200) + 1200) % 1200; return Math.min
 const holdCents = (t) => (t.stim.probeCents != null ? Math.abs(t.stim.probeCents) : Math.abs(t.stim.probeOffset || 0) * 100);
 
 export function analyze({ sessions = [], trials = [] } = {}) {
-  const T = trials.filter((t) => !t.practice && !t.away);         // away = you left the page mid-question
+  // away = you left the page mid-question; misclick = you flagged the tap as a slip
+  const T = trials.filter((t) => !t.practice && !t.away && !t.misclick);
   const by = (st) => T.filter((t) => t.station === st);
   const sessById = new Map(sessions.map((s) => [s.id, s]));
   const warm = (t) => warmOf(t, sessById);
@@ -307,6 +311,7 @@ export function analyze({ sessions = [], trials = [] } = {}) {
     nSessions: sessions.filter((s) => kindOf(s) === "calibration").length,
     nDrills: sessions.filter((s) => kindOf(s) === "drill").length,
     nTrials: T.length, indices: {},
+    misclicks: { n: trials.filter((t) => t.misclick).length, wereWrong: trials.filter((t) => t.misclick && t.correct === false).length },
   };
 
   // ---- sessions, days, and the daily "cold reading" ---------------------------------
@@ -371,7 +376,8 @@ export function analyze({ sessions = [], trials = [] } = {}) {
       { key: "pair", station: "pair", label: "Neighbors · cold", keep: (t) => warm(t) === false },
       { key: "note2cue", station: "cue", label: "Song anchors · note → tag", keep: (t) => t.stim.kind === "note2cue" },
       { key: "taghome", station: "taghome" }, { key: "tuner", station: "tuner" }, { key: "gut", station: "gut", label: "Gut & check · final" },
-      { key: "twins", station: "twins" }, { key: "triad", station: "triad" },
+      { key: "key", station: "key", label: "What key?" }, { key: "triad", station: "triad" },
+      { key: "twins", station: "twins", label: "Octave twins (retired)" },
       { key: "hold", station: "hold", label: "Hold it", keep: (t) => t.stim.probeKind === "note" },
       { key: "holdCents", station: "hold", label: "Hold it · cents (≤v5)", keep: (t) => t.stim.probeKind !== "note" },
       { key: "anchor", station: "anchor", label: "Anchor pop-ups", keep: (t) => t.stim.lureKind === "note" },
@@ -593,6 +599,16 @@ export function analyze({ sessions = [], trials = [] } = {}) {
       vsTraining: diffCI(prop(name.filter((t) => t.stim.wash !== false && graded(t))), prop(ap)) };
   }
 
+  // ---- 11c3. What key?: chords/progressions → name the key (chord chroma) -------------
+  {
+    const kt = by("key").filter(graded);
+    const wrong = kt.filter((t) => !t.correct && Number.isFinite(t.resp)), d = (t) => cdist(t.stim.keyPc, t.resp);
+    out.indices.keyId = { ...prop(kt), triad: prop(kt.filter((t) => t.stim.kind === "triad")), prog: prop(kt.filter((t) => t.stim.kind === "prog")),
+      major: prop(kt.filter((t) => t.stim.quality !== "min")), minor: prop(kt.filter((t) => t.stim.quality === "min")),
+      fifthMiss: wrong.filter((t) => d(t) === 5).length, semitoneMiss: wrong.filter((t) => d(t) === 1).length, thirdMiss: wrong.filter((t) => d(t) === 3 || d(t) === 4).length, nWrong: wrong.length,
+      byKey: PC.map((nm, pc) => ({ name: nm, ...prop(kt.filter((t) => t.stim.keyPc === pc)) })).filter((x) => x.n) };
+  }
+
   // ---- 11d. Naming: warm vs cold target -------------------------------------------------
   out.indices.nameWarm = coldWarm(name.filter(graded));
 
@@ -722,6 +738,10 @@ export function paramsFor(skill, L) {
     // Neighbors: whole-step pair → semitone pair → three next-door notes whose names
     // only appear WITH the note (no pre-imagining the candidates), then more octaves,
     // synth timbres, shorter notes.
+    // What key?: L1 major triad (root position) → L2 any inversion → L3 + minor →
+    // L4 a I–IV–V–I progression → L5 varied progressions. Name the key / root.
+    case "key": return { kind: l >= 3 ? "prog" : "triad", inv: l >= 1, minor: l === 2, octaves: l >= 1 ? [3, 4] : [4],
+      progs: l >= 4 ? ["I-IV-V-I", "I-vi-IV-V-I", "ii-V-I", "I-IV-I-V-I"] : ["I-IV-V-I"] };
     // Gut & check: plain naming octaves; the check is the manipulation.
     case "gut": return { octaves: [[4], [3, 4], [3, 4, 5], [2, 3, 4, 5], [2, 3, 4, 5, 6]][l] };
     // Inner tuner: how far off true pitch the probe is (both signs), imagine time.
@@ -781,10 +801,10 @@ export function makePlan({ sessions = [], trials = [] } = {}) {
   // v5: naming 6 → 10 (6 "core": middle octave, piano, cleanser, cold target); Imagine
   // moved to drills (Inner tuner measures the same template without a mic);
   // twins/triad trimmed; Song anchors is bare note → tag only.
-  const counts = { cue: 3, taghome: 4, tuner: 4, anchor: 5, name: 10, nameCore: 6, pair: 4, hold: 4, twins: 3, triad: 3, lockin: 2 };
+  const counts = { cue: 3, taghome: 4, tuner: 4, anchor: 5, name: 10, nameCore: 6, pair: 4, hold: 4, key: 3, triad: 3, lockin: 2 };
   const last3 = sessions.filter((s) => kindOf(s) === "calibration" && s.completed && s.summary).slice(-3);
   const accOf = (st) => { let n = 0, k = 0; last3.forEach((s) => { const r = s.summary[st]; if (r) { n += r.n; k += r.k; } }); return n >= 4 ? k / n : null; };
-  const ranked = ["cue", "taghome", "tuner", "anchor", "hold", "name", "pair", "twins", "triad"].map((st) => [st, accOf(st)]).filter(([, a]) => a != null).sort((x, y) => x[1] - y[1]);
+  const ranked = ["cue", "taghome", "tuner", "anchor", "hold", "name", "pair", "key", "triad"].map((st) => [st, accOf(st)]).filter(([, a]) => a != null).sort((x, y) => x[1] - y[1]);
   let focus = null;
   if (ranked.length >= 3) {
     focus = ranked[0][0]; counts[focus] += 2;
@@ -804,7 +824,7 @@ export function suggestDrills(data = {}, now = Date.now()) {
   const { sessions = [], trials = [] } = data;
   const today = localDate(now);
   const calToday = sessions.some((s) => kindOf(s) === "calibration" && s.completed && (s.localDate || localDate(s.startedAt)) === today);
-  const recent = trials.filter((t) => t.t >= now - 3 * DAY && graded(t) && !t.away);
+  const recent = trials.filter((t) => t.t >= now - 3 * DAY && graded(t) && !t.away && !t.misclick);
   const a = analyze(data), I = a.indices;
   const weak = a.pcMap.filter((p) => p.n >= 3 && p.acc < 0.75).sort((x, y) => x.acc - y.acc).slice(0, 3).map((p) => p.name);
   const drillSess = sessions.filter((s) => kindOf(s) === "drill");
@@ -847,8 +867,10 @@ export function suggestDrills(data = {}, now = Date.now()) {
       const up = w.filter((t) => circ(t.stim.pc, t.resp) > 0).length;
       if (w.length >= 8 && up / w.length >= 0.7) flag(0.1, `${up} of ${w.length} slow naming misses went sharp — train trusting the gut answer`);
     }
-    if (sk === "tuner") { score += 0.15; if (I.imagery.nSung >= 8 && Math.abs(I.imagery.meanBiasCents) >= 15) flag(0.1, `your sung notes run ${Math.round(I.imagery.meanBiasCents)}¢ — tune the notes you imagine`); }
-    if (sk === "taghome") score += 0.1;
+    // Lucas's favorites get a standing boost (Oct 19: "the best games").
+    if (FAVORITES.includes(sk) && sk !== "pair") { score += 0.3; reason += " · one of your favorites"; }
+    if (sk === "tuner") { if (I.imagery.nSung >= 8 && Math.abs(I.imagery.meanBiasCents) >= 15) flag(0.1, `your sung notes run ${Math.round(I.imagery.meanBiasCents)}¢ — tune the notes you imagine`); }
+    if (sk === "key") { score += 0.15; reason += " · learning chords by their overall color"; }
     if (sk === "nhold") { score += 0.15; reason += " · does knowing the name help you hold it?"; }
     if (sk === "hold" && I.hold.enoughCost && I.hold.toneCost && I.hold.toneCost.d > 0.2) flag(0.2, "notes in between knock the pitch out of memory — practice holding it by name");
     return { skill: sk, title: SKILL_TITLE[sk], score: Math.round(score * 100) / 100, reason };

@@ -32,7 +32,8 @@ export function setupCalibrate(ctx) {
     imagine: { icon: "🧠", color: "#e6dbff", blurb: "Hear a named note inside, then sing it — the mic grades you." },
     anchor:  { icon: "⚓", color: "#bfe9cf", blurb: "Is this today's note? If not, which one?" },
     hold:    { icon: "🧊", color: "#d4f1f4", blurb: "Hold a note through noise or stray notes — then the same note, or a different one?" },
-    twins:   { icon: "🪞", color: "#ffd9e6", blurb: "Three octaves, one odd note name out." },
+    twins:   { icon: "🪞", color: "#ffd9e6", blurb: "Retired: too easy, and relative pitch could answer it." },
+    key:     { icon: "🔑", color: "#fde4cf", blurb: "Hear a chord or a short progression — what key is it in? Learn chords by their overall color." },
     triad:   { icon: "🎹", color: "#fde2c8", blurb: "There's an E♭ in this chord — bottom, middle or top?" },
     tune:    { icon: "🎚️", color: "#dff3d8", blurb: "Exactly on a note, or a hair off? (pure pitch — no timbre tells)" },
     tri:     { icon: "🧭", color: "#e0e7ff", blurb: "Retired: imagining an anchor turned close guesses into off-by-ones." },
@@ -331,6 +332,32 @@ export function setupCalibrate(ctx) {
       b.onclick = null;
       if (b.dataset.v === String(right)) b.classList.add("ok"); else if (b.dataset.v === String(chosen)) b.classList.add("bad");
     });
+    showMisclick();
+  }
+  // "↩ misclick": flag the answer you just gave as a slip of the finger (3 a day,
+  // per device). It's kept in the log with misclick:true but left out of scores,
+  // levels and analysis; the ear model shows how many you've flagged.
+  const MIS_CAP = 3;
+  function misLeft() { try { const m = JSON.parse(localStorage.getItem("pt.cal.misclicks")) || {}; return MIS_CAP - (m[D.localDate(Date.now())] || 0); } catch (_) { return MIS_CAP; } }
+  function misUse() { try { const m = JSON.parse(localStorage.getItem("pt.cal.misclicks")) || {}, d = D.localDate(Date.now()); m[d] = (m[d] || 0) + 1; localStorage.setItem("pt.cal.misclicks", JSON.stringify(m)); } catch (_) {} }
+  function flagMisclick() {
+    if (!run || !run.lastTrial || run.misclick || misLeft() <= 0) return false;
+    run.misclick = true; misUse();
+    const t = { ...run.lastTrial, misclick: true, misclickAt: Date.now() };
+    run.lastTrial = t; D.putTrial(t).catch(() => {});
+    const lr = run.lastRecord, r = lr && run.tally[lr.skill];
+    if (r) { r.n = Math.max(0, r.n - 1); if (lr.correct) r.k = Math.max(0, r.k - 1); }
+    return true;
+  }
+  function showMisclick(label = "↩ misclick?", onFlag = null) {
+    if (!run || !run.lastTrial || misLeft() <= 0) return null;
+    const host = root.querySelector(".cal-stage"); if (!host) return null;
+    const old = $("#cal-mis"); if (old) old.remove();
+    const b = document.createElement("button");
+    b.id = "cal-mis"; b.className = "cal-mis"; b.textContent = `${label} (${misLeft()} left today)`;
+    b.onclick = () => { if (flagMisclick()) { b.textContent = "↩ flagged — this one won't count"; b.disabled = true; if (onFlag) onFlag(); } };
+    host.appendChild(b);
+    return b;
   }
   const grid = (opts) => `<div class="cal-grid" id="cal-grid" hidden${opts.length < 12 ? ` style="grid-template-columns:repeat(${opts.length === 4 ? 2 : 3},1fr)"` : ""}>${opts.map((j) => `<button class="cal-key" data-v="${j}">${PC[j]}</button>`).join("")}</div>`;
 
@@ -368,7 +395,7 @@ export function setupCalibrate(ctx) {
     return arr;
   }
   // Mark a question's start: context is computed from what was heard BEFORE it.
-  function beginTrial(labeled = false) { if (!run) return; run.trialStartAt = Date.now(); run.answered = labeled; run.askAt = null; run.away = false; run.awayMs = 0; }
+  function beginTrial(labeled = false) { if (!run) return; run.trialStartAt = Date.now(); run.answered = labeled; run.askAt = null; run.away = false; run.awayMs = 0; run.misclick = false; run.lastTrial = null; run.lastRecord = null; }
   // Leaving the page mid-question (phones pause audio) spoils that question: it's
   // logged with away:true and kept out of scores, levels and analysis.
   let hiddenAt = null;
@@ -406,11 +433,13 @@ export function setupCalibrate(ctx) {
     }
     fields = { ...fields, ctx, ...(run.away ? { away: true, awayMs: run.awayMs || null } : {}) };
     const now = new Date();
-    D.putTrial({
+    const rec = {
       id: `${run.session.id}:${run.seq}`, sessionId: run.session.id, schema: D.SCHEMA_VERSION, protocol: D.PROTOCOL,
       mode: run.mode, station: skill, gi: run.seq++, t: now.getTime(), hour: now.getHours(), dow: now.getDay(),
       level: lvlFor(skill), rtFrom: "onset", correct: null, rt: null, ...fields,
-    }).catch(() => {});
+    };
+    if (!passive) run.lastTrial = rec;                             // the misclick button can flag it
+    D.putTrial(rec).catch(() => {});
     pushSoon();
   }
   // Trickle-push during a run so a dropped phone loses at most ~45 s of cloud copy.
@@ -420,6 +449,7 @@ export function setupCalibrate(ctx) {
     if (typeof correct !== "boolean" || run.away) return;
     const r = run.tally[skill] || (run.tally[skill] = { n: 0, k: 0 });
     r.n++; if (correct) r.k++;
+    run.lastRecord = { skill, correct };
     run.trialsSinceAnchor = (run.trialsSinceAnchor || 0) + 1;
   }
   const weightedPc = () => D.weightedPick(run.plan.pcWeights, 1)[0];
@@ -995,7 +1025,67 @@ export function setupCalibrate(ctx) {
     return abort ? null : { correct };
   }
 
-  const TRIAL = { cue: trCue, name: trName, imagine: trImagine, anchor: trAnchor, hold: trHold, twins: trTwins, triad: trTriad, tune: trTune, tri: trTri, pair: trPair, gut: trGut, tuner: trTuner, taghome: trTagHome, nhold: trNHold };
+  // What key? (v7, replaces Octave twins): a major/minor triad or a short
+  // progression — name the key (the chord's root). Learns chords by their
+  // overall color rather than note by note. Cleanser first, so the previous
+  // answer can't serve as a reference.
+  const DEG = { I: [0, 4, 7], ii: [2, 5, 9], IV: [5, 9, 12], V: [7, 11, 14], vi: [9, 12, 16] };
+  function voiceNear(chord, center) {                          // pick the inversion/octave nearest a center pitch
+    let best = null;
+    for (let inv = 0; inv < 3; inv++) for (const sh of [-24, -12, 0, 12]) {
+      const c = chord.map((m, j) => m + sh + (j < inv ? 12 : 0)).sort((a, b) => a - b);
+      const d = Math.abs(c.reduce((a, b) => a + b, 0) / 3 - center);
+      if (!best || d < best.d) best = { c, d };
+    }
+    return best.c;
+  }
+  async function trKey(info) {
+    const p = P("key"), dr = drawPc(), keyPc = dr.item, oct = pick(p.octaves), tonic = midiOf(keyPc, oct);
+    const quality = p.kind === "triad" && p.minor && Math.random() < 0.5 ? "min" : "maj";
+    let chords, prog = null, inversion = 0;
+    if (p.kind === "triad") {
+      const iv = quality === "min" ? [0, 3, 7] : [0, 4, 7];
+      inversion = p.inv ? rand(3) : 0;
+      chords = [iv.map((x, j) => tonic + x + (j < inversion ? 12 : 0)).sort((a, b) => a - b)];
+    } else {
+      prog = pick(p.progs);
+      const center = tonic + 5;
+      chords = prog.split("-").map((dg) => voiceNear(DEG[dg].map((x) => tonic + x), center));
+      chords[chords.length - 1] = voiceNear(DEG.I.map((x) => tonic + x), center);
+    }
+    let stopProg = false;                                          // answering stops the rest of the progression
+    const playAll = async () => {
+      stopProg = false;
+      for (let i = 0; i < chords.length && !abort && !stopProg; i++) { await playChord(chords[i], chords.length > 1 ? 0.95 : 1.8); if (chords.length > 1) await sleep(900); }
+    };
+    stage(head("key", info) + `
+      <div class="cal-stage">
+        <div class="cal-say">${p.kind === "triad" ? "Which chord is this? Name its root." : "What key is this progression in?"}</div>
+        <div class="cal-phase" id="cal-phase">🌀 clearing…</div>
+        ${grid(PC.map((_, j) => j))}
+        ${replayBtn}
+        <div class="cal-fb" id="cal-fb"></div>
+      </div>` + foot());
+    await sleep(BREATH); await cleanser(); if (abort) return null;
+    setPhase(p.kind === "triad" ? "🎧 which chord? ↓" : "🎧 which key? ↓");
+    if (chords.length === 1) await playChord(chords[0], 1.8);
+    else { playAll(); }                                            // answer any time once it starts
+    if (abort) return null;
+    const rp = armReplay(() => (chords.length === 1 ? playChord(chords[0], 1.8) : playAll()));
+    const { v, rt } = await ask("#cal-grid"); stopProg = true; if (abort || v == null) return null;
+    const resp = +v, correct = resp === keyPc;
+    record("key", correct);
+    logTrial("key", { ti: info.i, stim: { pc: keyPc, keyPc, kind: p.kind, quality, inversion, prog, oct, chords, draw: dr.draw, warm: dr.warm, warmAgoMs: dr.warmAgoMs },
+      resp, correct, rt, replays: rp.n, errSemis: correct ? 0 : D.circ(keyPc, resp) });
+    markChoices("#cal-grid", keyPc, resp);
+    fb(correct, `${correct ? "✅" : "❌"} ${PC[keyPc]} ${quality === "min" ? "minor" : "major"}${prog ? ` · ${prog}` : ""} — the chord, then its root's tag:`);
+    await sleep(400);
+    await playChord(chords[chords.length - 1], 1.2); await sleep(1100); if (abort) return null;
+    await noteCue(keyPc, oct);
+    return abort ? null : { correct };
+  }
+
+  const TRIAL = { cue: trCue, name: trName, imagine: trImagine, anchor: trAnchor, hold: trHold, twins: trTwins, triad: trTriad, tune: trTune, tri: trTri, pair: trPair, gut: trGut, tuner: trTuner, taghome: trTagHome, nhold: trNHold, key: trKey };
 
   async function countdown(el, secs) {
     for (let s = secs; s > 0; s--) { if (abort) return; if (el) el.textContent = s; await sleep(1000); }
@@ -1083,7 +1173,7 @@ export function setupCalibrate(ctx) {
     { title: "Blindfold naming", fn: () => calBlock("name") },
     { title: "Neighbors", fn: () => calBlock("pair") },
     { title: "Hold it", fn: () => calBlock("hold") },
-    { title: "Octave twins", fn: () => calBlock("twins") },
+    { title: "What key?", fn: () => calBlock("key") },
     { title: "Find the note", fn: () => calBlock("triad") },
     { title: "Lock it in", fn: calLockin },
   ];
@@ -1239,15 +1329,26 @@ export function setupCalibrate(ctx) {
     setPhase("🎧 name it ↓");
     await playMidi(m, 1.4); if (abort) return null;
     const rp = armReplay(() => playMidi(m, 1.4));
-    const { v, rt } = await ask("#cal-grid"); if (abort || v == null) return null;
-    const resp = +v, correct = resp === pc;
-    record("aptest", correct);
-    logTrial("aptest", { ti: info.i, stim: { pc, oct, midi: m, timbre: "piano", wash: true, feedback: false }, resp, correct, rt, replays: rp.n, errSemis: correct ? 0 : D.circ(pc, resp) });
-    // No right/wrong: just mark the tap and move on. Nothing gets named.
-    root.querySelectorAll("#cal-grid [data-v]").forEach((b) => { b.onclick = null; if (b.dataset.v === v) b.classList.add("picked"); });
+    let resp, correct, redo = 0;
+    for (;;) {
+      const { v, rt } = await ask("#cal-grid"); if (abort || v == null) return null;
+      resp = +v; correct = resp === pc;
+      record("aptest", correct);
+      logTrial("aptest", { ti: info.i, stim: { pc, oct, midi: m, timbre: "piano", wash: true, feedback: false }, resp, correct, rt, replays: rp.n, errSemis: correct ? 0 : D.circ(pc, resp), ...(redo ? { redo } : {}) });
+      // No right/wrong: just mark the tap and move on. Nothing gets named.
+      root.querySelectorAll("#cal-grid [data-v]").forEach((b) => { b.onclick = null; b.classList.toggle("picked", b.dataset.v === v); });
+      fb(true, "✓ logged");
+      // Nothing's been revealed, so a misclick here can simply be answered again.
+      const mb = showMisclick("↩ misclick — answer again", () => done("__mis"));
+      if (!mb) { await sleep(500); break; }
+      const tm = later(() => done("__go"), 1600);
+      const w = await wait(); clearTimeout(tm); if (abort) return null;
+      if (w !== "__mis") break;
+      redo++; run.misclick = false; run.lastTrial = null; run.lastRecord = null;
+      mb.remove(); fb(true, "answer again ↓");
+      root.querySelectorAll("#cal-grid [data-v]").forEach((b) => b.classList.remove("picked"));
+    }
     const r1 = $("#cal-r1"); if (r1) r1.hidden = true;
-    fb(true, "✓ logged");
-    await sleep(500);
     return abort ? null : { correct, pc, oct, resp };
   }
   async function startApTest() {
@@ -1350,7 +1451,7 @@ export function setupCalibrate(ctx) {
       const r = await TRIAL[skill]({ i: run.n });
       if (abort || r === null) break;
       run.n++;
-      if (typeof r.correct === "boolean" && !run.away) {          // a question you left mid-way doesn't count
+      if (typeof r.correct === "boolean" && !run.away && !run.misclick) {   // left mid-way or flagged as a misclick → doesn't count
         run.g++;
         if (r.correct) { run.k++; run.streak++; run.best = Math.max(run.best, run.streak); } else run.streak = 0;
         adapt(r.correct);
@@ -1521,7 +1622,7 @@ export function setupCalibrate(ctx) {
         </div>
 
         <div class="cal-sec">Drills <span>endless · adaptive · ⚓ anchor checks pop up anytime</span></div>
-        <div class="hub-cards">${D.DRILLS.map((sk) => drillCard(sk, !coach.calibrateFirst && sk === top.skill ? "suggested" : "", `L${drillLevel(sk, plan, data.sessions)}${recentAcc(sk) != null ? ` · ${pct(recentAcc(sk))}` : ""}`)).join("")}</div>
+        <div class="hub-cards">${[...D.FAVORITES.filter((x) => D.DRILLS.includes(x)), ...D.DRILLS.filter((x) => !D.FAVORITES.includes(x))].map((sk) => drillCard(sk, !coach.calibrateFirst && sk === top.skill ? "suggested" : "", `${D.FAVORITES.includes(sk) ? "⭐ " : ""}L${drillLevel(sk, plan, data.sessions)}${recentAcc(sk) != null ? ` · ${pct(recentAcc(sk))}` : ""}`)).join("")}</div>
 
         <div class="cal-sec">You</div>
         <button class="cal-cta ghost-cta" id="hub-model">📊 Your ear model & data</button>
@@ -1672,6 +1773,7 @@ export function setupCalibrate(ctx) {
     const anRead = an.verdict === "needs-data" ? needs(an.n, 15, "correct naming trials")
       : an.verdict === "counting-from-anchor" ? `~${Math.round(an.msPerSemitone)} ms slower per semitone away from <b>${an.anchorName}</b> (p=${an.p.toFixed(3)}). You seem to <b>find notes by counting from ${an.anchorName}</b>.`
       : "Reaction time doesn't grow with distance from any note — consistent with <b>direct recognition</b>.";
+    const ky = I.keyId;
     const gut = I.gut, tb = I.timbre, reg = I.register, ch = I.chroma, hd = I.hold, im = I.imagery, al = I.anchorLock, sh = I.shift, so = I.song, tu = I.tune, ma = I.mentalAnchors, nb = I.neighbors;
     const tbRead = !tb.enough ? needs(tb.sine.n, 8, "pure-tone trials")
       : tb.diff.lo > 0.1 ? "Much better on piano than pure tone → your note memory is partly <b>tied to piano timbre</b>." : "Pure tones about as good as piano → the memory is <b>timbre-general</b>. ✓";
@@ -1736,7 +1838,8 @@ export function setupCalibrate(ctx) {
         ${card("In tune?", tu.n ? pct(tu.acc) : "—", tuRead, tuMeta)}
         ${card("Timbre lock", tb.enough ? pts(tb.diff.d) : "—", tbRead, `piano ${pct(tb.piano.acc)} · sine ${pct(tb.sine.acc)} (n=${tb.sine.n})`)}
         ${card("Register cues", reg.spread != null ? pts(reg.spread) : "—", reg.spread == null ? "Needs ≥5 trials in two octaves." : reg.spread > 0.25 ? "Accuracy swings a lot by octave → you may be using <b>register</b> as a cue." : "Similar across octaves → you're hearing <b>chroma</b>, not height. ✓", reg.byOct.map((r) => `oct ${r.oct}: ${pct(r.acc)}`).join(" · "))}
-        ${card("Chroma vs height", pct(ch.acc), ch.n >= 6 ? "Octave twins: spotting the odd note name across octaves." : needs(ch.n, 6, "octave-twins trials"), ch.byOffset.filter((x) => x.n).map((x) => `${x.semis}st: ${pct(x.acc)}`).join(" · "))}
+        ${card("What key?", ky.n ? pct(ky.acc) : "—", ky.n >= 8 ? `Naming a chord or progression's key from its overall color (guessing 8%). Chords ${pct(ky.triad.acc)} (n=${ky.triad.n}) · progressions ${pct(ky.prog.acc)} (n=${ky.prog.n}).${ky.nWrong >= 4 ? ` Misses: ${ky.fifthMiss} a 4th/5th off (a related key), ${ky.semitoneMiss} a semitone off, ${ky.thirdMiss} a third off.` : ""}` : needs(ky.n, 8, "What key? questions"), ky.byKey.filter((x) => x.n >= 2).sort((x, y) => x.acc - y.acc).slice(0, 4).map((x) => `${x.name} ${pct(x.acc)}`).join(" · "))}
+        ${ch.n ? card("Octave twins (retired)", pct(ch.acc), "Retired in v7 — too easy, and relative pitch could answer it. What key? replaced it.", ch.byOffset.filter((x) => x.n).map((x) => `${x.semis}st: ${pct(x.acc)}`).join(" · ")) : ""}
         ${card("Inner pitch", im.nSung ? `${im.meanBiasCents > 0 ? "+" : ""}${Math.round(im.meanBiasCents)}¢` : "—", im.nSung >= 5 ? `Your sung template runs ${Math.abs(im.meanBiasCents) < 15 ? "dead center" : im.meanBiasCents > 0 ? "<b>sharp</b>" : "<b>flat</b>"}; ${pct(im.within50)} within a quarter-tone (avg miss ${Math.round(im.meanAbsCents)}¢).` : `Turn on 🎤 singing to measure your internal template.${im.nSelf ? ` Self-rated "nailed it": ${pct(im.selfNailedRate)}.` : ""}`, im.nSung ? `n=${im.nSung} sung` : "")}
         ${card("Triangulate (retired)", ma.n ? pct(ma.acc) : "—", ma.n ? `Imagining an anchor and stepping out gave ${pct(ma.acc)} exact vs ${pct(a.stations.name.acc)} for plain naming — close guesses became off-by-ones. Retired in v5; Gut & check tests the same idea directly.` : "Retired in v5.", "")}
         ${ma.n >= 12 ? card("Mental anchors", ma.best.length ? ma.best[0].name : "—", ma.best.length >= 2 ? `Triangulating from an imagined note works best from <b>${ma.best.map((x) => x.name).join(", ")}</b> and worst from <b>${ma.worst.map((x) => x.name).join(", ")}</b>.` : needs(ma.byAnchor.filter((x) => x.n >= 3).length, 2, "anchors with 3+ Triangulate trials"), ma.byDist.map((x) => `${x.dist}st: ${pct(x.acc)}`).join(" · ")) : ""}
@@ -1757,6 +1860,7 @@ export function setupCalibrate(ctx) {
           <button class="cal-cta ghost-cta" id="cal-syncnow">☁️ Sync now</button>
         </div>
         <div class="cal-ins-m" id="cal-exp-msg">Everything is saved on this device as you go and synced to your account. Export when you want me to analyze it.</div>
+        ${a.misclicks.n ? `<div class="cal-ins-m">↩ ${a.misclicks.n} answer${a.misclicks.n > 1 ? "s" : ""} flagged as misclicks — left out of every number above (${a.misclicks.wereWrong} of them were wrong answers).</div>` : ""}
       </div>`;
     $("#cal-back").onclick = () => enter();
     $("#cal-json").onclick = async () => { msg("preparing…"); const b = await D.exportBundle(); await saveFile(`calibration-${D.localDate(Date.now())}.json`, JSON.stringify(b, null, 1), "application/json"); msg(`Exported ${b.trials.length} trials from ${b.sessions.length} sessions${b.pulledFromCloud ? ` (pulled ${b.pulledFromCloud} new from the cloud first)` : ""}.`); };

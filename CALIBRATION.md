@@ -17,6 +17,12 @@ You land on the **Training Hub**, which has three parts:
 
 **Account sync:** sign in with Google once on each device (from the hub's ☁️ card). After that, the phone, the laptop and the iPhone home-screen app all share one dataset (see *Account sync* below).
 
+## ↩ Misclicks
+After any answer, a small **↩ misclick?** button (3 a day per device, counter shown). Tapping it marks that answer `misclick: true` (+ `misclickAt`): it stays in the log but is left out of every score, level, calibration summary, the coach and `analyze()`; the ear model shows how many you've flagged and how many of those were wrong answers (`analyze().misclicks`). In the Daily AP test, where nothing has been revealed yet, a misclick lets you **answer again**: the flagged tap and the re-answer (`redo: 1`) are both logged, and the result uses the re-answer.
+
+## ⭐ Favorites
+Imagine & sing, Neighbors, Tag at home? and Inner tuner (`FAVORITES`) are listed first in the hub with a ⭐ and get a standing +0.3 coach boost (Neighbors keeps its own +0.35).
+
 ## 🧪 Daily AP test — 10 notes, no answers shown (do it first)
 Lucas: "some testing without the reveal if I'm right or not, to make it only an AP test, not relative pitch." A separate card at the top of the hub, ~1½ min.
 - **10 different notes**, piano, random octaves **3–5** (one fixed octave would let "sounds low → C-ish" act as a cue). **Cleanser before every note**, so you can't compute an interval from the previous test note.
@@ -25,7 +31,7 @@ Lucas: "some testing without the reveal if I'm right or not, to make it only an 
 - **Data:** session `kind: "aptest"`, `testOfDay`, `priorToday` (anything else trained earlier today), `priorKinds`, `minutesSinceTraining`; trials `station: "aptest"`, `stim: {pc, oct, midi, timbre, wash, feedback: false}`.
 - **Analysis (`analyze().apTest`):** the **first test of each day** is the progress line (retakes are kept apart); "clean" = first thing, before any named notes that day. Also within-a-semitone, error direction, per note, RT, and the gap vs naming *with* answers shown (`vsTraining`). It's the top line of the ear model and the first scorecard row. The hub and coach say to take it before anything else.
 
-## Daily Calibration — protocol v6 (~9 min, 10 stations + ⚓ pop-ups)
+## Daily Calibration — protocol v7 (~9 min, 10 stations + ⚓ pop-ups)
 
 0. **Check-in**: energy, music heard today, headphones vs speaker.
 1. **Attune**: today's note → its PP-MIDI song tag → note, three times.
@@ -37,7 +43,7 @@ Lucas: "some testing without the reveal if I'm right or not, to make it only an 
 5. **Blindfold naming**: the diagnostic core (below). **10 questions since v5** (was 6–8): 6 **core** (middle octave, piano, cleanser, cold note — exactly the "same test every day" condition, logged `core: true`) + 4 from the usual randomized mix (no-cleanser, pure tone, octave spread).
 6. **Neighbors** (v4): 4 next-door questions (see *Drills*). It joined the calibration because it measures chroma with no reference in any octave and timbre, which you can't fake with your vocal range. Its calibration level starts one step below where the Neighbors drill had got to, not at L1.
 7. **Hold it**: keep a note alive for 4–7 s (L1) → 10–18 s (L5), then: **the same note, or a different note?** (v6; Lucas: "too focused on making the note slightly different".) Different notes are ≥3 semitones away at L1, ≥2 at L2–3, and from L3 a share (30% → 60%) are semitone neighbors. Half the holds play **stray notes** in the gap (never the held note's or the probe's name), half play noise. ≤v5 the probe was 60¢ → 12¢ off; that data is kept apart (`probeKind`).
-8. **Octave twins** (3 since v5): three notes in three octaves; which one has a different note name?
+8. **What key?** (v7, replaces Octave twins — Lucas: "too easy and pure relative pitch"): 3 questions. A chord or short progression → name the key (12 keys). L1 major triad in root position → L2 any inversion, octaves 3–4 → L3 major or minor → L4 a I–IV–V–I progression → L5 varied progressions (I–vi–IV–V–I, ii–V–I, I–IV–I–V–I), voiced close around the tonic and always ending on I. Cleanser first; answer any time (answering stops the rest of the progression); replay 1×. Feedback: the last chord again, then the root's note · tag · note. Goal: learn chords by their overall color, not note by note.
 9. **Find the note** (3 since v5): "there's an E♭ in this chord — bottom, middle or top?" Higher levels add inversions, then dim/aug, then spread voicings.
 10. **Lock it in**: your weakest notes, note · tag · note.
 
@@ -64,6 +70,7 @@ Lucas: "some testing without the reveal if I'm right or not, to make it only an 
 - **v2:** Song anchors, cents-level hold/anchor, rotating daily anchor, tuning-cue fixes.
 - **v3:** pop-ups, pacing, replay, RT from onset.
 - **v4:** Neighbors station in the calibration; Neighbors trios (three next-door notes, names shown only once the note sounds); coach weights Neighbors up.
+- **v7:** What key? replaces Octave twins (retired; its data stays); misclick flag; favorites first in the hub with a coach boost.
 - **v6:** Hold it probes are the same note or a different note (no cents).
 - **v5:** cold draws; naming core (10 naming per calibration); Song anchors bare-only in the calibration; new games Gut & check, Inner tuner, Tag at home?, Name or hold?; anchor pop-ups use whole-note lures + "which note?"; Imagine → drills; Triangulate retired.
 
@@ -234,6 +241,8 @@ These let analysis separate **pitch memory** from **classification**. Example si
 | twins | `a, b, offset, octs, oddSlot, notes` | `resp, replays` |
 | triad | `rootPc, quality, inversion, spread, chord, targetPc, posIdx` | `resp, replays` |
 | tune | `pc, oct, inTune, cents, voice` | `resp` in/off |
+| key | `pc = keyPc, kind (triad/prog), quality, inversion, prog, oct, chords, draw, warm, warmAgoMs` | `resp, replays, errSemis` |
+| any (v7) | — | `misclick, misclickAt` (flagged slip); AP test: `redo` |
 | tri | `anchor, target, dist, oct, midi` | `resp, replays, errSemis` |
 | pair | `pc, set` (low → high; `pair` is the same list, kept for old readers)`, nChoices (2/3), pos (target's index in set), reveal (names shown only at the note), step, oct, timbre, dur` · v5: `draw, warm, targetWarm, warmAgoMs` | `resp, replays, errSemis` |
 | name (v5 adds) | `core, draw, warm, warmAgoMs` | — |
@@ -260,6 +269,7 @@ Validated against simulated listeners in `tools/test-cal-analysis.mjs`.
 | Neighbors | **cold vs warm** (any choice; and target-only), 2-choice (semitone vs whole step, per pair) and trio (overall, middle vs edge, per set) | real chroma (cold) vs short-term memory (warm); muddy boundaries |
 | Gut & check | gut vs final accuracy; wrong→right, right→wrong; change direction; error direction gut vs final | does the slow check help? |
 | Inner tuner | logistic fit of P(higher) vs cents → PSE (overall, per note); accuracy by size | where imagined notes sit, in cents |
+| What key? | accuracy for chords vs progressions, major vs minor, per key; misses a 4th/5th off (related key) vs a semitone vs a third | chord color learning |
 | Tag at home? | home called home; shifted caught, by size and direction | do the tags carry pitch? |
 | Name or hold? | named vs unnamed accuracy (95% CI), split by noise vs stray notes, by hold length; accuracy by self-reported strategy | is a name a better memory than the sound? |
 | Timbre lock | piano − sine | >0 → piano-bound |

@@ -320,6 +320,8 @@
     .cal-choices.trio .cal-choice { flex: 1 1 0; min-width: 0; }
     .cal-choice { flex: 1; min-width: 120px; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 14px; padding: 0.9rem 1rem; font-weight: 800; font-size: 1rem; cursor: pointer; box-shadow: var(--shadow); touch-action: manipulation; font-family: inherit; }
     .cal-choice.ok, .cal-key.ok { background: var(--good); border-color: var(--good); color: #fff; }
+    #calibrate .cal-mis { display: block; margin: 0.6rem auto 0; border: 1px dashed var(--line); background: transparent; color: var(--muted); font: inherit; font-size: 0.78rem; font-weight: 700; padding: 0.4rem 0.9rem; border-radius: 999px; cursor: pointer; }
+    #calibrate .cal-mis:disabled { opacity: 0.7; cursor: default; }
     #calibrate .cal-key.picked { background: #6d28d9; border-color: #6d28d9; color: #fff; }
     #calibrate .cal-hub-test { background: linear-gradient(135deg, #4c1d95, #6d28d9); margin-bottom: 0.7rem; }
     #calibrate .cal-aplist { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; width: 100%; max-width: 360px; margin: 0.8rem auto 0; }
