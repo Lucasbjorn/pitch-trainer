@@ -1086,6 +1086,11 @@
     .cal-score-row b { color: var(--accent); font-variant-numeric: tabular-nums; }
 
     /* Toast (streak / welcome-back notifications) */
+    #sound-back { position: fixed; inset: 0; z-index: 10000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.6rem;
+      border: 0; background: rgba(15,23,42,0.86); color: #fff; font: inherit; padding: 2rem; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+    #sound-back .sb-icon { font-size: 3.4rem; }
+    #sound-back .sb-t { font-size: 1.35rem; font-weight: 800; }
+    #sound-back .sb-s { font-size: 0.9rem; opacity: 0.75; max-width: 18rem; text-align: center; }
     .toast {
       position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 5.4rem);
       transform: translateX(-50%) translateY(16px); z-index: 96;

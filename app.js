@@ -1064,16 +1064,45 @@ async function goPractice() {
 } // Practice routine from the Lab, standalone (Home button returns)
 const hubMod = setupHub({ Tone, PITCH_NAMES, setStatus, ensureSampleBank, getBank: () => sampleBank, ensurePiano, getPiano: () => piano, goHome, goDaily, goLucas, goMicrotone, goPractice, goCalibrate });
 
-// Resume Tone's audio context on the very first user interaction, so audio is
-// unlocked regardless of which tab the app opened on (it opens on Learn, which
-// preloads audio outside a gesture and leaves the context suspended).
-function unlockAudioOnce() {
-  Tone.start().catch(() => {});
-  window.removeEventListener("pointerdown", unlockAudioOnce);
-  window.removeEventListener("keydown", unlockAudioOnce);
+// Keep audio alive. Browsers start the audio context suspended until a tap, and
+// phones (iOS Safari/Chrome especially) suspend or "interrupt" it whenever you
+// leave the page — and only let it restart from a tap. So: any tap restarts it
+// if needed, and coming back to a page whose audio died shows a one-tap prompt.
+let audioWasRunning = false;
+const audioState = () => { try { return Tone.getContext().rawContext.state; } catch (_) { return "closed"; } };
+function kickAudio() {                                   // must run inside a user gesture
+  try { Tone.start().catch(() => {}); } catch (_) {}
+  try {
+    const ac = Tone.getContext().rawContext;
+    if (ac.state !== "running") ac.resume().catch(() => {});
+    // iOS can report "running" yet stay silent after an interruption until a
+    // sound starts inside a tap: play one silent sample.
+    const b = ac.createBuffer(1, 1, ac.sampleRate), src = ac.createBufferSource();
+    src.buffer = b; src.connect(ac.destination); src.start(0);
+  } catch (_) {}
 }
-window.addEventListener("pointerdown", unlockAudioOnce);
-window.addEventListener("keydown", unlockAudioOnce);
+window.addEventListener("pointerdown", () => { if (audioState() !== "running") kickAudio(); }, true);
+window.addEventListener("keydown", () => { if (audioState() !== "running") kickAudio(); }, true);
+setInterval(() => { if (!document.hidden && audioState() === "running") audioWasRunning = true; }, 1000);
+function showSoundPrompt() {
+  if (document.getElementById("sound-back")) return;
+  const el = document.createElement("button");
+  el.id = "sound-back";
+  el.innerHTML = `<span class="sb-icon">🔊</span><span class="sb-t">Tap to turn sound back on</span><span class="sb-s">Your phone paused the audio while you were away.</span>`;
+  el.onclick = (e) => { e.stopPropagation(); kickAudio(); setTimeout(() => { if (audioState() === "running") el.remove(); }, 250); };
+  document.body.appendChild(el);
+}
+async function checkAudioOnReturn() {
+  if (document.hidden || !audioWasRunning) return;
+  try { await Tone.getContext().rawContext.resume(); } catch (_) {}   // works without a tap on some browsers
+  await new Promise((r) => setTimeout(r, 350));
+  if (audioState() !== "running") showSoundPrompt();
+  else { const el = document.getElementById("sound-back"); if (el) el.remove(); }
+}
+document.addEventListener("visibilitychange", checkAudioOnReturn);
+window.addEventListener("pageshow", checkAudioOnReturn);
+window.addEventListener("focus", checkAudioOnReturn);
+window.__audioTest = { state: audioState, check: checkAudioOnReturn };   // Playwright hook
 
 // ---------------------------------------------------------------------------
 // Wire up

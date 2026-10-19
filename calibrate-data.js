@@ -295,7 +295,7 @@ const centsDist = (c) => { const m = ((c % 1200) + 1200) % 1200; return Math.min
 const holdCents = (t) => (t.stim.probeCents != null ? Math.abs(t.stim.probeCents) : Math.abs(t.stim.probeOffset || 0) * 100);
 
 export function analyze({ sessions = [], trials = [] } = {}) {
-  const T = trials.filter((t) => !t.practice);
+  const T = trials.filter((t) => !t.practice && !t.away);         // away = you left the page mid-question
   const by = (st) => T.filter((t) => t.station === st);
   const sessById = new Map(sessions.map((s) => [s.id, s]));
   const warm = (t) => warmOf(t, sessById);
@@ -782,7 +782,7 @@ export function suggestDrills(data = {}, now = Date.now()) {
   const { sessions = [], trials = [] } = data;
   const today = localDate(now);
   const calToday = sessions.some((s) => kindOf(s) === "calibration" && s.completed && (s.localDate || localDate(s.startedAt)) === today);
-  const recent = trials.filter((t) => t.t >= now - 3 * DAY && graded(t));
+  const recent = trials.filter((t) => t.t >= now - 3 * DAY && graded(t) && !t.away);
   const a = analyze(data), I = a.indices;
   const weak = a.pcMap.filter((p) => p.n >= 3 && p.acc < 0.75).sort((x, y) => x.acc - y.acc).slice(0, 3).map((p) => p.name);
   const drillSess = sessions.filter((s) => kindOf(s) === "drill");

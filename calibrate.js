@@ -359,7 +359,15 @@ export function setupCalibrate(ctx) {
     return arr;
   }
   // Mark a question's start: context is computed from what was heard BEFORE it.
-  function beginTrial(labeled = false) { if (!run) return; run.trialStartAt = Date.now(); run.answered = labeled; run.askAt = null; }
+  function beginTrial(labeled = false) { if (!run) return; run.trialStartAt = Date.now(); run.answered = labeled; run.askAt = null; run.away = false; run.awayMs = 0; }
+  // Leaving the page mid-question (phones pause audio) spoils that question: it's
+  // logged with away:true and kept out of scores, levels and analysis.
+  let hiddenAt = null;
+  document.addEventListener("visibilitychange", () => {
+    if (!run) return;
+    if (document.hidden) { run.away = true; hiddenAt = Date.now(); }
+    else if (hiddenAt) { run.awayMs = (run.awayMs || 0) + (Date.now() - hiddenAt); hiddenAt = null; }
+  });
   // What you'd heard before this question: gaps, recent targets, repeats, per-note
   // exposure (any sound vs. labeled) — separates pitch MEMORY from classification.
   function trialCtx(skill, st = {}) {
@@ -387,7 +395,7 @@ export function setupCalibrate(ctx) {
       (run.targets || (run.targets = [])).push({ pc: ctx.targetPc, station: skill, t: Date.now() });
       run.lastAnswerAt = Date.now();
     }
-    fields = { ...fields, ctx };
+    fields = { ...fields, ctx, ...(run.away ? { away: true, awayMs: run.awayMs || null } : {}) };
     const now = new Date();
     D.putTrial({
       id: `${run.session.id}:${run.seq}`, sessionId: run.session.id, schema: D.SCHEMA_VERSION, protocol: D.PROTOCOL,
@@ -400,7 +408,7 @@ export function setupCalibrate(ctx) {
   let pushT = null;
   function pushSoon() { if (pushT) return; pushT = setTimeout(() => { pushT = null; D.syncCloud().catch(() => {}); }, 45000); }
   function record(skill, correct) {
-    if (typeof correct !== "boolean") return;
+    if (typeof correct !== "boolean" || run.away) return;
     const r = run.tally[skill] || (run.tally[skill] = { n: 0, k: 0 });
     r.n++; if (correct) r.k++;
     run.trialsSinceAnchor = (run.trialsSinceAnchor || 0) + 1;
@@ -1251,7 +1259,7 @@ export function setupCalibrate(ctx) {
       const r = await TRIAL[skill]({ i: run.n });
       if (abort || r === null) break;
       run.n++;
-      if (typeof r.correct === "boolean") {
+      if (typeof r.correct === "boolean" && !run.away) {          // a question you left mid-way doesn't count
         run.g++;
         if (r.correct) { run.k++; run.streak++; run.best = Math.max(run.best, run.streak); } else run.streak = 0;
         adapt(r.correct);
