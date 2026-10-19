@@ -38,6 +38,7 @@ export function setupCalibrate(ctx) {
     tri:     { icon: "🧭", color: "#e0e7ff", blurb: "Retired: imagining an anchor turned close guesses into off-by-ones." },
     gut:     { icon: "⚡", color: "#fde68a", blurb: "Name it on instinct, then check with your inner MIDI — keep or change. Does checking help?" },
     tuner:   { icon: "🎛️", color: "#ccfbf1", blurb: "Imagine a named note, then hear one a hair off: higher or lower than yours? No mic." },
+    aptest:  { icon: "🧪", color: "#ede9fe", blurb: "10 notes, no answers shown until the end — the pure AP number." },
     nhold:   { icon: "🏷️", color: "#e0f2fe", blurb: "Hold a note through noise or stray notes — sometimes you're told its name. Same, or a semitone off?" },
     taghome: { icon: "🏠", color: "#fce7f3", blurb: "A song tag, sometimes shifted: is it at its real pitch? Makes the tags carry pitch." },
     pair:    { icon: "👯", color: "#fef3c7", blurb: "E♭ or D? Then three next-door notes, named only once you hear it." },
@@ -272,6 +273,14 @@ export function setupCalibrate(ctx) {
   }
   // Header: calibration shows overall progress; a drill shows level + live stats.
   function head(skill, info = {}) {
+    if (run.mode === "aptest") {
+      return `<div class="cal-top">
+          <button class="cal-x" id="cal-exit">✕</button>
+          <div class="cal-prog"><div class="cal-prog-bar" style="width:${Math.round((info.i / info.n) * 100)}%"></div></div>
+          <div class="cal-step">${info.i + 1}/${info.n}</div>
+        </div>
+        <div class="cal-kicker">🧪 Daily AP test · no answers until the end</div>`;
+    }
     if (run.mode === "drill") {
       const acc = run.g ? `${Math.round((run.k / run.g) * 100)}%` : "—", hs = run.skill;   // always the host drill's header
       return `<div class="dr-top">
@@ -1209,6 +1218,88 @@ export function setupCalibrate(ctx) {
   }
 
   // ===========================================================================
+  // DAILY AP TEST — 10 notes, NO feedback until the end
+  // ===========================================================================
+  // Nothing is revealed or named during the test, so there's no reference to
+  // compute from; a cleanser before every note wipes the previous test note;
+  // octaves 3–5 remove the "sounds low → C-ish" height cue; 10 different notes.
+  // Logged as its own session kind, with whether you'd trained earlier today.
+  const AP_N = 10;
+  async function trApTest(info) {
+    const pc = info.pcs[info.i], oct = info.octs[info.i], m = midiOf(pc, oct);
+    stage(head("aptest", info) + `
+      <div class="cal-stage">
+        <div class="cal-say">Name it. No answer shown — just your gut.</div>
+        <div class="cal-phase" id="cal-phase">🌀 clearing…</div>
+        ${grid(PC.map((_, j) => j))}
+        ${replayBtn}
+        <div class="cal-fb" id="cal-fb"></div>
+      </div>`);
+    await sleep(BREATH); await cleanser(); if (abort) return null;
+    setPhase("🎧 name it ↓");
+    await playMidi(m, 1.4); if (abort) return null;
+    const rp = armReplay(() => playMidi(m, 1.4));
+    const { v, rt } = await ask("#cal-grid"); if (abort || v == null) return null;
+    const resp = +v, correct = resp === pc;
+    record("aptest", correct);
+    logTrial("aptest", { ti: info.i, stim: { pc, oct, midi: m, timbre: "piano", wash: true, feedback: false }, resp, correct, rt, replays: rp.n, errSemis: correct ? 0 : D.circ(pc, resp) });
+    // No right/wrong: just mark the tap and move on. Nothing gets named.
+    root.querySelectorAll("#cal-grid [data-v]").forEach((b) => { b.onclick = null; if (b.dataset.v === v) b.classList.add("picked"); });
+    const r1 = $("#cal-r1"); if (r1) r1.hidden = true;
+    fb(true, "✓ logged");
+    await sleep(500);
+    return abort ? null : { correct, pc, oct, resp };
+  }
+  async function startApTest() {
+    const p = prepAudio(false);
+    root.innerHTML = `<div class="cal-stage cal-trans"><div class="cal-big">🧪</div><div class="cal-say">tuning up…</div></div>`;
+    await p;
+    const all = await D.allData(), today = D.localDate(Date.now());
+    const todays = all.sessions.filter((x) => (x.localDate || D.localDate(x.startedAt)) === today);
+    const prior = todays.filter((x) => (x.n || x.completed || D.kindOf(x) === "calibration") && D.kindOf(x) !== "aptest");
+    const lastEnd = Math.max(0, ...todays.map((x) => x.endedAt || x.startedAt));
+    const session = { id: newId("t"), kind: "aptest", schema: D.SCHEMA_VERSION, protocol: D.PROTOCOL, startedAt: Date.now(), localDate: today,
+      testOfDay: todays.filter((x) => D.kindOf(x) === "aptest").length + 1, priorToday: prior.length > 0, priorKinds: [...new Set(prior.map((x) => x.skill || D.kindOf(x)))],
+      minutesSinceTraining: lastEnd ? Math.round((Date.now() - lastEnd) / 60000) : null, completed: false, device: D.deviceInfo() };
+    await D.putSession(session);
+    D.requestPersist();
+    abort = false; lastLabeled = null; clearTimers();
+    run = { mode: "aptest", session, plan: D.makePlan(all), tally: {}, sched: {}, seq: 0, intent: null };
+    const pcs = shuffle(PC.map((_, j) => j)).slice(0, AP_N), octs = pcs.map(() => pick([3, 4, 5])), res = [];
+    for (let i = 0; i < AP_N && !abort; i++) {
+      clearTimers(); beginTrial();
+      const r = await trApTest({ i, n: AP_N, pcs, octs });
+      if (abort || r === null) break;
+      res.push(r);
+    }
+    const intent = run.intent;
+    const s = run.session, k = res.filter((r) => r.correct).length;
+    Object.assign(s, { completed: res.length === AP_N, endedAt: Date.now(), n: res.length, graded: res.length, k, summary: { ...run.tally }, ...soundSummary(s) });
+    s.durSec = Math.round((s.endedAt - s.startedAt) / 1000);
+    run = null;
+    await D.putSession(s).catch(() => {});
+    D.syncAll().then(noteSync).catch(() => {});
+    if (intent === "exit") return;
+    if (!s.completed) return enter();
+    return apResults(s, res);
+  }
+  async function apResults(s, res) {
+    const data = await D.allData(), ap = D.analyze(data).apTest, rows = ap.rows.slice(-14);
+    const near = res.filter((r) => D.cdist(r.pc, r.resp) <= 1).length;
+    root.innerHTML = `<div class="cal-stage cal-finish">
+        <div class="cal-big">🧪</div>
+        <div class="cal-title2">${s.k}/${res.length}</div>
+        <div class="cal-say">Guessing gets about 1 in 12. ${near} of ${res.length} within a semitone.${s.priorToday ? `<br><span class="cal-hint">You'd trained earlier today — counted, but marked as not first-thing.</span>` : ""}${s.testOfDay > 1 ? `<br><span class="cal-hint">Retake #${s.testOfDay} — today's first test is the one that tracks progress.</span>` : ""}</div>
+        <div class="cal-aplist">${res.map((r, i) => `<div class="${r.correct ? "ok" : D.cdist(r.pc, r.resp) <= 1 ? "near" : "bad"}"><span>${i + 1}</span><b>${PC[r.pc]}${r.oct}</b><i>you: ${PC[r.resp]} ${r.correct ? "✓" : D.cdist(r.pc, r.resp) <= 1 ? "· close" : "✗"}</i></div>`).join("")}</div>
+        ${rows.length > 1 ? `<div class="cal-sec" style="margin:1rem 0 0.4rem">First test of each day</div><div class="cal-trend ckpt">${rows.map((d) => `<div class="cal-tbar" title="${d.date}: ${d.k}/${d.n}${d.clean ? "" : " (after training)"}"><div style="height:${Math.max(3, Math.round(d.acc * 100))}%;opacity:${d.clean ? 1 : 0.5}"></div><span>${+d.date.slice(8)}</span></div>`).join("")}</div>` : ""}
+        <button class="cal-cta" id="ap-cal">▶ Daily calibration</button>
+        <button class="cal-cta ghost-cta" id="ap-hub">Training hub</button>
+      </div>`;
+    $("#ap-cal").onclick = () => startCalibration();
+    $("#ap-hub").onclick = () => enter();
+  }
+
+  // ===========================================================================
   // DRILLS — endless, adaptive; end / switch / too easy / too hard any time
   // ===========================================================================
   function drillLevels() { try { return JSON.parse(localStorage.getItem("pt.cal.drillLv")) || {}; } catch (_) { return {}; } }
@@ -1393,6 +1484,7 @@ export function setupCalibrate(ctx) {
     const recentAcc = (sk) => { const g = data.trials.filter((t) => t.station === sk && t.t >= since && typeof t.correct === "boolean"); return g.length >= 3 ? g.filter((t) => t.correct).length / g.length : null; };
     const s = streakFrom(data.sessions), nCal = data.sessions.filter((x) => D.kindOf(x) === "calibration" && x.completed).length;
     const lastCal = calsToday[calsToday.length - 1];
+    const apToday = data.sessions.filter((x) => D.kindOf(x) === "aptest" && x.completed && (x.localDate || D.localDate(x.startedAt)) === today)[0] || null;
     const top = coach.ranked[0];
     const fmtTime = (ms) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     root.innerHTML = `<div class="cal-hub">
@@ -1401,6 +1493,13 @@ export function setupCalibrate(ctx) {
         <h1 class="cal-title2">Training</h1>
         <div class="cal-streakline">${s > 0 ? `🔥 ${s}-day streak` : "Start a streak 🔥"}${nCal ? ` · ${nCal} calibrations` : ""}</div>
         <div class="cal-sync top" id="cal-sync">☁️ checking sync…</div>
+
+        <button class="cal-hub-cal cal-hub-test" id="hub-test">
+          <div class="chc-k">🧪 DAILY AP TEST · 10 NOTES</div>
+          <div class="chc-t">${apToday ? `✓ ${apToday.k}/${apToday.graded} at ${fmtTime(apToday.startedAt)}` : "Do this first"}</div>
+          <div class="chc-s">${apToday ? "Retakes are logged as practice; tomorrow's first one is the next data point." : "No answers shown until the end — the pure AP number. Best before any other training today."}</div>
+          <div class="chc-go">${apToday ? "↻ Retake" : "▶ Start"}</div>
+        </button>
 
         <button class="cal-hub-cal" id="hub-cal">
           <div class="chc-k">DAILY CALIBRATION</div>
@@ -1412,7 +1511,9 @@ export function setupCalibrate(ctx) {
 
         <div class="cal-sec">Coach</div>
         <div class="cal-coach">
-          ${coach.calibrateFirst
+          ${!apToday && !calsToday.length
+            ? `<div class="cc-t">🧪 Daily AP test first, then calibration</div><div class="cc-r">The test only counts as "first thing" before you've heard any named notes today — then the calibration, then I'll pick drills.</div>`
+            : coach.calibrateFirst
             ? `<div class="cc-t">Start with today's calibration</div><div class="cc-r">It's your clean daily reading — then I'll pick drills from what it shows.</div>`
             : `<div class="cc-t">${META[top.skill].icon} ${top.title}</div><div class="cc-r">${top.reason}.</div>
                <button class="cal-cta" data-drill="${top.skill}">▶ Start drill</button>
@@ -1430,6 +1531,7 @@ export function setupCalibrate(ctx) {
       </div>`;
     $("#hub-exit").onclick = () => { exit(); if (ctx.goHome) ctx.goHome(); };
     $("#hub-cal").onclick = () => startCalibration();
+    $("#hub-test").onclick = () => startApTest();
     $("#hub-model").onclick = () => renderInsights();
     root.querySelectorAll("[data-drill]").forEach((b) => (b.onclick = () => startDrill(b.dataset.drill)));
     $("#cal-sing").onchange = (e) => { try { localStorage.setItem("pt.cal.sing", e.target.checked ? "1" : "0"); } catch (_) {} };
@@ -1537,6 +1639,9 @@ export function setupCalibrate(ctx) {
     const mark = (d) => (newProto[d] ? "◆" : ""), markTip = (d) => (newProto[d] ? ` · protocol v${newProto[d]} starts` : "");
     const fixedTrend = fxDays.length ? `<div class="cal-trend ckpt">${fxDays.map((d) => `<div class="cal-tbar" title="${d.date}: ${d.k}/${d.n}${markTip(d.date)}"><div style="height:${Math.round((d.acc || 0) * 100)}%;opacity:${d.n >= 4 ? 1 : 0.4}"></div><span>${mark(d.date)}${dayNum(d.date)}</span></div>`).join("")}</div>
       <div class="cal-ins-m">Same test every day — naming in the middle octave, piano, cleanser on — so difficulty can't move it. ${pct(fx.acc)} overall (n=${fx.n}, guessing 8%).${fx.daysUsed >= 3 && fx.slopePerDay != null ? ` Trend ${fx.slopePerDay >= 0 ? "+" : ""}${(fx.slopePerDay * 100).toFixed(1)} pts/day over ${fx.daysUsed} days.` : " A trend needs 4+ of these on 3+ days (faded bars have fewer)."} Since v5 each calibration has 6 of these with a note you haven't just heard${fx.cold.n ? ` (cold: ${pct(fx.cold.acc)}, n=${fx.cold.n})` : ""}. ◆ = the games changed that day.</div>` : `<div class="cal-hint">No middle-octave naming yet.</div>`;
+    const apx = a.apTest, apRows = apx.rows.slice(-14);
+    const apTrend = apRows.length ? `<div class="cal-trend ckpt">${apRows.map((d) => `<div class="cal-tbar" title="${d.date}: ${d.k}/${d.n}${d.clean ? " · first thing" : " · after training"}"><div style="height:${Math.max(3, Math.round((d.acc || 0) * 100))}%;opacity:${d.clean ? 1 : 0.45}"></div><span>${dayNum(d.date)}</span></div>`).join("")}</div>
+      <div class="cal-ins-m">First Daily AP test each day — 10 notes, no answers shown, octaves 3–5. ${pct(apx.firstOfDay.acc)} overall (n=${apx.firstOfDay.n}, guessing 8%; within a semitone ${pct(apx.within1)}).${apx.slopePerDay != null ? ` Trend ${apx.slopePerDay >= 0 ? "+" : ""}${(apx.slopePerDay * 100).toFixed(1)} pts/day over ${apx.days} days.` : " A trend needs 3+ days."}${apx.clean.n && apx.clean.n !== apx.firstOfDay.n ? ` First thing in the day: ${pct(apx.clean.acc)} (faded bars came after training).` : ""}${apx.n && a.stations.name.n ? ` With answers shown (Blindfold naming): ${pct(a.stations.name.acc)}.` : ""}</div>` : `<div class="cal-hint">No Daily AP test yet — it's the 🧪 card at the top of the hub.</div>`;
     const days = a.daily.filter((d) => d.cold != null).slice(-14);
     const trend = days.length ? `<div class="cal-trend ckpt">${days.map((d) => `<div class="cal-tbar" title="${d.date}: ${pct(d.cold)}${d.calRuns > 1 ? ` (+${d.calRuns - 1} more runs)` : ""}${d.levelUps.length ? ` · harder today: ${d.levelUps.map((x) => TITLE[x]).join(", ")}` : ""}${markTip(d.date)}"><div style="height:${Math.round((d.cold || 0) * 100)}%"></div><span>${mark(d.date)}${d.levelUps.length ? "▲" : ""}${dayNum(d.date)}</span></div>`).join("")}</div>
       <div class="cal-ins-m">First calibration each day, scored at <i>that day's</i> difficulty. ▲ = levels went up that day, so a dip there isn't a slump; ◆ = the games changed (compare within a protocol). ${a.nDrills} drill sets logged.</div>` : `<div class="cal-hint">No calibrations yet.</div>`;
@@ -1611,6 +1716,7 @@ export function setupCalibrate(ctx) {
         <div class="cal-ins-sum">${a.nSessions} calibrations · ${a.nDrills} drill sets · ${a.nTrials} trials · 🔥 ${streakFrom(data.sessions)}</div>
         ${coverageLine(sres, data)}
         <div class="cal-sec">Scorecard <span>you vs guessing</span></div>${scorecard}
+        <div class="cal-sec">Daily AP test <span>no answers shown · the pure number</span></div>${apTrend}
         <div class="cal-sec">Progress <span>same test every day</span></div>${fixedTrend}
         <div class="cal-sec">Daily reading <span>cold run, at that day's level</span></div>${trend}
         <div class="cal-sec">Pitch map <span>naming accuracy by note</span></div>${pcMap}

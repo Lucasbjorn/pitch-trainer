@@ -320,6 +320,15 @@
     .cal-choices.trio .cal-choice { flex: 1 1 0; min-width: 0; }
     .cal-choice { flex: 1; min-width: 120px; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 14px; padding: 0.9rem 1rem; font-weight: 800; font-size: 1rem; cursor: pointer; box-shadow: var(--shadow); touch-action: manipulation; font-family: inherit; }
     .cal-choice.ok, .cal-key.ok { background: var(--good); border-color: var(--good); color: #fff; }
+    #calibrate .cal-key.picked { background: #6d28d9; border-color: #6d28d9; color: #fff; }
+    #calibrate .cal-hub-test { background: linear-gradient(135deg, #4c1d95, #6d28d9); margin-bottom: 0.7rem; }
+    #calibrate .cal-aplist { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; width: 100%; max-width: 360px; margin: 0.8rem auto 0; }
+    #calibrate .cal-aplist > div { display: flex; align-items: baseline; gap: 0.4rem; padding: 0.4rem 0.55rem; border-radius: 10px; background: var(--card); border: 1px solid var(--line); font-size: 0.82rem; }
+    #calibrate .cal-aplist > div span { color: var(--muted); font-size: 0.7rem; width: 1.1rem; }
+    #calibrate .cal-aplist > div i { font-style: normal; color: var(--muted); margin-left: auto; font-size: 0.72rem; }
+    #calibrate .cal-aplist > div.ok { border-color: var(--good); } #calibrate .cal-aplist > div.ok i { color: var(--good); font-weight: 700; }
+    #calibrate .cal-aplist > div.near { border-color: #f59e0b; }
+    #calibrate .cal-aplist > div.bad i { color: var(--bad); }
     #calibrate .cal-key.gut { box-shadow: 0 0 0 3px #f59e0b inset; }
     #calibrate .cal-key.gut::after { content: "gut"; display: block; font-size: 0.55rem; font-weight: 800; color: #b45309; line-height: 1; }
     #calibrate .cal-key.gut.ok::after, #calibrate .cal-key.gut.bad::after { color: #fff; }

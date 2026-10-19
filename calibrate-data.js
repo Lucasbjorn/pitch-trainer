@@ -15,14 +15,14 @@
 
 export const SCHEMA_VERSION = 2;   // record shape (v2 adds mode, protocol, localDate, sessionOfDay)
 export const PROTOCOL = 6;         // v1 first week · v2 harder hold/anchor + song anchors · v3 anchor pop-ups, breathers, replay-once, RT from onset · v4 Neighbors station + trios · v5 cold draws, naming core, Gut & check, Inner tuner, Tag at home, Name or hold, note-lure anchor pop-ups · v6 Hold it: same note or a different note (no cents)
-export const SKILLS = ["cue", "name", "imagine", "anchor", "hold", "twins", "triad", "tune", "tri", "pair", "gut", "tuner", "taghome", "nhold"];
-export const SKILL_TITLE = { cue: "Song anchors", name: "Blindfold naming", imagine: "Imagine & sing", anchor: "Anchor lock", hold: "Hold it", twins: "Octave twins", triad: "Find the note", tune: "In tune?", tri: "Triangulate", pair: "Neighbors", gut: "Gut & check", tuner: "Inner tuner", taghome: "Tag at home?", nhold: "Name or hold?" };
+export const SKILLS = ["cue", "name", "imagine", "anchor", "hold", "twins", "triad", "tune", "tri", "pair", "gut", "tuner", "taghome", "nhold", "aptest"];
+export const SKILL_TITLE = { cue: "Song anchors", name: "Blindfold naming", imagine: "Imagine & sing", anchor: "Anchor lock", hold: "Hold it", twins: "Octave twins", triad: "Find the note", tune: "In tune?", tri: "Triangulate", pair: "Neighbors", gut: "Gut & check", tuner: "Inner tuner", taghome: "Tag at home?", nhold: "Name or hold?", aptest: "Daily AP test" };
 export const STATIONS_GRADED = SKILLS;
 // Drills you can launch. Anchor checks are pop-ups, not a drill; Triangulate was
 // retired in v5 (imagining an anchor turned close guesses into off-by-ones —
 // its old data still shows in the ear model). Gut & check replaces it.
 export const RETIRED = ["tri"];
-export const DRILLS = SKILLS.filter((s) => s !== "anchor" && !RETIRED.includes(s));
+export const DRILLS = SKILLS.filter((s) => s !== "anchor" && s !== "aptest" && !RETIRED.includes(s));
 // Graded stations in the daily calibration (protocol 5), in running order.
 export const CAL_STATIONS = ["cue", "taghome", "tuner", "name", "pair", "hold", "twins", "triad", "anchor"];
 // Questions whose notes were heard WITH their names this recently count as "warm"
@@ -253,7 +253,7 @@ const graded = (t) => typeof t.correct === "boolean";
 const nChoicesOf = (t) => t.stim.nChoices || (Array.isArray(t.stim.pair) ? t.stim.pair.length : 2);
 function chanceOf(t) {
   switch (t.station) {
-    case "name": case "tri": case "gut": return 1 / 12;
+    case "name": case "tri": case "gut": case "aptest": return 1 / 12;
     case "cue": return 1 / (t.stim.choices || 12);
     case "pair": return 1 / nChoicesOf(t);
     case "twins": case "triad": return 1 / 3;
@@ -366,6 +366,7 @@ export function analyze({ sessions = [], trials = [] } = {}) {
     // Neighbors counts only COLD questions (warm ones can be answered from short-term
     // memory); Song anchors is split by direction (tag → note is song recognition).
     const SPEC = [
+      { key: "aptest", station: "aptest", label: "Daily AP test · no answers shown" },
       { key: "name", station: "name" },
       { key: "pair", station: "pair", label: "Neighbors · cold", keep: (t) => warm(t) === false },
       { key: "note2cue", station: "cue", label: "Song anchors · note → tag", keep: (t) => t.stim.kind === "note2cue" },
@@ -569,6 +570,27 @@ export function analyze({ sessions = [], trials = [] } = {}) {
     out.indices.neighbors = { ...prop(pr), ...coldWarm(pr), targetCold: prop(pr.filter((t) => tw(t) === false)), targetWarm: prop(pr.filter((t) => tw(t) === true)), twoCW: coldWarm(two), trioCW: coldWarm(trio), two: prop(two), semitone: prop(two.filter((t) => t.stim.step === 1)), wholeStep: prop(two.filter((t) => t.stim.step === 2)), pairs: groups(two),
       trio: { ...prop(trio), middle: prop(trio.filter((t) => pos(t) === 1)), edge: prop(trio.filter((t) => pos(t) !== 1)), sets: groups(trio),
         farMiss: trio.filter((t) => t.correct === false && Number.isFinite(t.resp) && cdist(t.stim.pc, t.resp) === 2).length } };
+  }
+
+  // ---- 11c2. Daily AP test: 10 notes, no feedback until the end ------------------------
+  //  The purest AP number: no reveal (nothing labeled to compare against), a
+  //  cleanser before every note, octaves 3–5 (no height cue). Progress uses the
+  //  first test of each day; "clean" = nothing else trained earlier that day.
+  {
+    const ap = by("aptest").filter(graded);
+    const tests = sessions.filter((s) => kindOf(s) === "aptest" && s.completed).sort((a, b) => a.startedAt - b.startedAt);
+    const seen = new Set(), firsts = [];
+    tests.forEach((s) => { const d = s.localDate || localDate(s.startedAt); if (!seen.has(d)) { seen.add(d); firsts.push(s); } });
+    const rows = firsts.map((s) => { const g = ap.filter((t) => t.sessionId === s.id); return { date: s.localDate || localDate(s.startedAt), ...prop(g), clean: !s.priorToday, testOfDay: s.testOfDay || 1 }; }).filter((r) => r.n);
+    const f = ols(rows.map((_, i) => i), rows.map((r) => r.acc));
+    const wrong = ap.filter((t) => !t.correct && Number.isFinite(t.resp)), e = wrong.map((t) => circ(t.stim.pc, t.resp));
+    out.apTest = { ...prop(ap), within1: ap.length ? ap.filter((t) => Number.isFinite(t.resp) && cdist(t.stim.pc, t.resp) <= 1).length / ap.length : null,
+      rows, days: rows.length, slopePerDay: rows.length >= 3 ? f.slope : null,
+      firstOfDay: prop(ap.filter((t) => firsts.some((s) => s.id === t.sessionId))), clean: prop(ap.filter((t) => firsts.some((s) => s.id === t.sessionId && !s.priorToday))),
+      retakes: prop(ap.filter((t) => !firsts.some((s) => s.id === t.sessionId))),
+      sharp: e.filter((x) => x > 0).length, flat: e.filter((x) => x < 0).length,
+      byPc: PC.map((nm, pc) => ({ name: nm, ...prop(ap.filter((t) => t.stim.pc === pc)) })), medRt: median(ap.map((t) => t.rt).filter(Number.isFinite)),
+      vsTraining: diffCI(prop(name.filter((t) => t.stim.wash !== false && graded(t))), prop(ap)) };
   }
 
   // ---- 11d. Naming: warm vs cold target -------------------------------------------------
@@ -831,7 +853,8 @@ export function suggestDrills(data = {}, now = Date.now()) {
     if (sk === "hold" && I.hold.enoughCost && I.hold.toneCost && I.hold.toneCost.d > 0.2) flag(0.2, "notes in between knock the pitch out of memory — practice holding it by name");
     return { skill: sk, title: SKILL_TITLE[sk], score: Math.round(score * 100) / 100, reason };
   }).sort((x, y) => y.score - x.score);
-  return { calibrateFirst: !calToday, ranked };
+  const apToday = sessions.some((s) => kindOf(s) === "aptest" && s.completed && (s.localDate || localDate(s.startedAt)) === today);
+  return { calibrateFirst: !calToday, apTestToday: apToday, ranked };
 }
 
 // ---- the day's anchor note ----------------------------------------------------------

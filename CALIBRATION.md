@@ -17,6 +17,14 @@ You land on the **Training Hub**, which has three parts:
 
 **Account sync:** sign in with Google once on each device (from the hub's ☁️ card). After that, the phone, the laptop and the iPhone home-screen app all share one dataset (see *Account sync* below).
 
+## 🧪 Daily AP test — 10 notes, no answers shown (do it first)
+Lucas: "some testing without the reveal if I'm right or not, to make it only an AP test, not relative pitch." A separate card at the top of the hub, ~1½ min.
+- **10 different notes**, piano, random octaves **3–5** (one fixed octave would let "sounds low → C-ish" act as a cue). **Cleanser before every note**, so you can't compute an interval from the previous test note.
+- **Nothing is revealed or named during the test** — no right/wrong, no feedback note, no tag; the tapped key just turns purple ("✓ logged"). Replay (1×) is allowed. No anchor pop-ups. The session's sound log verifies it: zero sounds heard with a name.
+- **The answers are shown only at the end** (score, each note vs your answer, within-a-semitone count), plus your first-test-of-each-day bars.
+- **Data:** session `kind: "aptest"`, `testOfDay`, `priorToday` (anything else trained earlier today), `priorKinds`, `minutesSinceTraining`; trials `station: "aptest"`, `stim: {pc, oct, midi, timbre, wash, feedback: false}`.
+- **Analysis (`analyze().apTest`):** the **first test of each day** is the progress line (retakes are kept apart); "clean" = first thing, before any named notes that day. Also within-a-semitone, error direction, per note, RT, and the gap vs naming *with* answers shown (`vsTraining`). It's the top line of the ear model and the first scorecard row. The hub and coach say to take it before anything else.
+
 ## Daily Calibration — protocol v6 (~9 min, 10 stations + ⚓ pop-ups)
 
 0. **Check-in**: energy, music heard today, headphones vs speaker.
