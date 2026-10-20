@@ -322,6 +322,39 @@
     .cal-choice.ok, .cal-key.ok { background: var(--good); border-color: var(--good); color: #fff; }
     #calibrate .cal-mis { display: block; margin: 0.6rem auto 0; border: 1px dashed var(--line); background: transparent; color: var(--muted); font: inherit; font-size: 0.78rem; font-weight: 700; padding: 0.4rem 0.9rem; border-radius: 999px; cursor: pointer; }
     #calibrate .cal-mis:disabled { opacity: 0.7; cursor: default; }
+    #calibrate .rt-card { background: linear-gradient(135deg, #4c1d95, #6d28d9); color: #fff; border-radius: 24px; padding: 1.1rem 1.1rem 1rem; margin: 0.4rem 0 0.7rem; box-shadow: 0 10px 26px rgba(76,29,149,0.3); }
+    #calibrate .rt-card .chc-k { opacity: 0.8; }
+    #calibrate .rt-list { display: flex; flex-direction: column; gap: 0.35rem; margin: 0.6rem 0 0.8rem; width: 100%; }
+    #calibrate .rt-row { display: flex; align-items: center; gap: 0.6rem; width: 100%; text-align: left; font: inherit; border: 0; border-radius: 14px; padding: 0.55rem 0.7rem; background: rgba(255,255,255,0.12); color: inherit; cursor: pointer; touch-action: manipulation; }
+    #calibrate .cal-finish .rt-row { background: var(--card); border: 1px solid var(--line); color: var(--text); cursor: default; }
+    #calibrate .rt-row .rt-m { width: 1.2rem; text-align: center; font-weight: 800; }
+    #calibrate .rt-row .rt-t { display: flex; flex-direction: column; font-weight: 800; font-size: 0.92rem; line-height: 1.2; }
+    #calibrate .rt-row .rt-t i { font-style: normal; font-weight: 600; font-size: 0.72rem; opacity: 0.75; }
+    #calibrate .rt-row.done { opacity: 0.6; } #calibrate .rt-row.done .rt-t { text-decoration: line-through; }
+    #calibrate .rt-row.skipped { opacity: 0.5; }
+    #calibrate .rt-card .cal-cta { width: 100%; background: #fff; color: #4c1d95; box-shadow: none; }
+    #calibrate .rt-done { font-weight: 800; text-align: center; padding: 0.4rem 0 0.1rem; }
+    #calibrate .jr { align-items: stretch; text-align: center; }
+    #calibrate .jr-clock { font-size: 4.2rem; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; margin: 0.6rem 0 0; }
+    #calibrate .jr-clock.over { color: var(--good); }
+    #calibrate .jr-beats { display: flex; justify-content: center; gap: 0.6rem; margin: 1rem 0 0.6rem; }
+    #calibrate .jr-beats span { width: 16px; height: 16px; border-radius: 50%; background: var(--card2); border: 1px solid var(--line); transition: background 0.05s; }
+    #calibrate .jr-beats span.on { background: #7c3aed; }
+    #calibrate .jr-beats span[data-b="0"].on { background: #f59e0b; }
+    #calibrate .jr-bpm { display: flex; justify-content: center; align-items: center; gap: 0.4rem; margin: 0.6rem 0; }
+    #calibrate .jr-bpm button { font: inherit; font-weight: 800; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 12px; padding: 0.5rem 0.75rem; min-width: 2.8rem; cursor: pointer; touch-action: manipulation; }
+    #calibrate .jr-bpm b { font-size: 1.6rem; min-width: 3.2rem; font-variant-numeric: tabular-nums; }
+    #calibrate .jr-bpm span { color: var(--muted); font-size: 0.8rem; margin-right: 0.3rem; }
+    #calibrate .jr-ctl { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem; margin: 1rem 0 0.6rem; }
+    #calibrate .jr-ctl .cal-cta { margin: 0; padding-left: 0.4rem; padding-right: 0.4rem; }
+    #calibrate .jr-note { width: 100%; box-sizing: border-box; min-height: 4.5rem; border-radius: 14px; border: 1px solid var(--line); background: var(--card); color: var(--text); font: inherit; font-size: 0.9rem; padding: 0.6rem 0.75rem; resize: vertical; }
+    #calibrate .jr-day { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 0.7rem 0.85rem; margin-bottom: 0.5rem; }
+    #calibrate .jr-d { font-weight: 800; font-size: 0.85rem; margin-bottom: 0.4rem; }
+    #calibrate .jr-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+    #calibrate .jr-chip { font-size: 0.74rem; font-weight: 700; padding: 0.25rem 0.55rem; border-radius: 999px; background: var(--card2); color: var(--muted); }
+    #calibrate .jr-chip.done { background: rgba(16,185,129,0.14); color: #047857; }
+    #calibrate .jr-chip.extra { background: rgba(124,58,237,0.1); color: #6d28d9; }
+    #calibrate .jr-n { font-size: 0.8rem; color: var(--muted); margin-top: 0.35rem; line-height: 1.35; }
     #calibrate .cal-key.picked { background: #6d28d9; border-color: #6d28d9; color: #fff; }
     #calibrate .cal-hub-test { background: linear-gradient(135deg, #4c1d95, #6d28d9); margin-bottom: 0.7rem; }
     #calibrate .cal-aplist { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; width: 100%; max-width: 360px; margin: 0.8rem auto 0; }

@@ -17,13 +17,25 @@ You land on the **Training Hub**, which has three parts:
 
 **Account sync:** sign in with Google once on each device (from the hub's ☁️ card). After that, the phone, the laptop and the iPhone home-screen app all share one dataset (see *Account sync* below).
 
+## 🗓️ Daily routine + 📓 practice journal (Oct 20)
+Lucas's every-day order, as a **Today's routine** card at the top of the hub (each row startable on its own; **▶ Next** runs the first unfinished one; every step leads into the next with **▶ Start / ⏭ Skip today / Hub**):
+1. **🧪 Cold AP test** — now **5 notes**, and **no score is shown anywhere** (not after the test, not in the hub, the journal or the ear model; Lucas: "don't even tell me my scores from now on"). Scores are still saved (`scoreHidden: true`, `nNotes: 5`) for analysis/export.
+2. **🎯 Daily calibration** — its finish screen offers **▶ Next in your routine** first.
+3. **🎹 Alan Broadbent warmups** (~5 min): a **stopwatch (no alarm)** + a **metronome** at 120 bpm (−5/−1/+1/+5, remembered in `pt.journal.bpm`, on/off). The click is **filtered noise — no pitch**, on its own look-ahead scheduler (sample-accurate). Pause stops both; the screen stays awake (Wake Lock) where supported.
+4. **📘 Voicing workbook**: a **30-minute countdown** (±5 min), pause/resume; at zero a soft unpitched knock + vibration, then it counts overtime until **✓ Done**.
+5. Then free practice.
+
+Any step: **⏸ pause**, **⏭ skip** (logged), **✕** (saves what you did and returns to the hub), optional **notes**.
+
+**Journal data** (separate from ear-training stats; synced like everything else): sessions with `kind: "journal"`, `item` (warmup / workbook / aptest / calibration for skips), `activeSec` (time excluding pauses), `bpm` + `bpms` (warmups), `targetSec` (workbook), `completed / skipped / exited`, `note`. The AP test and calibration count as done from their own sessions. **📓 Practice journal** (hub → You) shows each day's routine (✓ / ⏭ / ○, warmup time @bpm, workbook time, drills + minutes, notes), this week's minutes, and the full-routine streak. A journal session done *before* an AP test marks that test `priorToday` (you'd been playing).
+
 ## ↩ Misclicks
 After any answer, a small **↩ misclick?** button (3 a day per device, counter shown). Tapping it marks that answer `misclick: true` (+ `misclickAt`): it stays in the log but is left out of every score, level, calibration summary, the coach and `analyze()`; the ear model shows how many you've flagged and how many of those were wrong answers (`analyze().misclicks`). In the Daily AP test, where nothing has been revealed yet, a misclick lets you **answer again**: the flagged tap and the re-answer (`redo: 1`) are both logged, and the result uses the re-answer.
 
 ## ⭐ Favorites
 Imagine & sing, Neighbors, Tag at home? and Inner tuner (`FAVORITES`) are listed first in the hub with a ⭐ and get a standing +0.3 coach boost (Neighbors keeps its own +0.35).
 
-## 🧪 Daily AP test — 10 notes, no answers shown (do it first)
+## 🧪 Daily AP test — 5 notes (10 before Oct 20), no answers shown (do it first)
 Lucas: "some testing without the reveal if I'm right or not, to make it only an AP test, not relative pitch." A separate card at the top of the hub, ~1½ min.
 - **10 different notes**, piano, random octaves **3–5** (one fixed octave would let "sounds low → C-ish" act as a cue). **Cleanser before every note**, so you can't compute an interval from the previous test note.
 - **Nothing is revealed or named during the test** — no right/wrong, no feedback note, no tag; the tapped key just turns purple ("✓ logged"). Replay (1×) is allowed. No anchor pop-ups. The session's sound log verifies it: zero sounds heard with a name.
@@ -31,15 +43,16 @@ Lucas: "some testing without the reveal if I'm right or not, to make it only an 
 - **Data:** session `kind: "aptest"`, `testOfDay`, `priorToday` (anything else trained earlier today), `priorKinds`, `minutesSinceTraining`; trials `station: "aptest"`, `stim: {pc, oct, midi, timbre, wash, feedback: false}`.
 - **Analysis (`analyze().apTest`):** the **first test of each day** is the progress line (retakes are kept apart); "clean" = first thing, before any named notes that day. Also within-a-semitone, error direction, per note, RT, and the gap vs naming *with* answers shown (`vsTraining`). It's the top line of the ear model and the first scorecard row. The hub and coach say to take it before anything else.
 
-## Daily Calibration — protocol v7 (~9 min, 10 stations + ⚓ pop-ups)
+## Daily Calibration — protocol v8 (~10 min, 11 stations + ⚓ pop-ups)
 
 0. **Check-in**: energy, music heard today, headphones vs speaker.
 1. **Attune**: today's note → its PP-MIDI song tag → note, three times.
 
 **Today's note (daily anchor).** The anchor rotates: each day it's your weakest note that hasn't been the anchor in the last 11 days, so all 12 get a turn every 12 days, weakest first. "Weakest" is computed only from trials before today, so it can't drift mid-day. Once a calibration records it, it sticks for that day. A hub toggle switches back to "always C." Attune and Anchor lock use it, and sessions/trials record `anchorPc`.
 2. **Song anchors**: learn your 2 weakest notes (note · tag · note), then 3 recall trials, all **bare note → tag** since v5: hear the plain piano note, recall its tag, name it. (Tag → note was 95% in 1.7 s: recognizing the *song* gives the name whatever its pitch. It stays in the drill at L1 for learning the tags.)
+2b. **Imagine & sing** (back in v8, right after the tags — Lucas: "that's how I get my inner ear audiating and engaged"): 3 questions — see a note name, hear it inside, then sing it (🎤 on: the mic grades you in cents) or rate yourself. It was drill-only in v5–v7; ≤v4 it was station 3.
 3. **Tag at home?** (v5): 4 tags, half shifted — is it at its real pitch? (see *Drills*)
-4. **Inner tuner** (v5): 4 imagine-then-judge questions (see *Drills*). Replaces *Imagine it*, which is now drill-only; the tuner measures the same internal template without a mic.
+4. **Inner tuner** (v5): 4 imagine-then-judge questions (see *Drills*); it measures the internal template without a mic.
 5. **Blindfold naming**: the diagnostic core (below). **10 questions since v5** (was 6–8): 6 **core** (middle octave, piano, cleanser, cold note — exactly the "same test every day" condition, logged `core: true`) + 4 from the usual randomized mix (no-cleanser, pure tone, octave spread).
 6. **Neighbors** (v4): 4 next-door questions (see *Drills*). It joined the calibration because it measures chroma with no reference in any octave and timbre, which you can't fake with your vocal range. Its calibration level starts one step below where the Neighbors drill had got to, not at L1.
 7. **Hold it**: keep a note alive for 4–7 s (L1) → 10–18 s (L5), then: **the same note, or a different note?** (v6; Lucas: "too focused on making the note slightly different".) Different notes are ≥3 semitones away at L1, ≥2 at L2–3, and from L3 a share (30% → 60%) are semitone neighbors. Half the holds play **stray notes** in the gap (never the held note's or the probe's name), half play noise. ≤v5 the probe was 60¢ → 12¢ off; that data is kept apart (`probeKind`).
@@ -70,6 +83,7 @@ Lucas: "some testing without the reveal if I'm right or not, to make it only an 
 - **v2:** Song anchors, cents-level hold/anchor, rotating daily anchor, tuning-cue fixes.
 - **v3:** pop-ups, pacing, replay, RT from onset.
 - **v4:** Neighbors station in the calibration; Neighbors trios (three next-door notes, names shown only once the note sounds); coach weights Neighbors up.
+- **v8:** Imagine & sing back in the calibration, right after Song anchors.
 - **v7:** What key? replaces Octave twins (retired; its data stays); misclick flag; favorites first in the hub with a coach boost.
 - **v6:** Hold it probes are the same note or a different note (no cents).
 - **v5:** cold draws; naming core (10 naming per calibration); Song anchors bare-only in the calibration; new games Gut & check, Inner tuner, Tag at home?, Name or hold?; anchor pop-ups use whole-note lures + "which note?"; Imagine → drills; Triangulate retired.
