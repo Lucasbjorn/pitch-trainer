@@ -509,18 +509,21 @@ export function setupCalibrate(ctx) {
     return abort ? null : { correct };
   }
 
+  // Imagine & sing (v9: self-paced — no countdown). The name appears; take as long
+  // as you need to find it in your head, then tap. imagineMs = how long that took.
   async function trImagine(info) {
     const p = P("imagine"), pc = weightedPc(), sing = singOn();
     stage(head("imagine", info) + `<div class="cal-stage"><div class="cal-phase">🌀 clearing your ear…</div></div>` + foot());
     await sleep(BREATH); await cleanser(); if (abort) return null;
     stage(head("imagine", info) + `
       <div class="cal-stage">
-        <div class="cal-say">Hear this note ringing in your mind:</div>
+        <div class="cal-say">Find this note in your head — take your time:</div>
         <div class="cal-big">${PC[pc]}</div>
-        <div class="cal-count" id="cal-count">${p.secs}</div>
-        <div class="cal-hint">No sound yet — ${sing ? "get ready to sing it" : "sing it silently"}.</div>
+        <div class="cal-hint">Don't hum. ${sing ? "When you can hear it, tap — then sing it." : "When you can hear it, tap."}</div>
+        <div class="cal-choices" id="img-go" hidden><button class="cal-choice" data-v="go">${sing ? "🎤 Got it — sing" : "✓ Got it"}</button></div>
       </div>` + foot());
-    await countdown($("#cal-count"), p.secs); if (abort) return null;
+    const go = await ask("#img-go"); if (abort || go.v == null) return null;
+    const imagineMs = go.rt;
     let sung = null;
     if (sing) {
       stage(head("imagine", info) + `
@@ -534,7 +537,7 @@ export function setupCalibrate(ctx) {
     if (sung && sung.ok) {
       const c = sung.cents, correct = Math.abs(c) <= 50;
       record("imagine", correct);
-      logTrial("imagine", { ti: info.i, stim: { pc, secs: p.secs }, resp: "sung", correct, sing: sung });
+      logTrial("imagine", { ti: info.i, stim: { pc, secs: null, selfPaced: true }, imagineMs, resp: "sung", correct, sing: sung });
       const how = Math.abs(c) <= 15 ? "dead on 🎯" : `${c > 0 ? "+" : ""}${c}¢ ${c > 0 ? "sharp" : "flat"}`;
       stage(head("imagine", info) + `<div class="cal-stage"><div class="cal-say">That's</div><div class="cal-big ok-glow">${PC[pc]}</div>
         <div class="cal-fb ${correct ? "ok" : "bad"}">You sang ${how}${Math.abs(c) > 50 ? ` — closer to ${PC[pcOf(sung.midi)]}` : ""}</div></div>` + foot());
@@ -550,7 +553,7 @@ export function setupCalibrate(ctx) {
     await noteCue(pc); if (abort) return null;
     const tm = later(() => done(null), 6000);
     const { v, rt } = await ask("#cal-ch"); clearTimeout(tm); if (abort) return null;
-    logTrial("imagine", { ti: info.i, stim: { pc, secs: p.secs }, resp: v, rt: v ? rt : null, sing: sung });
+    logTrial("imagine", { ti: info.i, stim: { pc, secs: null, selfPaced: true }, imagineMs, resp: v, rt: v ? rt : null, sing: sung });
     return { correct: null };
   }
 
@@ -1167,15 +1170,13 @@ export function setupCalibrate(ctx) {
   }
   const CAL = [
     { title: "Attune", fn: calAttune },
+    { title: "Imagine & sing", fn: () => calBlock("imagine") },     // v9: first, ×6 — gets the inner ear going
     { title: "Song anchors", fn: () => calBlock("cue") },
-    { title: "Imagine & sing", fn: () => calBlock("imagine") },     // v8: right after the tags, to get the inner ear going
     { title: "Tag at home?", fn: () => calBlock("taghome") },
     { title: "Inner tuner", fn: () => calBlock("tuner") },
     { title: "Blindfold naming", fn: () => calBlock("name") },
     { title: "Neighbors", fn: () => calBlock("pair") },
-    { title: "Hold it", fn: () => calBlock("hold") },
     { title: "What key?", fn: () => calBlock("key") },
-    { title: "Find the note", fn: () => calBlock("triad") },
     { title: "Lock it in", fn: calLockin },
   ];
 
@@ -1398,7 +1399,7 @@ export function setupCalibrate(ctx) {
   // everything else, but kept apart from the ear-training stats.
   const ROUTINE = [
     { key: "aptest", icon: "🧪", title: "Cold AP test", sub: "5 notes · no score", start: () => startApTest() },
-    { key: "calibration", icon: "🎯", title: "Daily calibration", sub: "~10 min", start: () => startCalibration() },
+    { key: "calibration", icon: "🎯", title: "Daily calibration", sub: "~6 min", start: () => startCalibration() },
     { key: "warmup", icon: "🎹", title: "Alan Broadbent warmups", sub: "metronome + stopwatch · ~5 min", start: () => startWarmup() },
     { key: "workbook", icon: "📘", title: "Voicing workbook", sub: "30-minute timer", start: () => startWorkbook() },
   ];
@@ -1453,32 +1454,67 @@ export function setupCalibrate(ctx) {
   }
 
   // ---- metronome: its own look-ahead scheduler on the audio clock -----------------
-  // The click is filtered NOISE (no pitch), so it never gives the ear a reference.
+  // Two soft sounds (Oct 22: the old high-passed noise tick was "piercing"):
+  //   click — a woodblock-like tock (noise through a ~1 kHz band-pass, 15 ms);
+  //   boop  — a soft low "boop" that drops 200 → 70 Hz in 70 ms.
+  // Neither has a steady pitch, so the metronome never hands the ear a reference.
   let met = null;
-  function metClickBuf(ac) {
-    const n = Math.round(ac.sampleRate * 0.03), b = ac.createBuffer(1, n, ac.sampleRate), d = b.getChannelData(0);
-    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 6);
-    return b;
+  const metSound = () => { try { return localStorage.getItem("pt.journal.metSound") || "click"; } catch (_) { return "click"; } };
+  function metVoice(ac, out, t, accent, kind) {
+    const g = ac.createGain(); g.connect(out);
+    if (kind === "boop") {
+      const o = ac.createOscillator(); o.type = "sine";
+      o.frequency.setValueAtTime(200, t); o.frequency.exponentialRampToValueAtTime(70, t + 0.07);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(accent ? 0.55 : 0.32, t + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+      o.connect(g); o.start(t); o.stop(t + 0.12);
+    } else {
+      const n = Math.round(ac.sampleRate * 0.02), b = ac.createBuffer(1, n, ac.sampleRate), d = b.getChannelData(0);
+      for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ac.sampleRate * 0.003));
+      const src = ac.createBufferSource(), bp = ac.createBiquadFilter(), lp = ac.createBiquadFilter();
+      bp.type = "bandpass"; bp.frequency.value = accent ? 1150 : 950; bp.Q.value = 1.2; lp.type = "lowpass"; lp.frequency.value = 2600;
+      src.buffer = b; src.connect(bp); bp.connect(lp); lp.connect(g); g.gain.value = accent ? 1.1 : 0.65; src.start(t);
+    }
   }
   function metStart(getBpm, onBeat) {
     metStop();
-    const ac = Tone.getContext().rawContext, buf = metClickBuf(ac);
-    const hp = ac.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 1800; hp.connect(ac.destination);
-    met = { ac, hp, buf, next: ac.currentTime + 0.08, beat: 0, iv: null, vis: [] };
+    const ac = Tone.getContext().rawContext, out = ac.createGain(); out.gain.value = 0.9; out.connect(ac.destination);
+    met = { ac, out, next: ac.currentTime + 0.08, beat: 0, iv: null, vis: [] };
     const tick = () => {
       if (!met) return;
+      if (met.next < ac.currentTime) met.next = ac.currentTime + 0.05;   // back from the background: don't burst
       while (met.next < ac.currentTime + 0.12) {
-        const accent = met.beat % 4 === 0, src = ac.createBufferSource(), g = ac.createGain();
-        src.buffer = met.buf; g.gain.value = accent ? 1.0 : 0.5; src.connect(g); g.connect(met.hp); src.start(met.next);
+        metVoice(ac, met.out, met.next, met.beat % 4 === 0, metSound());
         const b = met.beat % 4, delay = Math.max(0, (met.next - ac.currentTime) * 1000);
         met.vis.push(setTimeout(() => onBeat && onBeat(b), delay));
         met.next += 60 / getBpm(); met.beat++;
       }
-      if (met.next < ac.currentTime) met.next = ac.currentTime + 0.05;  // came back from the background: don't burst
     };
     tick(); met.iv = setInterval(tick, 25);
   }
-  function metStop() { if (!met) return; clearInterval(met.iv); met.vis.forEach(clearTimeout); try { met.hp.disconnect(); } catch (_) {} met = null; }
+  function metStop() { if (!met) return; clearInterval(met.iv); met.vis.forEach(clearTimeout); try { met.out.disconnect(); } catch (_) {} met = null; }
+  // A metronome panel shared by the warmups and the workbook: beat dots, bpm
+  // (−5/−1/+1/+5, remembered per activity), on/off, click ⇄ boop.
+  function metPanel(prefKey, defaultOn) {
+    const st = { bpm: +(localStorage.getItem(prefKey) || 120) || 120, on: defaultOn, running: true, log: [] };
+    st.log.push(st.bpm);
+    const html = `<div class="jr-met">
+        <div class="jr-beats" id="jr-beats">${[0, 1, 2, 3].map((i) => `<span data-b="${i}"></span>`).join("")}</div>
+        <div class="jr-bpm"><button data-d="-5">−5</button><button data-d="-1">−</button><b id="jr-bpm">${st.bpm}</b><span>bpm</span><button data-d="1">+</button><button data-d="5">+5</button></div>
+        <div class="jr-mrow"><button class="cal-cta ghost-cta" id="jr-met">${st.on ? "🔇 Metronome off" : "🔊 Metronome on"}</button><button class="cal-cta ghost-cta" id="jr-snd">${metSound() === "boop" ? "🔈 Boop" : "🪵 Click"}</button></div>
+      </div>`;
+    const flash = (b) => root.querySelectorAll("#jr-beats span").forEach((x) => x.classList.toggle("on", +x.dataset.b === b));
+    const sync = () => { if (st.on && st.running) metStart(() => st.bpm, flash); else { metStop(); flash(-1); } };
+    const wire = () => {
+      root.querySelectorAll(".jr-bpm [data-d]").forEach((b) => (b.onclick = () => {
+        st.bpm = Math.max(30, Math.min(300, st.bpm + +b.dataset.d)); $("#jr-bpm").textContent = st.bpm; st.log.push(st.bpm);
+        try { localStorage.setItem(prefKey, String(st.bpm)); } catch (_) {}
+      }));
+      $("#jr-met").onclick = () => { st.on = !st.on; $("#jr-met").textContent = st.on ? "🔇 Metronome off" : "🔊 Metronome on"; sync(); };
+      $("#jr-snd").onclick = () => { const nx = metSound() === "boop" ? "click" : "boop"; try { localStorage.setItem("pt.journal.metSound", nx); } catch (_) {} $("#jr-snd").textContent = nx === "boop" ? "🔈 Boop" : "🪵 Click"; };
+      sync();
+    };
+    return { st, html, wire, setRunning: (r) => { st.running = r; sync(); }, info: () => ({ bpm: st.bpm, bpms: [...new Set(st.log)], metronome: st.on || st.log.length > 1, metSound: metSound() }) };
+  }
 
   // ---- keep the screen awake while practicing (where supported) --------------------
   let wake = null;
@@ -1497,36 +1533,26 @@ export function setupCalibrate(ctx) {
   async function startWarmup() {
     abort = false; clearTimers(); run = null;
     try { await Tone.start(); } catch (_) {}
-    let bpm = +(localStorage.getItem("pt.journal.bpm") || 120) || 120, metOn = true;
-    const startedAt = Date.now(), c = clockState(), bpmLog = [bpm];
+    const startedAt = Date.now(), c = clockState(), mp = metPanel("pt.journal.bpm", true);
     root.innerHTML = `<div class="cal-stage jr">
         <div class="cal-top"><button class="cal-x" id="jr-x">✕</button><div style="flex:1"></div></div>
         <div class="cal-kicker">🎹 Alan Broadbent warmups</div>
         <div class="jr-clock" id="jr-clock">0:00</div>
         <div class="cal-hint">stopwatch · no alarm</div>
-        <div class="jr-beats" id="jr-beats">${[0, 1, 2, 3].map((i) => `<span data-b="${i}"></span>`).join("")}</div>
-        <div class="jr-bpm"><button data-d="-5">−5</button><button data-d="-1">−</button><b id="jr-bpm">${bpm}</b><span>bpm</span><button data-d="1">+</button><button data-d="5">+5</button></div>
-        <button class="cal-cta ghost-cta" id="jr-met">🔇 Metronome off</button>
+        ${mp.html}
         <div class="jr-ctl"><button class="cal-cta ghost-cta" id="jr-pause">⏸ Pause</button><button class="cal-cta" id="jr-done">✓ Done</button><button class="cal-cta ghost-cta" id="jr-skip">⏭ Skip</button></div>
         <textarea id="jr-note" class="jr-note" placeholder="Notes (optional) — what you worked on"></textarea>
       </div>`;
-    const flash = (b) => root.querySelectorAll("#jr-beats span").forEach((x) => x.classList.toggle("on", +x.dataset.b === b));
-    const go = () => { if (metOn && c.running) metStart(() => bpm, flash); };
-    go(); wakeOn();
+    mp.wire(); wakeOn();
     practiceTimer = setInterval(() => { const el = $("#jr-clock"); if (el) el.textContent = fmt(elapsed(c)); }, 250);
-    root.querySelectorAll(".jr-bpm [data-d]").forEach((b) => (b.onclick = () => {
-      bpm = Math.max(30, Math.min(300, bpm + +b.dataset.d)); $("#jr-bpm").textContent = bpm; bpmLog.push(bpm);
-      try { localStorage.setItem("pt.journal.bpm", String(bpm)); } catch (_) {}
-    }));
-    $("#jr-met").onclick = () => { metOn = !metOn; $("#jr-met").textContent = metOn ? "🔇 Metronome off" : "🔊 Metronome on"; if (metOn) go(); else metStop(); };
     $("#jr-pause").onclick = () => {
-      if (c.running) { c.acc = elapsed(c); c.running = false; metStop(); $("#jr-pause").textContent = "▶ Resume"; }
-      else { c.since = Date.now(); c.running = true; go(); $("#jr-pause").textContent = "⏸ Pause"; }
+      if (c.running) { c.acc = elapsed(c); c.running = false; mp.setRunning(false); $("#jr-pause").textContent = "▶ Resume"; }
+      else { c.since = Date.now(); c.running = true; mp.setRunning(true); $("#jr-pause").textContent = "⏸ Pause"; }
     };
     const finish = async (how) => {
       const sec = Math.round(elapsed(c) / 1000), note = ($("#jr-note") || {}).value || "";
       endPractice();
-      await logJournal("warmup", { startedAt, activeSec: sec, bpm, bpms: [...new Set(bpmLog)], completed: how === "done", skipped: how === "skip", exited: how === "exit", note: note.trim() || null });
+      await logJournal("warmup", { startedAt, activeSec: sec, ...mp.info(), completed: how === "done", skipped: how === "skip", exited: how === "exit", note: note.trim() || null });
       return how === "exit" ? enter() : routineNext("warmup");
     };
     $("#jr-done").onclick = () => finish("done"); $("#jr-skip").onclick = () => finish("skip"); $("#jr-x").onclick = () => finish("exit");
@@ -1537,19 +1563,20 @@ export function setupCalibrate(ctx) {
     abort = false; clearTimers(); run = null;
     try { await Tone.start(); } catch (_) {}
     let target = 30 * 60000, rang = false;
-    const startedAt = Date.now(), c = clockState();
+    const startedAt = Date.now(), c = clockState(), mp = metPanel("pt.journal.bpm.workbook", false);
     root.innerHTML = `<div class="cal-stage jr">
         <div class="cal-top"><button class="cal-x" id="jr-x">✕</button><div style="flex:1"></div></div>
         <div class="cal-kicker">📘 Voicing workbook</div>
         <div class="jr-clock" id="jr-clock">30:00</div>
         <div class="cal-hint" id="jr-sub">of <span id="jr-target">30</span> min</div>
         <div class="jr-bpm"><button data-m="-5">−5 min</button><button data-m="5">+5 min</button></div>
+        ${mp.html}
         <div class="jr-ctl"><button class="cal-cta ghost-cta" id="jr-pause">⏸ Pause</button><button class="cal-cta" id="jr-done">✓ Done</button><button class="cal-cta ghost-cta" id="jr-skip">⏭ Skip</button></div>
         <textarea id="jr-note" class="jr-note" placeholder="Notes (optional) — pages, voicings, what clicked"></textarea>
       </div>`;
-    wakeOn();
-    const knock = () => {                                           // unpitched, like the metronome
-      try { const ac = Tone.getContext().rawContext, buf = metClickBuf(ac); [0, 0.18, 0.36, 1.0, 1.18, 1.36].forEach((t) => { const s3 = ac.createBufferSource(); s3.buffer = buf; s3.connect(ac.destination); s3.start(ac.currentTime + t); }); } catch (_) {}
+    mp.wire(); wakeOn();
+    const knock = () => {                                           // soft and unpitched, like the metronome
+      try { const ac = Tone.getContext().rawContext, out = ac.createGain(); out.gain.value = 0.9; out.connect(ac.destination); [0, 0.2, 0.4, 1.1, 1.3, 1.5].forEach((t) => metVoice(ac, out, ac.currentTime + 0.05 + t, t === 0 || t === 1.1, "boop")); } catch (_) {}
       try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (_) {}
     };
     const draw = () => {
@@ -1561,13 +1588,13 @@ export function setupCalibrate(ctx) {
     practiceTimer = setInterval(draw, 250); draw();
     root.querySelectorAll("[data-m]").forEach((b) => (b.onclick = () => { target = Math.max(5 * 60000, target + +b.dataset.m * 60000); $("#jr-target").textContent = Math.round(target / 60000); if (target - elapsed(c) > 0) rang = false; draw(); }));
     $("#jr-pause").onclick = () => {
-      if (c.running) { c.acc = elapsed(c); c.running = false; $("#jr-pause").textContent = "▶ Resume"; }
-      else { c.since = Date.now(); c.running = true; $("#jr-pause").textContent = "⏸ Pause"; }
+      if (c.running) { c.acc = elapsed(c); c.running = false; mp.setRunning(false); $("#jr-pause").textContent = "▶ Resume"; }
+      else { c.since = Date.now(); c.running = true; mp.setRunning(true); $("#jr-pause").textContent = "⏸ Pause"; }
     };
     const finish = async (how) => {
       const sec = Math.round(elapsed(c) / 1000), note = ($("#jr-note") || {}).value || "";
       endPractice();
-      await logJournal("workbook", { startedAt, activeSec: sec, targetSec: Math.round(target / 1000), completed: how === "done", skipped: how === "skip", exited: how === "exit", note: note.trim() || null });
+      await logJournal("workbook", { startedAt, activeSec: sec, targetSec: Math.round(target / 1000), ...mp.info(), completed: how === "done", skipped: how === "skip", exited: how === "exit", note: note.trim() || null });
       return how === "exit" ? enter() : routineNext("workbook");
     };
     $("#jr-done").onclick = () => finish("done"); $("#jr-skip").onclick = () => finish("skip"); $("#jr-x").onclick = () => finish("exit");
@@ -1804,7 +1831,7 @@ export function setupCalibrate(ctx) {
         <button class="cal-hub-cal" id="hub-cal">
           <div class="chc-k">DAILY CALIBRATION</div>
           <div class="chc-t">${lastCal ? `✓ Done at ${fmtTime(lastCal.startedAt)}${sumAcc(lastCal) != null ? ` · ${pct(sumAcc(lastCal))}` : ""}` : "Today's reading"}</div>
-          <div class="chc-s">${lastCal ? `Run it again — extra runs count as practice (run #${calsToday.length + 1}).` : "~10 min · song tags, imagine & sing, inner tuner, naming, neighbors, holds, keys. Your clean daily data point."}</div>
+          <div class="chc-s">${lastCal ? `Run it again — extra runs count as practice (run #${calsToday.length + 1}).` : "~6 min · imagine & sing, song tags, inner tuner, naming, neighbors, keys. Your clean daily data point."}</div>
           <div class="chc-anchor">⚓ Today's note: <b>${PC[dayAnchor]}</b>${anchorMode() === "fixed" ? " (always C)" : " · rotates daily, weakest first"}</div>
           <div class="chc-go">${lastCal ? "↻ Run again" : "▶ Start"}</div>
         </button>
@@ -2042,7 +2069,7 @@ export function setupCalibrate(ctx) {
         ${card("Register cues", reg.spread != null ? pts(reg.spread) : "—", reg.spread == null ? "Needs ≥5 trials in two octaves." : reg.spread > 0.25 ? "Accuracy swings a lot by octave → you may be using <b>register</b> as a cue." : "Similar across octaves → you're hearing <b>chroma</b>, not height. ✓", reg.byOct.map((r) => `oct ${r.oct}: ${pct(r.acc)}`).join(" · "))}
         ${card("What key?", ky.n ? pct(ky.acc) : "—", ky.n >= 8 ? `Naming a chord or progression's key from its overall color (guessing 8%). Chords ${pct(ky.triad.acc)} (n=${ky.triad.n}) · progressions ${pct(ky.prog.acc)} (n=${ky.prog.n}).${ky.nWrong >= 4 ? ` Misses: ${ky.fifthMiss} a 4th/5th off (a related key), ${ky.semitoneMiss} a semitone off, ${ky.thirdMiss} a third off.` : ""}` : needs(ky.n, 8, "What key? questions"), ky.byKey.filter((x) => x.n >= 2).sort((x, y) => x.acc - y.acc).slice(0, 4).map((x) => `${x.name} ${pct(x.acc)}`).join(" · "))}
         ${ch.n ? card("Octave twins (retired)", pct(ch.acc), "Retired in v7 — too easy, and relative pitch could answer it. What key? replaced it.", ch.byOffset.filter((x) => x.n).map((x) => `${x.semis}st: ${pct(x.acc)}`).join(" · ")) : ""}
-        ${card("Inner pitch", im.nSung ? `${im.meanBiasCents > 0 ? "+" : ""}${Math.round(im.meanBiasCents)}¢` : "—", im.nSung >= 5 ? `Your sung template runs ${Math.abs(im.meanBiasCents) < 15 ? "dead center" : im.meanBiasCents > 0 ? "<b>sharp</b>" : "<b>flat</b>"}; ${pct(im.within50)} within a quarter-tone (avg miss ${Math.round(im.meanAbsCents)}¢).` : `Turn on 🎤 singing to measure your internal template.${im.nSelf ? ` Self-rated "nailed it": ${pct(im.selfNailedRate)}.` : ""}`, im.nSung ? `n=${im.nSung} sung` : "")}
+        ${card("Inner pitch", im.nSung ? `${im.meanBiasCents > 0 ? "+" : ""}${Math.round(im.meanBiasCents)}¢` : "—", im.nSung >= 5 ? `Your sung template runs ${Math.abs(im.meanBiasCents) < 15 ? "dead center" : im.meanBiasCents > 0 ? "<b>sharp</b>" : "<b>flat</b>"}; ${pct(im.within50)} within a quarter-tone (avg miss ${Math.round(im.meanAbsCents)}¢).` : `Turn on 🎤 singing to measure your internal template.${im.nSelf ? ` Self-rated "nailed it": ${pct(im.selfNailedRate)}.` : ""}`, [im.nSung ? `n=${im.nSung} sung` : "", im.nTimed >= 3 ? `time to find it: ${(im.medImagineMs / 1000).toFixed(1)}s median${im.medImagineMsHit != null && im.medImagineMsMiss != null ? ` (on target ${(im.medImagineMsHit / 1000).toFixed(1)}s · off ${(im.medImagineMsMiss / 1000).toFixed(1)}s)` : ""}` : ""].filter(Boolean).join(" · "))}
         ${card("Triangulate (retired)", ma.n ? pct(ma.acc) : "—", ma.n ? `Imagining an anchor and stepping out gave ${pct(ma.acc)} exact vs ${pct(a.stations.name.acc)} for plain naming — close guesses became off-by-ones. Retired in v5; Gut & check tests the same idea directly.` : "Retired in v5.", "")}
         ${ma.n >= 12 ? card("Mental anchors", ma.best.length ? ma.best[0].name : "—", ma.best.length >= 2 ? `Triangulating from an imagined note works best from <b>${ma.best.map((x) => x.name).join(", ")}</b> and worst from <b>${ma.worst.map((x) => x.name).join(", ")}</b>.` : needs(ma.byAnchor.filter((x) => x.n >= 3).length, 2, "anchors with 3+ Triangulate trials"), ma.byDist.map((x) => `${x.dist}st: ${pct(x.acc)}`).join(" · ")) : ""}
         <div class="cal-sec">Confusions</div>

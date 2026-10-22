@@ -21,8 +21,10 @@ You land on the **Training Hub**, which has three parts:
 Lucas's every-day order, as a **Today's routine** card at the top of the hub (each row startable on its own; **▶ Next** runs the first unfinished one; every step leads into the next with **▶ Start / ⏭ Skip today / Hub**):
 1. **🧪 Cold AP test** — now **5 notes**, and **no score is shown anywhere** (not after the test, not in the hub, the journal or the ear model; Lucas: "don't even tell me my scores from now on"). Scores are still saved (`scoreHidden: true`, `nNotes: 5`) for analysis/export.
 2. **🎯 Daily calibration** — its finish screen offers **▶ Next in your routine** first.
-3. **🎹 Alan Broadbent warmups** (~5 min): a **stopwatch (no alarm)** + a **metronome** at 120 bpm (−5/−1/+1/+5, remembered in `pt.journal.bpm`, on/off). The click is **filtered noise — no pitch**, on its own look-ahead scheduler (sample-accurate). Pause stops both; the screen stays awake (Wake Lock) where supported.
-4. **📘 Voicing workbook**: a **30-minute countdown** (±5 min), pause/resume; at zero a soft unpitched knock + vibration, then it counts overtime until **✓ Done**.
+3. **🎹 Alan Broadbent warmups** (~5 min): a **stopwatch (no alarm)** + a **metronome** at 120 bpm (−5/−1/+1/+5, remembered in `pt.journal.bpm`, on/off). Pause stops both; the screen stays awake (Wake Lock) where supported.
+4. **📘 Voicing workbook**: a **30-minute countdown** (±5 min), pause/resume, and the **same metronome** (off by default; its own bpm, `pt.journal.bpm.workbook`); at zero a few soft boops + vibration, then it counts overtime until **✓ Done**.
+
+**Metronome sound (Oct 22: the first version was "a piercing tick"):** choose **🪵 Click** (a woodblock-like tock: 20 ms noise burst through a ~1 kHz band-pass) or **🔈 Boop** (a soft sine that drops 200 → 70 Hz in 70 ms); remembered in `pt.journal.metSound`. Neither has a steady pitch, so it never gives the ear a reference. Measured offline: old tick centroid ≈ 11.4 kHz at 0 dB → click ≈ 2.1 kHz at −12 dB, boop ≈ 310 Hz at −7 dB. It runs on its own look-ahead scheduler on the audio clock (sample-accurate). Journal entries record `bpm`, `bpms`, `metronome`, `metSound`.
 5. Then free practice.
 
 Any step: **⏸ pause**, **⏭ skip** (logged), **✕** (saves what you did and returns to the hub), optional **notes**.
@@ -43,7 +45,10 @@ Lucas: "some testing without the reveal if I'm right or not, to make it only an 
 - **Data:** session `kind: "aptest"`, `testOfDay`, `priorToday` (anything else trained earlier today), `priorKinds`, `minutesSinceTraining`; trials `station: "aptest"`, `stim: {pc, oct, midi, timbre, wash, feedback: false}`.
 - **Analysis (`analyze().apTest`):** the **first test of each day** is the progress line (retakes are kept apart); "clean" = first thing, before any named notes that day. Also within-a-semitone, error direction, per note, RT, and the gap vs naming *with* answers shown (`vsTraining`). It's the top line of the ear model and the first scorecard row. The hub and coach say to take it before anything else.
 
-## Daily Calibration — protocol v8 (~10 min, 11 stations + ⚓ pop-ups)
+## Daily Calibration — protocol v9 (~6 min, 9 stations + 3 ⚓ pop-ups)
+**v9 (Oct 22, Lucas: "calibration is too long … just imagining a note and singing it should be best"):** Attune → **Imagine & sing ×6 (self-paced)** → Song anchors 3 → Tag at home? 3 → Inner tuner 3 → Blindfold naming 6 (4 core) → Neighbors 3 → What key? 2 → Lock it in 1, with 3 anchor pop-ups. **Hold it and Find the note are drills only now.** The station list below describes each station; counts are as above.
+**Imagine & sing is self-paced (v9):** no countdown — the name appears, you take as long as you need to find it in your head, then tap **"Got it"** (then sing if 🎤 is on, or rate yourself). `imagineMs` logs how long that took; `stim.selfPaced: true`, `secs: null`. The ear model's Inner pitch card shows the median time, and on-target vs off.
+
 
 0. **Check-in**: energy, music heard today, headphones vs speaker.
 1. **Attune**: today's note → its PP-MIDI song tag → note, three times.
@@ -83,6 +88,7 @@ Lucas: "some testing without the reveal if I'm right or not, to make it only an 
 - **v2:** Song anchors, cents-level hold/anchor, rotating daily anchor, tuning-cue fixes.
 - **v3:** pop-ups, pacing, replay, RT from onset.
 - **v4:** Neighbors station in the calibration; Neighbors trios (three next-door notes, names shown only once the note sounds); coach weights Neighbors up.
+- **v9:** ~6 min: Imagine & sing first ×6 and self-paced; Hold it + Find the note → drills; fewer reps elsewhere (naming 6 with 4 core, pop-ups 3).
 - **v8:** Imagine & sing back in the calibration, right after Song anchors.
 - **v7:** What key? replaces Octave twins (retired; its data stays); misclick flag; favorites first in the hub with a coach boost.
 - **v6:** Hold it probes are the same note or a different note (no cents).

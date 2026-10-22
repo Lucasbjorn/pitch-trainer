@@ -14,7 +14,7 @@
 // listeners (tools/test-cal-analysis.mjs). See CALIBRATION.md for the protocol.
 
 export const SCHEMA_VERSION = 2;   // record shape (v2 adds mode, protocol, localDate, sessionOfDay)
-export const PROTOCOL = 8;         // v1 first week · v2 harder hold/anchor + song anchors · v3 anchor pop-ups, breathers, replay-once, RT from onset · v4 Neighbors station + trios · v5 cold draws, naming core, Gut & check, Inner tuner, Tag at home, Name or hold, note-lure anchor pop-ups · v6 Hold it: same note or a different note (no cents) · v7 "What key?" replaces Octave twins; misclick flag · v8 Imagine & sing back in the calibration, right after Song anchors
+export const PROTOCOL = 9;         // v1 first week · v2 harder hold/anchor + song anchors · v3 anchor pop-ups, breathers, replay-once, RT from onset · v4 Neighbors station + trios · v5 cold draws, naming core, Gut & check, Inner tuner, Tag at home, Name or hold, note-lure anchor pop-ups · v6 Hold it: same note or a different note (no cents) · v7 "What key?" replaces Octave twins; misclick flag · v8 Imagine & sing back in the calibration, right after Song anchors · v9 shorter (~6 min): Imagine & sing first ×6, self-paced; Hold it + Find the note → drills
 export const SKILLS = ["cue", "name", "imagine", "anchor", "hold", "twins", "triad", "tune", "tri", "pair", "gut", "tuner", "taghome", "nhold", "aptest", "key"];
 export const SKILL_TITLE = { cue: "Song anchors", name: "Blindfold naming", imagine: "Imagine & sing", anchor: "Anchor lock", hold: "Hold it", twins: "Octave twins", triad: "Find the note", tune: "In tune?", tri: "Triangulate", pair: "Neighbors", gut: "Gut & check", tuner: "Inner tuner", taghome: "Tag at home?", nhold: "Name or hold?", aptest: "Daily AP test", key: "What key?" };
 export const STATIONS_GRADED = SKILLS;
@@ -27,8 +27,9 @@ export const RETIRED = ["tri", "twins"];
 export const FAVORITES = ["imagine", "pair", "taghome", "tuner"];
 export const DRILLS = SKILLS.filter((s) => s !== "anchor" && s !== "aptest" && !RETIRED.includes(s));
 // Graded stations in the daily calibration (protocol 5), in running order.
-// v8: Imagine & sing comes right after the tag practice (Lucas: "that's how I get my inner ear audiating").
-export const CAL_STATIONS = ["cue", "imagine", "taghome", "tuner", "name", "pair", "hold", "key", "triad", "anchor"];
+// v9 (~6 min): Imagine & sing first and longest (Lucas: "the best one"), self-paced;
+// Hold it and Find the note are drills only; everything else has fewer reps.
+export const CAL_STATIONS = ["imagine", "cue", "taghome", "tuner", "name", "pair", "key", "anchor"];
 // Questions whose notes were heard WITH their names this recently count as "warm"
 // (short-term memory can answer them). Cold draws avoid them.
 export const WARM_MS = 60000;
@@ -504,7 +505,12 @@ export function analyze({ sessions = [], trials = [] } = {}) {
     const s = by("imagine").filter((t) => t.sing && t.sing.ok && Number.isFinite(t.sing.cents));
     const c = s.map((t) => t.sing.cents);
     const self = by("imagine").filter((t) => t.resp === "nailed" || t.resp === "off");
-    out.indices.imagery = { nSung: s.length, meanBiasCents: mean(c), meanAbsCents: mean(c.map(Math.abs)),
+    // v9: imagining is self-paced — imagineMs = name shown → "got it" tap.
+    const timed = by("imagine").filter((t) => Number.isFinite(t.imagineMs));
+    const hit = (t) => (t.sing && t.sing.ok && Number.isFinite(t.sing.cents) ? Math.abs(t.sing.cents) <= 50 : t.resp === "nailed" ? true : t.resp === "off" ? false : null);
+    out.indices.imagery = { medImagineMs: median(timed.map((t) => t.imagineMs)), nTimed: timed.length,
+      medImagineMsHit: median(timed.filter((t) => hit(t) === true).map((t) => t.imagineMs)), medImagineMsMiss: median(timed.filter((t) => hit(t) === false).map((t) => t.imagineMs)),
+      nSung: s.length, meanBiasCents: mean(c), meanAbsCents: mean(c.map(Math.abs)),
       within50: s.length ? c.filter((x) => Math.abs(x) <= 50).length / s.length : null,
       octaveSung: median(s.map((t) => t.sing.oct)), selfNailedRate: self.length ? self.filter((t) => t.resp === "nailed").length / self.length : null, nSelf: self.length };
   }
@@ -802,10 +808,10 @@ export function makePlan({ sessions = [], trials = [] } = {}) {
   // v5: naming 6 → 10 (6 "core": middle octave, piano, cleanser, cold target); Imagine
   // moved to drills (Inner tuner measures the same template without a mic);
   // twins/triad trimmed; Song anchors is bare note → tag only.
-  const counts = { cue: 3, imagine: 3, taghome: 4, tuner: 4, anchor: 5, name: 10, nameCore: 6, pair: 4, hold: 4, key: 3, triad: 3, lockin: 2 };
+  const counts = { imagine: 6, cue: 3, taghome: 3, tuner: 3, anchor: 3, name: 6, nameCore: 4, pair: 3, key: 2, lockin: 1, hold: 4 };
   const last3 = sessions.filter((s) => kindOf(s) === "calibration" && s.completed && s.summary).slice(-3);
   const accOf = (st) => { let n = 0, k = 0; last3.forEach((s) => { const r = s.summary[st]; if (r) { n += r.n; k += r.k; } }); return n >= 4 ? k / n : null; };
-  const ranked = ["cue", "taghome", "tuner", "anchor", "hold", "name", "pair", "key", "triad"].map((st) => [st, accOf(st)]).filter(([, a]) => a != null).sort((x, y) => x[1] - y[1]);
+  const ranked = ["cue", "taghome", "tuner", "anchor", "name", "pair", "key"].map((st) => [st, accOf(st)]).filter(([, a]) => a != null).sort((x, y) => x[1] - y[1]);
   let focus = null;
   if (ranked.length >= 3) {
     focus = ranked[0][0]; counts[focus] += 2;
