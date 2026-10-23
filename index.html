@@ -8,6 +8,9 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="Pitches" />
+  <!-- Opened via ?calibrate=1 (Lucas's training link): "Add to Home Screen" saves an
+       "AP Training" icon that opens straight into the training hub. -->
+  <script>if (/[?&]calibrate=1/.test(location.search)) { document.querySelector('link[rel="manifest"]').href = "manifest-train.json"; document.querySelector('meta[name="apple-mobile-web-app-title"]').content = "AP Training"; document.title = "AP Training"; }</script>
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <title>Pitches</title>
   <style>
