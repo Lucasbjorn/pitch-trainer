@@ -1401,6 +1401,7 @@ export function setupCalibrate(ctx) {
     { key: "aptest", icon: "🧪", title: "Cold AP test", sub: "5 notes · no score", start: () => startApTest() },
     { key: "calibration", icon: "🎯", title: "Daily calibration", sub: "~6 min", start: () => startCalibration() },
     { key: "warmup", icon: "🎹", title: "Alan Broadbent warmups", sub: "metronome + stopwatch · ~5 min", start: () => startWarmup() },
+    { key: "earsong", icon: "🎧", title: "Learn a song by ear", sub: "non-jazz · 20-minute timer", start: () => startEarSong() },
     { key: "workbook", icon: "📘", title: "Voicing workbook", sub: "30-minute timer", start: () => startWorkbook() },
   ];
   const dayOf = (x) => x.localDate || D.localDate(x.startedAt);
@@ -1558,23 +1559,27 @@ export function setupCalibrate(ctx) {
     $("#jr-done").onclick = () => finish("done"); $("#jr-skip").onclick = () => finish("skip"); $("#jr-x").onclick = () => finish("exit");
   }
 
-  // Voicing workbook: a 30-minute countdown (±5 min), pausable; a soft knock at zero.
-  async function startWorkbook() {
+  // A pausable countdown screen (±5 min, soft boops + vibration at zero, then
+  // overtime until Done), shared by the voicing workbook and Learn a song by ear.
+  async function startCountdown(cfg) {
     abort = false; clearTimers(); run = null;
     try { await Tone.start(); } catch (_) {}
-    let target = 30 * 60000, rang = false;
-    const startedAt = Date.now(), c = clockState(), mp = metPanel("pt.journal.bpm.workbook", false);
+    let target = cfg.minutes * 60000, rang = false;
+    const startedAt = Date.now(), c = clockState(), mp = cfg.metKey ? metPanel(cfg.metKey, false) : null;
     root.innerHTML = `<div class="cal-stage jr">
         <div class="cal-top"><button class="cal-x" id="jr-x">✕</button><div style="flex:1"></div></div>
-        <div class="cal-kicker">📘 Voicing workbook</div>
-        <div class="jr-clock" id="jr-clock">30:00</div>
-        <div class="cal-hint" id="jr-sub">of <span id="jr-target">30</span> min</div>
+        <div class="cal-kicker">${cfg.icon} ${cfg.title}</div>
+        ${cfg.top || ""}
+        <div class="jr-clock" id="jr-clock">${cfg.minutes}:00</div>
+        <div class="cal-hint" id="jr-sub">of <span id="jr-target">${cfg.minutes}</span> min</div>
         <div class="jr-bpm"><button data-m="-5">−5 min</button><button data-m="5">+5 min</button></div>
-        ${mp.html}
+        ${mp ? mp.html : ""}
+        ${cfg.bottom || ""}
         <div class="jr-ctl"><button class="cal-cta ghost-cta" id="jr-pause">⏸ Pause</button><button class="cal-cta" id="jr-done">✓ Done</button><button class="cal-cta ghost-cta" id="jr-skip">⏭ Skip</button></div>
-        <textarea id="jr-note" class="jr-note" placeholder="Notes (optional) — pages, voicings, what clicked"></textarea>
+        <textarea id="jr-note" class="jr-note" placeholder="${cfg.notePh}"></textarea>
       </div>`;
-    mp.wire(); wakeOn();
+    if (mp) mp.wire();
+    wakeOn();
     const knock = () => {                                           // soft and unpitched, like the metronome
       try { const ac = Tone.getContext().rawContext, out = ac.createGain(); out.gain.value = 0.9; out.connect(ac.destination); [0, 0.2, 0.4, 1.1, 1.3, 1.5].forEach((t) => metVoice(ac, out, ac.currentTime + 0.05 + t, t === 0 || t === 1.1, "boop")); } catch (_) {}
       try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (_) {}
@@ -1588,16 +1593,67 @@ export function setupCalibrate(ctx) {
     practiceTimer = setInterval(draw, 250); draw();
     root.querySelectorAll("[data-m]").forEach((b) => (b.onclick = () => { target = Math.max(5 * 60000, target + +b.dataset.m * 60000); $("#jr-target").textContent = Math.round(target / 60000); if (target - elapsed(c) > 0) rang = false; draw(); }));
     $("#jr-pause").onclick = () => {
-      if (c.running) { c.acc = elapsed(c); c.running = false; mp.setRunning(false); $("#jr-pause").textContent = "▶ Resume"; }
-      else { c.since = Date.now(); c.running = true; mp.setRunning(true); $("#jr-pause").textContent = "⏸ Pause"; }
+      if (c.running) { c.acc = elapsed(c); c.running = false; if (mp) mp.setRunning(false); $("#jr-pause").textContent = "▶ Resume"; }
+      else { c.since = Date.now(); c.running = true; if (mp) mp.setRunning(true); $("#jr-pause").textContent = "⏸ Pause"; }
     };
     const finish = async (how) => {
-      const sec = Math.round(elapsed(c) / 1000), note = ($("#jr-note") || {}).value || "";
+      const sec = Math.round(elapsed(c) / 1000), note = ($("#jr-note") || {}).value || "", extra = cfg.logExtra ? cfg.logExtra() : {};
       endPractice();
-      await logJournal("workbook", { startedAt, activeSec: sec, targetSec: Math.round(target / 1000), ...mp.info(), completed: how === "done", skipped: how === "skip", exited: how === "exit", note: note.trim() || null });
-      return how === "exit" ? enter() : routineNext("workbook");
+      await logJournal(cfg.item, { startedAt, activeSec: sec, targetSec: Math.round(target / 1000), ...(mp ? mp.info() : {}), ...extra,
+        completed: how === "done", skipped: how === "skip", exited: how === "exit", note: note.trim() || null });
+      return how === "exit" ? enter() : routineNext(cfg.item);
     };
     $("#jr-done").onclick = () => finish("done"); $("#jr-skip").onclick = () => finish("skip"); $("#jr-x").onclick = () => finish("exit");
+  }
+
+  // Voicing workbook: 30 minutes, with the metronome (off by default).
+  const startWorkbook = () => startCountdown({ item: "workbook", icon: "📘", title: "Voicing workbook", minutes: 30, metKey: "pt.journal.bpm.workbook", notePh: "Notes (optional) — pages, voicings, what clicked" });
+
+  // 🎧 Learn a song by ear (non-jazz), 20 minutes. Pick a new song or keep working on
+  // one; each song shows its sessions (aim: 2–3) and can be marked ⭐ mastered.
+  const SONG_IDEAS = ["Elton John", "Stevie Wonder", "Tame Impala", "Mac DeMarco", "Pink Floyd"];
+  const songKey = (t) => (t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  function songLibrary(sessions) {
+    const m = new Map();
+    sessions.filter((x) => D.kindOf(x) === "journal" && x.item === "earsong" && x.song && !x.skipped).sort((a, b) => a.startedAt - b.startedAt).forEach((x) => {
+      const k = x.songKey || songKey(x.song), e = m.get(k) || { key: k, song: x.song, sessions: 0, sec: 0, mastered: false, last: 0 };
+      e.song = x.song; e.sessions++; e.sec += x.activeSec || 0; e.last = Math.max(e.last, x.startedAt);
+      if (x.mastered) e.mastered = true; else if (x.mastered === false && x.unmastered) e.mastered = false;
+      m.set(k, e);
+    });
+    return [...m.values()].sort((a, b) => b.last - a.last);
+  }
+  async function startEarSong() {
+    abort = false; clearTimers(); run = null;
+    const lib = songLibrary((await D.allData()).sessions), open = lib.filter((x) => !x.mastered), done = lib.filter((x) => x.mastered);
+    const when = (t) => new Date(t).toLocaleDateString([], { month: "short", day: "numeric" });
+    const songRow = (x) => `<button class="es-song${x.mastered ? " mastered" : ""}" data-song="${x.song.replace(/"/g, "&quot;")}"><b>${x.song.replace(/</g, "&lt;")}</b><span>${x.mastered ? "⭐ mastered · " : ""}${x.sessions} session${x.sessions === 1 ? "" : "s"}${x.mastered ? "" : x.sessions >= 3 ? " · ready to call it?" : ` of ~2–3`} · last ${when(x.last)}</span></button>`;
+    root.innerHTML = `<div class="cal-stage jr">
+        <div class="cal-top"><button class="cal-x" id="es-x">✕</button><div style="flex:1"></div></div>
+        <div class="cal-kicker">🎧 Learn a song by ear</div>
+        <div class="cal-say">Non-jazz. 20 minutes. What are you learning?</div>
+        <input id="es-in" class="es-in" type="text" autocomplete="off" placeholder="Song — Artist">
+        <div class="es-ideas">Ideas: ${SONG_IDEAS.map((a) => `<button data-artist="${a}">${a}</button>`).join("")}</div>
+        ${open.length ? `<div class="cal-sec" style="margin:1rem 0 0.4rem">Keep working on</div>${open.map(songRow).join("")}` : ""}
+        ${done.length ? `<details class="es-done"><summary>⭐ Mastered (${done.length})</summary>${done.map(songRow).join("")}</details>` : ""}
+        <button class="cal-cta" id="es-go" disabled>▶ Start 20 min</button>
+        <button class="cal-cta ghost-cta" id="es-skip">⏭ Skip today</button>
+      </div>`;
+    const inp = $("#es-in"), go = $("#es-go");
+    const sync = () => { go.disabled = !inp.value.trim(); root.querySelectorAll(".es-song").forEach((b) => b.classList.toggle("sel", songKey(b.dataset.song) === songKey(inp.value))); };
+    inp.oninput = sync;
+    root.querySelectorAll("[data-artist]").forEach((b) => (b.onclick = () => { inp.value = ` — ${b.dataset.artist}`; inp.focus(); try { inp.setSelectionRange(0, 0); } catch (_) {} sync(); }));
+    root.querySelectorAll(".es-song").forEach((b) => (b.onclick = () => { inp.value = b.dataset.song; sync(); }));
+    $("#es-x").onclick = () => enter();
+    $("#es-skip").onclick = () => skipStep("earsong");
+    go.onclick = () => {
+      const song = inp.value.trim().replace(/^—\s*/, ""); if (!song) return;
+      const prev = lib.find((x) => x.key === songKey(song)), n = (prev ? prev.sessions : 0) + 1;
+      startCountdown({ item: "earsong", icon: "🎧", title: "Learn a song by ear", minutes: 20, notePh: "Notes (optional) — sections, key, chords, what you figured out",
+        top: `<div class="es-now"><b>${song.replace(/</g, "&lt;")}</b><span>session ${n}${prev && prev.mastered ? " · ⭐ already mastered" : " of ~2–3"}</span></div>`,
+        bottom: `<label class="es-mast"><input type="checkbox" id="es-mast" ${prev && prev.mastered ? "checked" : ""}> ⭐ I've got it — mark mastered</label>`,
+        logExtra: () => { const m = !!($("#es-mast") || {}).checked; return { song, songKey: songKey(song), songSession: n, mastered: m, unmastered: !!(prev && prev.mastered && !m) }; } });
+    };
   }
 
   // 📓 Practice journal: the routine day by day (no AP-test scores, by request).
@@ -1606,20 +1662,22 @@ export function setupCalibrate(ctx) {
     const data = await D.allData(), S = data.sessions;
     const days = [...new Set(S.map(dayOf))].sort().reverse().slice(0, 21);
     const wk = Date.now() - 7 * 86400000, J = S.filter((x) => D.kindOf(x) === "journal");
-    const mins = (arr) => Math.round(arr.reduce((a, x) => a + (x.activeSec || 0), 0) / 60);
+    const mins = (arr) => Math.round(arr.reduce((a, x) => a + (x.activeSec || 0), 0) / 60), lib = songLibrary(S);
     const drillMin = (arr) => Math.round(arr.reduce((a, x) => a + (x.durSec || 0), 0) / 60);
     let streak = 0; for (const d of [...new Set(S.map(dayOf))].sort().reverse()) { const st = routineStatus(S, d); if (ROUTINE.every((r) => st[r.key] === "done")) streak++; else if (d !== D.localDate(Date.now())) break; }
     const row = (d) => {
       const st = routineStatus(S, d), td = S.filter((x) => dayOf(x) === d);
       const wu = td.filter((x) => x.item === "warmup" && !x.skipped), wb = td.filter((x) => x.item === "workbook" && !x.skipped), dr = td.filter((x) => D.kindOf(x) === "drill");
-      const notes = td.filter((x) => D.kindOf(x) === "journal" && x.note).map((x) => `<div class="jr-n">${x.item === "warmup" ? "🎹" : "📘"} ${x.note.replace(/</g, "&lt;")}</div>`).join("");
+      const es = td.filter((x) => x.item === "earsong" && !x.skipped && x.song);
+      const notes = td.filter((x) => D.kindOf(x) === "journal" && x.note).map((x) => `<div class="jr-n">${x.item === "warmup" ? "🎹" : x.item === "earsong" ? "🎧" : "📘"} ${x.note.replace(/</g, "&lt;")}</div>`).join("");
       const chip = (k, label) => `<span class="jr-chip ${st[k] || "todo"}">${st[k] === "done" ? "✓" : st[k] === "skipped" ? "⏭" : "○"} ${label}</span>`;
       return `<div class="jr-day"><div class="jr-d">${new Date(d + "T12:00:00").toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}</div>
-          <div class="jr-chips">${chip("aptest", "AP test")}${chip("calibration", "Calibration")}${chip("warmup", wu.length ? `Warmups ${fmt(wu.reduce((a, x) => a + x.activeSec, 0) * 1000)}${wu[0].bpm ? ` @${wu[wu.length - 1].bpm}` : ""}` : "Warmups")}${chip("workbook", wb.length ? `Workbook ${fmt(wb.reduce((a, x) => a + x.activeSec, 0) * 1000)}` : "Workbook")}${dr.length ? `<span class="jr-chip extra">🏋️ ${dr.length} drill${dr.length > 1 ? "s" : ""} · ${drillMin(dr)}m</span>` : ""}</div>${notes}</div>`;
+          <div class="jr-chips">${chip("aptest", "AP test")}${chip("calibration", "Calibration")}${chip("warmup", wu.length ? `Warmups ${fmt(wu.reduce((a, x) => a + x.activeSec, 0) * 1000)}${wu[0].bpm ? ` @${wu[wu.length - 1].bpm}` : ""}` : "Warmups")}${chip("earsong", es.length ? `🎧 ${[...new Map(es.map((x) => [x.songKey || songKey(x.song), x])).values()].map((x) => { const same = es.filter((y) => (y.songKey || songKey(y.song)) === (x.songKey || songKey(x.song))); return `${x.song.replace(/</g, "&lt;")}${same.length > 1 ? ` ×${same.length}` : ""}${same.some((y) => y.mastered) ? " ⭐" : ""}`; }).join(", ")} ${fmt(es.reduce((a, x) => a + x.activeSec, 0) * 1000)}` : "Song by ear")}${chip("workbook", wb.length ? `Workbook ${fmt(wb.reduce((a, x) => a + x.activeSec, 0) * 1000)}` : "Workbook")}${dr.length ? `<span class="jr-chip extra">🏋️ ${dr.length} drill${dr.length > 1 ? "s" : ""} · ${drillMin(dr)}m</span>` : ""}</div>${notes}</div>`;
     };
     root.innerHTML = `<div class="cal-ins">
         <div class="cal-top"><button class="cal-x" id="jr-back">‹</button><div class="cal-ins-h">Practice journal</div><div style="width:2rem"></div></div>
-        <div class="cal-ins-sum">This week: ${mins(J.filter((x) => x.item === "warmup" && x.startedAt >= wk))}m warmups · ${mins(J.filter((x) => x.item === "workbook" && x.startedAt >= wk))}m workbook · ${drillMin(S.filter((x) => D.kindOf(x) === "drill" && x.startedAt >= wk))}m drills · 🔥 full routine ${streak} day${streak === 1 ? "" : "s"} in a row</div>
+        <div class="cal-ins-sum">This week: ${mins(J.filter((x) => x.item === "warmup" && x.startedAt >= wk))}m warmups · ${mins(J.filter((x) => x.item === "earsong" && x.startedAt >= wk))}m songs by ear · ${mins(J.filter((x) => x.item === "workbook" && x.startedAt >= wk))}m workbook · ${drillMin(S.filter((x) => D.kindOf(x) === "drill" && x.startedAt >= wk))}m drills · 🔥 full routine ${streak} day${streak === 1 ? "" : "s"} in a row</div>
+        ${lib.length ? `<div class="cal-sec">Songs by ear <span>aim: 2–3 sessions each</span></div><div class="es-lib">${lib.map((x) => `<div class="${x.mastered ? "mastered" : ""}"><b>${x.song.replace(/</g, "&lt;")}</b><span>${x.mastered ? "⭐ mastered · " : ""}${x.sessions} session${x.sessions === 1 ? "" : "s"} · ${Math.round(x.sec / 60)}m</span></div>`).join("")}</div><div class="cal-sec">Days</div>` : ""}
         ${days.length ? days.map(row).join("") : `<div class="cal-hint">Nothing yet — start today's routine from the hub.</div>`}
         <div class="cal-ins-m">AP test scores stay hidden here by request; they're still saved for analysis.</div>
       </div>`;
