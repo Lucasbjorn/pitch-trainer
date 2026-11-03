@@ -752,7 +752,10 @@ export function paramsFor(skill, L) {
     // Gut & check: plain naming octaves; the check is the manipulation.
     case "gut": return { octaves: [[4], [3, 4], [3, 4, 5], [2, 3, 4, 5], [2, 3, 4, 5, 6]][l] };
     // Inner tuner: how far off true pitch the probe is (both signs), imagine time.
-    case "tuner": return { cents: [[100, 70], [70, 50], [50, 35], [35, 25], [25, 15]][l], secs: [3, 3, 3, 2, 2][l], octaves: l >= 2 ? [3, 4, 5] : [4] };
+    // Nov 3 review: at ±70–100¢ in octave 4 the answers were at chance and falling
+    // (Lucas imagines in his singing range, octaves 2–3; his sung notes miss by ~70¢).
+    // So L1 starts wider and the probe sits in octave 3 at L1–2.
+    case "tuner": return { cents: [[150, 100], [100, 70], [70, 50], [50, 35], [35, 20]][l], secs: [3, 3, 3, 2, 2][l], octaves: [[3], [3], [3, 4], [3, 4], [3, 4, 5]][l] };
     // Tag at home?: how far the shifted tags are moved.
     case "taghome": return { cents: [[200], [100], [100, 70], [70, 50], [50, 35]][l] };
     case "pair": return { n: [2, 2, 3, 3, 3][l], step: [2, 1, 1, 1, 1][l], reveal: l >= 2, octaves: [[4], [3, 4, 5], [4], [3, 4, 5], [2, 3, 4, 5, 6]][l], synth: l >= 3, dur: [1.4, 1.2, 1.2, 1.0, 0.5][l] };

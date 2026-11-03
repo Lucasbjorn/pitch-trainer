@@ -1404,7 +1404,13 @@ export function setupCalibrate(ctx) {
     { key: "earsong", icon: "🎧", title: "Learn a song by ear", sub: "non-jazz · 20-minute timer", start: () => startEarSong() },
     { key: "workbook", icon: "📘", title: "Voicing workbook", sub: "30-minute timer", start: () => startWorkbook() },
   ];
-  const dayOf = (x) => x.localDate || D.localDate(x.startedAt);
+  // Journal entries belong to the day they STARTED (a timer closed days later used
+  // to land on the closing day).
+  const dayOf = (x) => (D.kindOf(x) === "journal" && x.startedAt ? D.localDate(x.startedAt) : x.localDate || D.localDate(x.startedAt));
+  // Practice time with a sanity cap: a timer screen left open counts real time, so
+  // anything past target + 30 min (stopwatch: 60 min) is treated as walked-away.
+  const capSec = (x) => (x.targetSec ? x.targetSec + 1800 : 3600);
+  const practSec = (x) => Math.min(x.activeSec || 0, capSec(x));
   function routineStatus(sessions, today = D.localDate(Date.now())) {
     const st = {}, td = sessions.filter((x) => dayOf(x) === today);
     if (td.some((x) => D.kindOf(x) === "aptest" && x.completed)) st.aptest = "done";
@@ -1415,7 +1421,9 @@ export function setupCalibrate(ctx) {
   const nextStep = (st) => ROUTINE.find((r) => st[r.key] !== "done" && st[r.key] !== "skipped") || null;
   async function logJournal(item, fields) {
     const now = Date.now();
-    await D.putSession({ id: newId("j"), kind: "journal", item, schema: D.SCHEMA_VERSION, protocol: D.PROTOCOL, localDate: D.localDate(now), startedAt: fields.startedAt || now, endedAt: now, device: D.deviceInfo(), ...fields }).catch(() => {});
+    const f = { ...fields };
+    if (f.activeSec != null && f.activeSec > capSec(f)) { f.rawSec = f.activeSec; f.activeSec = capSec(f); f.capped = true; }
+    await D.putSession({ id: newId("j"), kind: "journal", item, schema: D.SCHEMA_VERSION, protocol: D.PROTOCOL, localDate: D.localDate(f.startedAt || now), startedAt: f.startedAt || now, endedAt: now, device: D.deviceInfo(), ...f }).catch(() => {});
     D.syncAll().then(noteSync).catch(() => {});
   }
   async function skipStep(key) { await logJournal(key, { skipped: true, completed: false }); return routineNext(key); }
@@ -1617,7 +1625,7 @@ export function setupCalibrate(ctx) {
     const m = new Map();
     sessions.filter((x) => D.kindOf(x) === "journal" && x.item === "earsong" && x.song && !x.skipped).sort((a, b) => a.startedAt - b.startedAt).forEach((x) => {
       const k = x.songKey || songKey(x.song), e = m.get(k) || { key: k, song: x.song, sessions: 0, sec: 0, mastered: false, last: 0 };
-      e.song = x.song; e.sessions++; e.sec += x.activeSec || 0; e.last = Math.max(e.last, x.startedAt);
+      e.song = x.song; e.sessions++; e.sec += practSec(x); e.last = Math.max(e.last, x.startedAt);
       if (x.mastered) e.mastered = true; else if (x.mastered === false && x.unmastered) e.mastered = false;
       m.set(k, e);
     });
@@ -1662,7 +1670,7 @@ export function setupCalibrate(ctx) {
     const data = await D.allData(), S = data.sessions;
     const days = [...new Set(S.map(dayOf))].sort().reverse().slice(0, 21);
     const wk = Date.now() - 7 * 86400000, J = S.filter((x) => D.kindOf(x) === "journal");
-    const mins = (arr) => Math.round(arr.reduce((a, x) => a + (x.activeSec || 0), 0) / 60), lib = songLibrary(S);
+    const mins = (arr) => Math.round(arr.reduce((a, x) => a + practSec(x), 0) / 60), lib = songLibrary(S);
     const drillMin = (arr) => Math.round(arr.reduce((a, x) => a + (x.durSec || 0), 0) / 60);
     let streak = 0; for (const d of [...new Set(S.map(dayOf))].sort().reverse()) { const st = routineStatus(S, d); if (ROUTINE.every((r) => st[r.key] === "done")) streak++; else if (d !== D.localDate(Date.now())) break; }
     const row = (d) => {
@@ -1672,7 +1680,7 @@ export function setupCalibrate(ctx) {
       const notes = td.filter((x) => D.kindOf(x) === "journal" && x.note).map((x) => `<div class="jr-n">${x.item === "warmup" ? "🎹" : x.item === "earsong" ? "🎧" : "📘"} ${x.note.replace(/</g, "&lt;")}</div>`).join("");
       const chip = (k, label) => `<span class="jr-chip ${st[k] || "todo"}">${st[k] === "done" ? "✓" : st[k] === "skipped" ? "⏭" : "○"} ${label}</span>`;
       return `<div class="jr-day"><div class="jr-d">${new Date(d + "T12:00:00").toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}</div>
-          <div class="jr-chips">${chip("aptest", "AP test")}${chip("calibration", "Calibration")}${chip("warmup", wu.length ? `Warmups ${fmt(wu.reduce((a, x) => a + x.activeSec, 0) * 1000)}${wu[0].bpm ? ` @${wu[wu.length - 1].bpm}` : ""}` : "Warmups")}${chip("earsong", es.length ? `🎧 ${[...new Map(es.map((x) => [x.songKey || songKey(x.song), x])).values()].map((x) => { const same = es.filter((y) => (y.songKey || songKey(y.song)) === (x.songKey || songKey(x.song))); return `${x.song.replace(/</g, "&lt;")}${same.length > 1 ? ` ×${same.length}` : ""}${same.some((y) => y.mastered) ? " ⭐" : ""}`; }).join(", ")} ${fmt(es.reduce((a, x) => a + x.activeSec, 0) * 1000)}` : "Song by ear")}${chip("workbook", wb.length ? `Workbook ${fmt(wb.reduce((a, x) => a + x.activeSec, 0) * 1000)}` : "Workbook")}${dr.length ? `<span class="jr-chip extra">🏋️ ${dr.length} drill${dr.length > 1 ? "s" : ""} · ${drillMin(dr)}m</span>` : ""}</div>${notes}</div>`;
+          <div class="jr-chips">${chip("aptest", "AP test")}${chip("calibration", "Calibration")}${chip("warmup", wu.length ? `Warmups ${fmt(wu.reduce((a, x) => a + practSec(x), 0) * 1000)}${wu[0].bpm ? ` @${wu[wu.length - 1].bpm}` : ""}` : "Warmups")}${chip("earsong", es.length ? `🎧 ${[...new Map(es.map((x) => [x.songKey || songKey(x.song), x])).values()].map((x) => { const same = es.filter((y) => (y.songKey || songKey(y.song)) === (x.songKey || songKey(x.song))); return `${x.song.replace(/</g, "&lt;")}${same.length > 1 ? ` ×${same.length}` : ""}${same.some((y) => y.mastered) ? " ⭐" : ""}`; }).join(", ")} ${fmt(es.reduce((a, x) => a + practSec(x), 0) * 1000)}` : "Song by ear")}${chip("workbook", wb.length ? `Workbook ${fmt(wb.reduce((a, x) => a + practSec(x), 0) * 1000)}` : "Workbook")}${dr.length ? `<span class="jr-chip extra">🏋️ ${dr.length} drill${dr.length > 1 ? "s" : ""} · ${drillMin(dr)}m</span>` : ""}</div>${notes}</div>`;
     };
     root.innerHTML = `<div class="cal-ins">
         <div class="cal-top"><button class="cal-x" id="jr-back">‹</button><div class="cal-ins-h">Practice journal</div><div style="width:2rem"></div></div>
