@@ -39,6 +39,8 @@ export function setupCalibrate(ctx) {
     tri:     { icon: "🧭", color: "#e0e7ff", blurb: "Retired: imagining an anchor turned close guesses into off-by-ones." },
     gut:     { icon: "⚡", color: "#fde68a", blurb: "Name it on instinct, then check with your inner MIDI — keep or change. Does checking help?" },
     tuner:   { icon: "🎛️", color: "#ccfbf1", blurb: "Imagine a named note, then hear one a hair off: higher or lower than yours? No mic." },
+    knob:    { icon: "🎛️", color: "#e0f2fe", blurb: "Imagine a named note, then slide a tone until it matches what you hear inside. Where does your inner pitch sit?" },
+    flash:   { icon: "⚡", color: "#fef9c3", blurb: "Name it before the bar runs out — trains instant recognition over slow checking." },
     aptest:  { icon: "🧪", color: "#ede9fe", blurb: "10 notes, no answers shown until the end — the pure AP number." },
     nhold:   { icon: "🏷️", color: "#e0f2fe", blurb: "Hold a note through noise or stray notes — sometimes you're told its name. Same, or a semitone off?" },
     taghome: { icon: "🏠", color: "#fce7f3", blurb: "A song tag, sometimes shifted: is it at its real pitch? Makes the tags carry pitch." },
@@ -1088,7 +1090,82 @@ export function setupCalibrate(ctx) {
     return abort ? null : { correct };
   }
 
-  const TRIAL = { cue: trCue, name: trName, imagine: trImagine, anchor: trAnchor, hold: trHold, twins: trTwins, triad: trTriad, tune: trTune, tri: trTri, pair: trPair, gut: trGut, tuner: trTuner, taghome: trTagHome, nhold: trNHold, key: trKey };
+  // 🎛️ Tune the knob (v10): see a name, imagine it, then slide a sustained tone until it
+  // matches what you hear inside. No voice involved, so the error (in cents) shows where
+  // the IMAGINED note sits. The slider's centre is shifted at random off the true pitch
+  // and the tone starts ≥60¢ away, so the slider's position gives nothing away.
+  async function trKnob(info) {
+    const p = P("knob"), dr = drawPc(), pc = dr.item, oct = pick(p.octaves), m = midiOf(pc, oct), vtype = pick(["triangle", "sine"]);
+    const shift = Math.round((Math.random() * 2 - 1) * 150), lo = shift - p.range, hi = shift + p.range;
+    let start; do { start = Math.round(lo + Math.random() * (hi - lo)); } while (Math.abs(start) < 60);
+    stage(head("knob", info) + `<div class="cal-stage"><div class="cal-phase">🌀 clearing your ear…</div></div>` + foot());
+    await sleep(BREATH); await cleanser(true); if (abort) return null;
+    stage(head("knob", info) + `
+      <div class="cal-stage">
+        <div class="cal-say">Imagine this note, then slide the tone onto it:</div>
+        <div class="cal-big">${PC[pc]}</div>
+        <input type="range" id="knob" class="knob" min="${lo}" max="${hi}" step="1" value="${start}">
+        <div class="cal-hint">Touch and drag — the tone plays while you hold. Take your time.</div>
+        <div class="cal-choices" id="knob-go" hidden><button class="cal-choice" data-v="ok">✓ That's it</button></div>
+        <div class="cal-fb" id="cal-fb"></div>
+      </div>` + foot());
+    const syn = new Tone.Synth({ oscillator: { type: vtype }, envelope: { attack: 0.03, decay: 0, sustain: 1, release: 0.15 } }).toDestination();
+    syn.volume.value = -10;
+    const el = $("#knob"); let on = false, touches = 0, moves = 0;
+    const hz = () => hzOf(m, +el.value);
+    const down = () => { if (abort || on) return; on = true; touches++; heard(m, "note", +el.value); try { syn.triggerAttack(hz()); } catch (_) {} };
+    const up = () => { if (!on) return; on = false; try { syn.triggerRelease(); } catch (_) {} };
+    el.addEventListener("pointerdown", down); el.addEventListener("touchstart", down, { passive: true });
+    ["pointerup", "pointercancel", "touchend", "touchcancel", "blur"].forEach((ev) => el.addEventListener(ev, up));
+    el.addEventListener("input", () => { moves++; if (on) { try { syn.frequency.rampTo(hz(), 0.015); } catch (_) {} } else if (!abort) { heard(m, "note", +el.value); try { syn.triggerAttackRelease(hz(), 0.6); } catch (_) {} } });
+    const go = await ask("#knob-go");
+    up(); setTimeout(() => { try { syn.dispose(); } catch (_) {} }, 400);
+    if (abort || go.v == null) return null;
+    const err = +el.value, correct = Math.abs(err) <= p.tol;
+    el.disabled = true;
+    record("knob", correct);
+    logTrial("knob", { ti: info.i, stim: { pc, oct, shift, start, lo, hi, tol: p.tol, voice: vtype, draw: dr.draw, warm: dr.warm, warmAgoMs: dr.warmAgoMs },
+      resp: err, errCents: err, absErr: Math.abs(err), correct, rt: go.rt, touches, moves });
+    if (run) run.answered = true;
+    const kg = $("#knob-go"); if (kg) kg.hidden = true;
+    fb(correct, `${correct ? "✅" : "❌"} ${Math.abs(err) < 8 ? `Dead on — that's true ${PC[pc]}` : `${Math.abs(err)}¢ ${err < 0 ? "flat" : "sharp"} of true ${PC[pc]}`} (±${p.tol}¢ counts) — here's the real one:`);
+    await sleep(400);
+    await noteCue(pc, oct);
+    return abort ? null : { correct };
+  }
+
+  // ⚡ Flash naming (v10): Blindfold naming with a time limit from the note's onset; a late
+  // answer is a miss. Trains instant recognition instead of the slow 12-way search.
+  async function trFlash(info) {
+    const p = P("flash"), dr = drawPc(), pc = dr.item, oct = pick(p.octaves), m = midiOf(pc, oct), W = p.windowMs;
+    stage(head("flash", info) + `
+      <div class="cal-stage">
+        <div class="cal-say">Name it — fast. ⚡ ${(W / 1000).toFixed(1)} s</div>
+        <div class="cal-phase" id="cal-phase">🌀 clearing…</div>
+        <div class="fl-bar"><div id="fl-fill"></div></div>
+        ${grid(PC.map((_, j) => j))}
+        <div class="cal-fb" id="cal-fb"></div>
+      </div>` + foot());
+    await sleep(BREATH); await cleanser(); if (abort) return null;
+    setPhase("⚡ go!");
+    await playMidi(m, 1.2); if (abort) return null;
+    const fill = $("#fl-fill"); if (fill) { fill.style.transition = `width ${W}ms linear`; void fill.offsetWidth; fill.style.width = "0%"; }
+    const tm = later(() => done("__late"), W);
+    const { v, rt } = await ask("#cal-grid"); clearTimeout(tm);
+    if (abort || v == null) return null;
+    const late = v === "__late", resp = late ? null : +v, correct = !late && resp === pc;
+    if (fill) { fill.style.transition = "none"; fill.style.width = fill.getBoundingClientRect().width + "px"; }
+    record("flash", correct);
+    logTrial("flash", { ti: info.i, stim: { pc, oct, midi: m, windowMs: W, draw: dr.draw, warm: dr.warm, warmAgoMs: dr.warmAgoMs }, resp, correct, rt: late ? null : rt, late,
+      errSemis: correct || late ? 0 : D.circ(pc, resp) });
+    markChoices("#cal-grid", pc, late ? null : resp);
+    fb(correct, late ? `⏱ Too slow — it was ${PC[pc]}` : correct ? `✅ ${PC[pc]} in ${(rt / 1000).toFixed(1)} s` : `❌ it was ${PC[pc]}`);
+    await sleep(300);
+    await noteCue(pc, oct);
+    return abort ? null : { correct };
+  }
+
+  const TRIAL = { cue: trCue, name: trName, imagine: trImagine, anchor: trAnchor, hold: trHold, twins: trTwins, triad: trTriad, tune: trTune, tri: trTri, pair: trPair, gut: trGut, tuner: trTuner, taghome: trTagHome, nhold: trNHold, key: trKey, knob: trKnob, flash: trFlash };
 
   async function countdown(el, secs) {
     for (let s = secs; s > 0; s--) { if (abort) return; if (el) el.textContent = s; await sleep(1000); }
@@ -1171,10 +1248,11 @@ export function setupCalibrate(ctx) {
   const CAL = [
     { title: "Attune", fn: calAttune },
     { title: "Imagine & sing", fn: () => calBlock("imagine") },     // v9: first, ×6 — gets the inner ear going
+    { title: "Tune the knob", fn: () => calBlock("knob") },         // v10: inner pitch without the voice (Inner tuner's old slot)
     { title: "Song anchors", fn: () => calBlock("cue") },
     { title: "Tag at home?", fn: () => calBlock("taghome") },
-    { title: "Inner tuner", fn: () => calBlock("tuner") },
     { title: "Blindfold naming", fn: () => calBlock("name") },
+    { title: "Flash naming", fn: () => calBlock("flash") },         // v10: the fast route, under a time limit
     { title: "Neighbors", fn: () => calBlock("pair") },
     { title: "What key?", fn: () => calBlock("key") },
     { title: "Lock it in", fn: calLockin },
@@ -1399,7 +1477,7 @@ export function setupCalibrate(ctx) {
   // everything else, but kept apart from the ear-training stats.
   const ROUTINE = [
     { key: "aptest", icon: "🧪", title: "Cold AP test", sub: "5 notes · no score", start: () => startApTest() },
-    { key: "calibration", icon: "🎯", title: "Daily calibration", sub: "~6 min", start: () => startCalibration() },
+    { key: "calibration", icon: "🎯", title: "Daily calibration", sub: "~6½ min", start: () => startCalibration() },
     { key: "warmup", icon: "🎹", title: "Alan Broadbent warmups", sub: "metronome + stopwatch · ~5 min", start: () => startWarmup() },
     { key: "scales", icon: "🎼", title: "Alan scales", sub: "15-minute timer + metronome", start: () => startScales() },
     { key: "earsong", icon: "🎧", title: "Learn a song by ear", sub: "non-jazz · 20-minute timer", start: () => startEarSong() },
@@ -1947,7 +2025,7 @@ export function setupCalibrate(ctx) {
         <button class="cal-hub-cal" id="hub-cal">
           <div class="chc-k">DAILY CALIBRATION</div>
           <div class="chc-t">${lastCal ? `✓ Done at ${fmtTime(lastCal.startedAt)}${sumAcc(lastCal) != null ? ` · ${pct(sumAcc(lastCal))}` : ""}` : "Today's reading"}</div>
-          <div class="chc-s">${lastCal ? `Run it again — extra runs count as practice (run #${calsToday.length + 1}).` : "~6 min · imagine & sing, song tags, inner tuner, naming, neighbors, keys. Your clean daily data point."}</div>
+          <div class="chc-s">${lastCal ? `Run it again — extra runs count as practice (run #${calsToday.length + 1}).` : "~6½ min · imagine & sing, tune the knob, song tags, naming, flash, neighbors, keys. Your clean daily data point."}</div>
           <div class="chc-anchor">⚓ Today's note: <b>${PC[dayAnchor]}</b>${anchorMode() === "fixed" ? " (always C)" : " · rotates daily, weakest first"}</div>
           <div class="chc-go">${lastCal ? "↻ Run again" : "▶ Start"}</div>
         </button>
@@ -2145,7 +2223,11 @@ export function setupCalibrate(ctx) {
     const nbRead = nb.n >= 8 ? `Next-door notes, no reference, any octave. 2 choices: ${pct(nb.two.acc)} (guessing 50%)${nb.trio.n ? ` · 3 choices, named only once you hear it: ${pct(nb.trio.acc)} (guessing 33%)${nb.trio.n >= 6 ? ` — middle note ${pct(nb.trio.middle.acc)}, edges ${pct(nb.trio.edge.acc)}` : ""}` : ""}.${nbCW}` : needs(nb.n, 8, "Neighbors trials");
     const muddy = [...nb.pairs, ...nb.trio.sets].filter((x) => x.n >= 3).sort((x, y) => x.acc - y.acc).slice(0, 3);
     const nbMeta = [nb.targetWarm.n && nb.targetCold.n ? `answer heard named <1 min before: ${pct(nb.targetWarm.acc)} (n=${nb.targetWarm.n}) · not: ${pct(nb.targetCold.acc)} (n=${nb.targetCold.n})` : "", `semitone ${pct(nb.semitone.acc)} · whole step ${pct(nb.wholeStep.acc)}`, muddy.length ? `muddiest: ${muddy.map((x) => `${x.pair} ${pct(x.acc)}`).join(", ")}` : ""].filter(Boolean).join(" — ");
-    const ck = I.checking, tn = I.tuner, th = I.tagHome;
+    const ck = I.checking, tn = I.tuner, th = I.tagHome, kn = I.knob, fl = I.flash;
+    // Knob vs voice: same offset → it's the imagined template; knob centred → it's the voice.
+    const knRead = kn.n >= 6 ? `Your imagined notes sit <b>${Math.abs(kn.meanBias) < 10 ? "right on" : `${Math.abs(Math.round(kn.meanBias))}¢ ${kn.meanBias < 0 ? "flat" : "sharp"}`}</b> when you set them by hand (typical miss ${Math.round(kn.medAbs)}¢).${im.nSung >= 5 ? ` Singing: ${im.meanBiasCents > 0 ? "+" : ""}${Math.round(im.meanBiasCents)}¢. ${Math.abs(kn.meanBias - im.meanBiasCents) < 15 ? "Same offset both ways → it's in the <b>inner template</b>, not your voice." : Math.abs(kn.meanBias) < 15 && Math.abs(im.meanBiasCents) >= 20 ? "Knob centred, voice off → the offset is in your <b>voice</b>, not your inner pitch." : "Knob and voice disagree — keep collecting."}` : ""}` : needs(kn.n, 6, "Tune the knob settings");
+    const knMeta = [kn.byOct.map((x) => `oct ${x.oct}: ${x.bias > 0 ? "+" : ""}${Math.round(x.bias)}¢`).join(" · "), kn.byPc.length ? "by note: " + kn.byPc.map((x) => `${x.name} ${x.bias > 0 ? "+" : ""}${Math.round(x.bias)}¢`).join(", ") : ""].filter(Boolean).join(" — ");
+    const flRead = fl.n >= 8 ? `Right before the bar ran out ${pct(fl.acc)} (guessing 8%); ${pct(fl.lateRate)} too slow. When in time: ${pct(fl.inTime.acc)} at a median ${fl.medRt != null ? (fl.medRt / 1000).toFixed(1) : "—"} s. Rising = the instant route is taking over.` : needs(fl.n, 8, "Flash naming questions");
     const ckVal = ck.n ? pts(ck.final.acc - ck.gut.acc) : "—";
     const ckRead = ck.n >= 10 ? `Gut ${pct(ck.gut.acc)} → after checking ${pct(ck.final.acc)}. You changed ${pct(ck.changedRate)} of answers: <b>${ck.wrongToRight}</b> fixed, <b>${ck.rightToWrong}</b> talked out of the right one${ck.nChanged ? `; changes went up ${ck.changedUp} / down ${ck.changedDown}` : ""}. ${ck.final.acc - ck.gut.acc > 0.05 ? "Checking adds real information. ✓" : ck.gut.acc - ck.final.acc > 0.05 ? "<b>Trust the gut</b> — the check costs you." : "So far the check is roughly break-even."}` : needs(ck.n, 10, "Gut & check questions");
     const ckMeta = ck.n ? `gut ${(ck.medRtGut / 1000).toFixed(1)}s · check ${ck.medRtCheck != null ? (ck.medRtCheck / 1000).toFixed(1) : "—"}s · gut misses sharp ${ck.gutErr.sharp}/flat ${ck.gutErr.flat} · final misses sharp ${ck.finalErr.sharp}/flat ${ck.finalErr.flat}` : "";
@@ -2173,6 +2255,8 @@ export function setupCalibrate(ctx) {
         ${card("Relative-pitch leak", rp.enough ? pts(rp.diff) : "—", rpRead + persev, rp.enough ? `no cleanser ${pct(rp.noWash.acc)} (n=${rp.noWash.n}) · cleanser ${pct(rp.wash.acc)} (n=${rp.wash.n})` : "")}
         ${card("Hidden anchor", an.verdict === "counting-from-anchor" ? an.anchorName : an.verdict === "flat" ? "Flat ✓" : "—", anRead, an.n ? `n=${an.n} correct trials` : "")}
         ${card("Neighbors", nbVal, nbRead, nbMeta)}
+        ${card("Tune the knob", kn.n ? `${kn.meanBias > 0 ? "+" : ""}${Math.round(kn.meanBias)}¢` : "—", knRead, knMeta)}
+        ${card("Flash naming", fl.n ? pct(fl.acc) : "—", flRead, fl.byWindow.map((x) => `${(x.windowMs / 1000).toFixed(1)} s: ${pct(x.acc)} (${x.late} late)`).join(" · "))}
         ${card("Gut & check", ckVal, ckRead, ckMeta)}
         ${card("Inner tuner", tnVal, tnRead, tn.byCents.map((x) => `±${x.cents}¢: ${pct(x.acc)}`).join(" · "))}
         ${card("Tag at home?", th.n ? pct(th.acc) : "—", thRead, th.byCents.map((x) => `±${x.cents}¢: ${pct(x.acc)} caught`).join(" · "))}

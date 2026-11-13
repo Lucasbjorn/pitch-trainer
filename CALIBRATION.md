@@ -54,7 +54,11 @@ Lucas: "some testing without the reveal if I'm right or not, to make it only an 
 - **Data:** session `kind: "aptest"`, `testOfDay`, `priorToday` (anything else trained earlier today), `priorKinds`, `minutesSinceTraining`; trials `station: "aptest"`, `stim: {pc, oct, midi, timbre, wash, feedback: false}`.
 - **Analysis (`analyze().apTest`):** the **first test of each day** is the progress line (retakes are kept apart); "clean" = first thing, before any named notes that day. Also within-a-semitone, error direction, per note, RT, and the gap vs naming *with* answers shown (`vsTraining`). It's the top line of the ear model and the first scorecard row. The hub and coach say to take it before anything else.
 
-## Daily Calibration — protocol v9 (~6 min, 9 stations + 3 ⚓ pop-ups)
+## Daily Calibration — protocol v10 (~6½ min, 10 stations + 3 ⚓ pop-ups)
+**v10 (Nov 13):** Attune → Imagine & sing ×6 → **Tune the knob ×3** → Song anchors 3 → Tag at home? 3 → Blindfold naming 6 (4 core) → **Flash naming ×4** → Neighbors 3 → What key? 2 → Lock it in 1. Inner tuner moved to drills (still a favourite); Tune the knob measures the same thing (where the imagined note sits) with a continuous answer.
+- **🎛️ Tune the knob:** cleanser (detuned) → a note name → imagine it → drag a slider that bends a sustained synth tone (sine/triangle) until it matches what you hear inside → ✓. The slider spans ±300¢ around a centre shifted at random by up to ±150¢ off the true pitch, and starts ≥60¢ away, so its position gives nothing away. Logged: `errCents` (= setting − true pitch, signed), `absErr`, `stim.shift/start/lo/hi/tol/voice/oct`, `touches`, `moves`, `rt`. `correct` = |err| ≤ tol (50 → 15¢ by level; for levels only). Octave 3 at L1–2 (his singing range), 3–4, then 3–5. The point: compare the knob bias with the sung bias (−30 to −45¢). Same offset → the inner template is flat; knob centred → it's the voice. `analyze().indices.knob`: mean/median bias, median |error|, by note, by octave.
+- **⚡ Flash naming:** Blindfold naming with a time limit from note onset (2.5 s at L1 → 1.2 s at L5; a draining bar shows it). A late answer is a miss (`late: true`, `resp: null`). Logged `stim.windowMs`. Why: fast answers are right ~70%, the 3–6 s zone is near guessing; this trains the instant route. `analyze().indices.flash`: accuracy, late rate, in-time accuracy, median RT, by window; scorecard row (1/12 baseline).
+
 **v9 (Oct 22, Lucas: "calibration is too long … just imagining a note and singing it should be best"):** Attune → **Imagine & sing ×6 (self-paced)** → Song anchors 3 → Tag at home? 3 → Inner tuner 3 → Blindfold naming 6 (4 core) → Neighbors 3 → What key? 2 → Lock it in 1, with 3 anchor pop-ups. **Hold it and Find the note are drills only now.** The station list below describes each station; counts are as above.
 **Imagine & sing is self-paced (v9):** no countdown — the name appears, you take as long as you need to find it in your head, then tap **"Got it"** (then sing if 🎤 is on, or rate yourself). `imagineMs` logs how long that took; `stim.selfPaced: true`, `secs: null`. The ear model's Inner pitch card shows the median time, and on-target vs off.
 
@@ -97,6 +101,7 @@ Lucas: "some testing without the reveal if I'm right or not, to make it only an 
 - **v2:** Song anchors, cents-level hold/anchor, rotating daily anchor, tuning-cue fixes.
 - **v3:** pop-ups, pacing, replay, RT from onset.
 - **v4:** Neighbors station in the calibration; Neighbors trios (three next-door notes, names shown only once the note sounds); coach weights Neighbors up.
+- **v10:** Tune the knob (in Inner tuner's calibration slot) + Flash naming.
 - **v9:** ~6 min: Imagine & sing first ×6 and self-paced; Hold it + Find the note → drills; fewer reps elsewhere (naming 6 with 4 core, pop-ups 3).
 - **v8:** Imagine & sing back in the calibration, right after Song anchors.
 - **v7:** What key? replaces Octave twins (retired; its data stays); misclick flag; favorites first in the hub with a coach boost.

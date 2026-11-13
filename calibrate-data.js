@@ -14,9 +14,9 @@
 // listeners (tools/test-cal-analysis.mjs). See CALIBRATION.md for the protocol.
 
 export const SCHEMA_VERSION = 2;   // record shape (v2 adds mode, protocol, localDate, sessionOfDay)
-export const PROTOCOL = 9;         // v1 first week · v2 harder hold/anchor + song anchors · v3 anchor pop-ups, breathers, replay-once, RT from onset · v4 Neighbors station + trios · v5 cold draws, naming core, Gut & check, Inner tuner, Tag at home, Name or hold, note-lure anchor pop-ups · v6 Hold it: same note or a different note (no cents) · v7 "What key?" replaces Octave twins; misclick flag · v8 Imagine & sing back in the calibration, right after Song anchors · v9 shorter (~6 min): Imagine & sing first ×6, self-paced; Hold it + Find the note → drills
-export const SKILLS = ["cue", "name", "imagine", "anchor", "hold", "twins", "triad", "tune", "tri", "pair", "gut", "tuner", "taghome", "nhold", "aptest", "key"];
-export const SKILL_TITLE = { cue: "Song anchors", name: "Blindfold naming", imagine: "Imagine & sing", anchor: "Anchor lock", hold: "Hold it", twins: "Octave twins", triad: "Find the note", tune: "In tune?", tri: "Triangulate", pair: "Neighbors", gut: "Gut & check", tuner: "Inner tuner", taghome: "Tag at home?", nhold: "Name or hold?", aptest: "Daily AP test", key: "What key?" };
+export const PROTOCOL = 10;         // v1 first week · v2 harder hold/anchor + song anchors · v3 anchor pop-ups, breathers, replay-once, RT from onset · v4 Neighbors station + trios · v5 cold draws, naming core, Gut & check, Inner tuner, Tag at home, Name or hold, note-lure anchor pop-ups · v6 Hold it: same note or a different note (no cents) · v7 "What key?" replaces Octave twins; misclick flag · v8 Imagine & sing back in the calibration, right after Song anchors · v9 shorter (~6 min): Imagine & sing first ×6, self-paced; Hold it + Find the note → drills · v10 Tune the knob (replaces Inner tuner in the calibration) + Flash naming
+export const SKILLS = ["cue", "name", "imagine", "anchor", "hold", "twins", "triad", "tune", "tri", "pair", "gut", "tuner", "taghome", "nhold", "aptest", "key", "knob", "flash"];
+export const SKILL_TITLE = { cue: "Song anchors", name: "Blindfold naming", imagine: "Imagine & sing", anchor: "Anchor lock", hold: "Hold it", twins: "Octave twins", triad: "Find the note", tune: "In tune?", tri: "Triangulate", pair: "Neighbors", gut: "Gut & check", tuner: "Inner tuner", taghome: "Tag at home?", nhold: "Name or hold?", aptest: "Daily AP test", key: "What key?", knob: "Tune the knob", flash: "Flash naming" };
 export const STATIONS_GRADED = SKILLS;
 // Drills you can launch. Anchor checks are pop-ups, not a drill; Triangulate was
 // retired in v5 (imagining an anchor turned close guesses into off-by-ones —
@@ -29,7 +29,9 @@ export const DRILLS = SKILLS.filter((s) => s !== "anchor" && s !== "aptest" && !
 // Graded stations in the daily calibration (protocol 5), in running order.
 // v9 (~6 min): Imagine & sing first and longest (Lucas: "the best one"), self-paced;
 // Hold it and Find the note are drills only; everything else has fewer reps.
-export const CAL_STATIONS = ["imagine", "cue", "taghome", "tuner", "name", "pair", "key", "anchor"];
+// v10: Tune the knob (inner pitch without the voice) right after Imagine & sing, in
+// Inner tuner's old slot; Flash naming (fast-route naming) right after Blindfold naming.
+export const CAL_STATIONS = ["imagine", "knob", "cue", "taghome", "name", "flash", "pair", "key", "anchor"];
 // Questions whose notes were heard WITH their names this recently count as "warm"
 // (short-term memory can answer them). Cold draws avoid them.
 export const WARM_MS = 60000;
@@ -258,7 +260,7 @@ const graded = (t) => typeof t.correct === "boolean";
 const nChoicesOf = (t) => t.stim.nChoices || (Array.isArray(t.stim.pair) ? t.stim.pair.length : 2);
 function chanceOf(t) {
   switch (t.station) {
-    case "name": case "tri": case "gut": case "aptest": case "key": return 1 / 12;
+    case "name": case "tri": case "gut": case "aptest": case "key": case "flash": return 1 / 12;
     case "cue": return 1 / (t.stim.choices || 12);
     case "pair": return 1 / nChoicesOf(t);
     case "twins": case "triad": return 1 / 3;
@@ -375,6 +377,7 @@ export function analyze({ sessions = [], trials = [] } = {}) {
     const SPEC = [
       { key: "aptest", station: "aptest", label: "Daily AP test · no answers shown" },
       { key: "name", station: "name" },
+      { key: "flash", station: "flash", label: "Flash naming (late = miss)" },
       { key: "pair", station: "pair", label: "Neighbors · cold", keep: (t) => warm(t) === false },
       { key: "note2cue", station: "cue", label: "Song anchors · note → tag", keep: (t) => t.stim.kind === "note2cue" },
       { key: "taghome", station: "taghome" }, { key: "tuner", station: "tuner" }, { key: "gut", station: "gut", label: "Gut & check · final" },
@@ -616,6 +619,26 @@ export function analyze({ sessions = [], trials = [] } = {}) {
       byKey: PC.map((nm, pc) => ({ name: nm, ...prop(kt.filter((t) => t.stim.keyPc === pc)) })).filter((x) => x.n) };
   }
 
+  // ---- 11c4. Tune the knob: where the IMAGINED note sits, without the voice ----------------
+  //  errCents = slider setting − true pitch. Compare its bias with the sung bias: same
+  //  sign and size → the template itself is off; centred → the offset is vocal.
+  {
+    const kn = by("knob").filter((t) => Number.isFinite(t.errCents));
+    const e = kn.map((t) => t.errCents);
+    out.indices.knob = { n: kn.length, meanBias: mean(e), medBias: median(e), medAbs: median(e.map(Math.abs)), within: prop(kn.filter(graded)),
+      byPc: PC.map((nm, pc) => { const g = kn.filter((t) => t.stim.pc === pc).map((t) => t.errCents); return { name: nm, n: g.length, bias: mean(g) }; }).filter((x) => x.n >= 3),
+      byOct: [...new Set(kn.map((t) => t.stim.oct))].sort().map((o) => { const g = kn.filter((t) => t.stim.oct === o).map((t) => t.errCents); return { oct: o, n: g.length, bias: mean(g), medAbs: median(g.map(Math.abs)) }; }) };
+  }
+
+  // ---- 11c5. Flash naming: the fast route under a time limit ---------------------------
+  {
+    const fl = by("flash").filter(graded), late = fl.filter((t) => t.late);
+    const ws = [...new Set(fl.map((t) => t.stim.windowMs))].sort((a, b) => b - a);
+    out.indices.flash = { ...prop(fl), lateRate: fl.length ? late.length / fl.length : null, inTime: prop(fl.filter((t) => !t.late)),
+      medRt: median(fl.filter((t) => !t.late).map((t) => t.rt).filter(Number.isFinite)),
+      byWindow: ws.map((w) => ({ windowMs: w, ...prop(fl.filter((t) => t.stim.windowMs === w)), late: fl.filter((t) => t.stim.windowMs === w && t.late).length })) };
+  }
+
   // ---- 11d. Naming: warm vs cold target -------------------------------------------------
   out.indices.nameWarm = coldWarm(name.filter(graded));
 
@@ -749,6 +772,11 @@ export function paramsFor(skill, L) {
     // L4 a I–IV–V–I progression → L5 varied progressions. Name the key / root.
     case "key": return { kind: l >= 3 ? "prog" : "triad", inv: l >= 1, minor: l === 2, octaves: l >= 1 ? [3, 4] : [4],
       progs: l >= 4 ? ["I-IV-V-I", "I-vi-IV-V-I", "ii-V-I", "I-IV-I-V-I"] : ["I-IV-V-I"] };
+    // Tune the knob: imagine a named note, slide a tone onto it. `tol` = how close counts
+    // as right (for levels only; the logged error in cents is the real measure).
+    case "knob": return { tol: [50, 40, 30, 20, 15][l], octaves: [[3], [3], [3, 4], [3, 4], [3, 4, 5]][l], range: 300 };
+    // Flash naming: answer within the window (from note onset) or it counts as a miss.
+    case "flash": return { windowMs: [2500, 2000, 1700, 1400, 1200][l], octaves: [[4], [4], [3, 4, 5], [3, 4, 5], [2, 3, 4, 5, 6]][l] };
     // Gut & check: plain naming octaves; the check is the manipulation.
     case "gut": return { octaves: [[4], [3, 4], [3, 4, 5], [2, 3, 4, 5], [2, 3, 4, 5, 6]][l] };
     // Inner tuner: how far off true pitch the probe is (both signs), imagine time.
@@ -811,10 +839,10 @@ export function makePlan({ sessions = [], trials = [] } = {}) {
   // v5: naming 6 → 10 (6 "core": middle octave, piano, cleanser, cold target); Imagine
   // moved to drills (Inner tuner measures the same template without a mic);
   // twins/triad trimmed; Song anchors is bare note → tag only.
-  const counts = { imagine: 6, cue: 3, taghome: 3, tuner: 3, anchor: 3, name: 6, nameCore: 4, pair: 3, key: 2, lockin: 1, hold: 4 };
+  const counts = { imagine: 6, knob: 3, cue: 3, taghome: 3, anchor: 3, name: 6, nameCore: 4, flash: 4, pair: 3, key: 2, lockin: 1, hold: 4 };
   const last3 = sessions.filter((s) => kindOf(s) === "calibration" && s.completed && s.summary).slice(-3);
   const accOf = (st) => { let n = 0, k = 0; last3.forEach((s) => { const r = s.summary[st]; if (r) { n += r.n; k += r.k; } }); return n >= 4 ? k / n : null; };
-  const ranked = ["cue", "taghome", "tuner", "anchor", "name", "pair", "key"].map((st) => [st, accOf(st)]).filter(([, a]) => a != null).sort((x, y) => x[1] - y[1]);
+  const ranked = ["cue", "taghome", "knob", "anchor", "name", "flash", "pair", "key"].map((st) => [st, accOf(st)]).filter(([, a]) => a != null).sort((x, y) => x[1] - y[1]);
   let focus = null;
   if (ranked.length >= 3) {
     focus = ranked[0][0]; counts[focus] += 2;
@@ -880,6 +908,8 @@ export function suggestDrills(data = {}, now = Date.now()) {
     // Lucas's favorites get a standing boost (Oct 19: "the best games").
     if (FAVORITES.includes(sk) && sk !== "pair") { score += 0.3; reason += " · one of your favorites"; }
     if (sk === "tuner") { if (I.imagery.nSung >= 8 && Math.abs(I.imagery.meanBiasCents) >= 15) flag(0.1, `your sung notes run ${Math.round(I.imagery.meanBiasCents)}¢ — tune the notes you imagine`); }
+    if (sk === "knob") { score += 0.15; reason += " · is your flat singing in the template or the voice?"; }
+    if (sk === "flash") { score += 0.15; reason += " · trains the fast route"; }
     if (sk === "key") { score += 0.15; reason += " · learning chords by their overall color"; }
     if (sk === "nhold") { score += 0.15; reason += " · does knowing the name help you hold it?"; }
     if (sk === "hold" && I.hold.enoughCost && I.hold.toneCost && I.hold.toneCost.d > 0.2) flag(0.2, "notes in between knock the pitch out of memory — practice holding it by name");
