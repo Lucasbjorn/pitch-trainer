@@ -1401,8 +1401,11 @@ export function setupCalibrate(ctx) {
     { key: "aptest", icon: "🧪", title: "Cold AP test", sub: "5 notes · no score", start: () => startApTest() },
     { key: "calibration", icon: "🎯", title: "Daily calibration", sub: "~6 min", start: () => startCalibration() },
     { key: "warmup", icon: "🎹", title: "Alan Broadbent warmups", sub: "metronome + stopwatch · ~5 min", start: () => startWarmup() },
+    { key: "scales", icon: "🎼", title: "Alan scales", sub: "15-minute timer + metronome", start: () => startScales() },
     { key: "earsong", icon: "🎧", title: "Learn a song by ear", sub: "non-jazz · 20-minute timer", start: () => startEarSong() },
+    { key: "jazztune", icon: "🎷", title: "Learn a jazz tune", sub: "transcription or by ear · guide tones + Alan scales", start: () => startJazzTune() },
     { key: "workbook", icon: "📘", title: "Voicing workbook", sub: "30-minute timer", start: () => startWorkbook() },
+    { key: "misc", icon: "🧩", title: "Misc practice", sub: "your pick, your time · optional", optional: true, start: () => startMisc() },
   ];
   // Journal entries belong to the day they STARTED (a timer closed days later used
   // to land on the closing day).
@@ -1418,7 +1421,9 @@ export function setupCalibrate(ctx) {
     td.filter((x) => D.kindOf(x) === "journal").forEach((x) => { if (!st[x.item] || st[x.item] === "skipped") st[x.item] = x.skipped ? "skipped" : x.completed ? "done" : st[x.item] || "started"; });
     return st;
   }
-  const nextStep = (st) => ROUTINE.find((r) => st[r.key] !== "done" && st[r.key] !== "skipped") || null;
+  // Optional steps (Misc) never hold up "routine done".
+  const nextStep = (st) => ROUTINE.find((r) => !r.optional && st[r.key] !== "done" && st[r.key] !== "skipped") || null;
+  const MISC = () => ROUTINE.find((r) => r.key === "misc");
   async function logJournal(item, fields) {
     const now = Date.now();
     const f = { ...fields };
@@ -1437,10 +1442,11 @@ export function setupCalibrate(ctx) {
           <div class="cal-big">🎉</div><div class="cal-title2">Routine done</div>
           <div class="cal-say">${fromTxt ? `${fromTxt}. ` : ""}The rest of today is yours.</div>
           ${routineList(st)}
-          <button class="cal-cta" id="rt-hub">Training hub</button>
+          <button class="cal-cta" id="rt-misc">🧩 Misc practice</button>
+          <button class="cal-cta ghost-cta" id="rt-hub">Training hub</button>
           <button class="cal-cta ghost-cta" id="rt-journal">📓 Practice journal</button>
         </div>`;
-      $("#rt-hub").onclick = () => enter(); $("#rt-journal").onclick = () => renderJournal();
+      $("#rt-hub").onclick = () => enter(); $("#rt-journal").onclick = () => renderJournal(); $("#rt-misc").onclick = () => startMisc();
       return;
     }
     root.innerHTML = `<div class="cal-stage cal-finish">
@@ -1458,7 +1464,10 @@ export function setupCalibrate(ctx) {
   function routineList(st, clickable = false) {
     return `<div class="rt-list">${ROUTINE.map((r) => {
       const s2 = st[r.key], mark = s2 === "done" ? "✓" : s2 === "skipped" ? "⏭" : "○";
-      return `<${clickable ? `button data-rt="${r.key}"` : "div"} class="rt-row ${s2 || "todo"}"${clickable && r.key === "aptest" ? ' id="hub-test"' : ""}><span class="rt-m">${mark}</span><span class="rt-i">${r.icon}</span><span class="rt-t">${r.title}<i>${r.sub}</i></span></${clickable ? "button" : "div"}>`;
+      const inner = `<span class="rt-m">${mark}</span><span class="rt-i">${r.icon}</span><span class="rt-t">${r.title}<i>${r.sub}</i></span>`;
+      if (!clickable) return `<div class="rt-row ${s2 || "todo"}">${inner}</div>`;
+      // Hub: tap the row to start it; ⏭ skips it for today (any step).
+      return `<div class="rt-row ${s2 || "todo"}"><button class="rt-main" data-rt="${r.key}"${r.key === "aptest" ? ' id="hub-test"' : ""}>${inner}</button>${s2 === "done" || s2 === "skipped" ? "" : `<button class="rt-sk" data-skip="${r.key}" title="Skip today">⏭</button>`}</div>`;
     }).join("")}</div>`;
   }
 
@@ -1573,7 +1582,7 @@ export function setupCalibrate(ctx) {
     abort = false; clearTimers(); run = null;
     try { await Tone.start(); } catch (_) {}
     let target = cfg.minutes * 60000, rang = false;
-    const startedAt = Date.now(), c = clockState(), mp = cfg.metKey ? metPanel(cfg.metKey, false) : null;
+    const startedAt = Date.now(), c = clockState(), mp = cfg.metKey ? metPanel(cfg.metKey, !!cfg.metOn) : null;
     root.innerHTML = `<div class="cal-stage jr">
         <div class="cal-top"><button class="cal-x" id="jr-x">✕</button><div style="flex:1"></div></div>
         <div class="cal-kicker">${cfg.icon} ${cfg.title}</div>
@@ -1617,52 +1626,85 @@ export function setupCalibrate(ctx) {
   // Voicing workbook: 30 minutes, with the metronome (off by default).
   const startWorkbook = () => startCountdown({ item: "workbook", icon: "📘", title: "Voicing workbook", minutes: 30, metKey: "pt.journal.bpm.workbook", notePh: "Notes (optional) — pages, voicings, what clicked" });
 
-  // 🎧 Learn a song by ear (non-jazz), 20 minutes. Pick a new song or keep working on
-  // one; each song shows its sessions (aim: 2–3) and can be marked ⭐ mastered.
-  const SONG_IDEAS = ["Elton John", "Stevie Wonder", "Tame Impala", "Mac DeMarco", "Pink Floyd"];
+  // 🎼 Alan scales: 15 minutes with the metronome on (its own remembered tempo).
+  const startScales = () => startCountdown({ item: "scales", icon: "🎼", title: "Alan scales", minutes: 15, metKey: "pt.journal.bpm.scales", metOn: true, notePh: "Notes (optional) — which scales, keys, tempo" });
+
+  // Libraries of things practised over several sessions (songs, jazz tunes, misc
+  // tasks): name, sessions, minutes, last date, ⭐ mastered. `field` is the name's
+  // key in the journal entry (song / tune / task), with `<field>Key` normalized.
   const songKey = (t) => (t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  function songLibrary(sessions) {
+  function practiceLibrary(sessions, item, field) {
     const m = new Map();
-    sessions.filter((x) => D.kindOf(x) === "journal" && x.item === "earsong" && x.song && !x.skipped).sort((a, b) => a.startedAt - b.startedAt).forEach((x) => {
-      const k = x.songKey || songKey(x.song), e = m.get(k) || { key: k, song: x.song, sessions: 0, sec: 0, mastered: false, last: 0 };
-      e.song = x.song; e.sessions++; e.sec += practSec(x); e.last = Math.max(e.last, x.startedAt);
+    sessions.filter((x) => D.kindOf(x) === "journal" && x.item === item && x[field] && !x.skipped).sort((a, b) => a.startedAt - b.startedAt).forEach((x) => {
+      const k = x[`${field}Key`] || songKey(x[field]), e = m.get(k) || { key: k, name: x[field], sessions: 0, sec: 0, mastered: false, last: 0, minutes: null };
+      e.name = x[field]; e.sessions++; e.sec += practSec(x); e.last = Math.max(e.last, x.startedAt); if (x.targetSec) e.minutes = Math.round(x.targetSec / 60);
       if (x.mastered) e.mastered = true; else if (x.mastered === false && x.unmastered) e.mastered = false;
       m.set(k, e);
     });
     return [...m.values()].sort((a, b) => b.last - a.last);
   }
-  async function startEarSong() {
+  const songLibrary = (sessions) => practiceLibrary(sessions, "earsong", "song").map((e) => ({ ...e, song: e.name }));
+  // One picker for all three: type a name or pick a past one (with its sessions),
+  // optional idea chips / option chips / duration chips, then the countdown.
+  async function startPicker(cfg) {
     abort = false; clearTimers(); run = null;
-    const lib = songLibrary((await D.allData()).sessions), open = lib.filter((x) => !x.mastered), done = lib.filter((x) => x.mastered);
+    const lib = practiceLibrary((await D.allData()).sessions, cfg.item, cfg.field), open = lib.filter((x) => !x.mastered), done = lib.filter((x) => x.mastered);
     const when = (t) => new Date(t).toLocaleDateString([], { month: "short", day: "numeric" });
-    const songRow = (x) => `<button class="es-song${x.mastered ? " mastered" : ""}" data-song="${x.song.replace(/"/g, "&quot;")}"><b>${x.song.replace(/</g, "&lt;")}</b><span>${x.mastered ? "⭐ mastered · " : ""}${x.sessions} session${x.sessions === 1 ? "" : "s"}${x.mastered ? "" : x.sessions >= 3 ? " · ready to call it?" : ` of ~2–3`} · last ${when(x.last)}</span></button>`;
+    const esc = (t) => t.replace(/</g, "&lt;"), q = (t) => t.replace(/"/g, "&quot;");
+    let minutes = cfg.minutes, opt = null;
+    const row = (x) => `<button class="es-song${x.mastered ? " mastered" : ""}" data-song="${q(x.name)}" data-min="${x.minutes || ""}"><b>${esc(x.name)}</b><span>${x.mastered ? "⭐ mastered · " : ""}${x.sessions} ${cfg.goal ? (x.sessions === 1 ? "session" : "sessions") : x.sessions === 1 ? "time" : "times"}${cfg.goal && !x.mastered ? (x.sessions >= 3 ? " · ready to call it?" : ` ${cfg.goal}`) : ""}${x.minutes && cfg.durations ? ` · ${x.minutes} min` : ""} · last ${when(x.last)}</span></button>`;
     root.innerHTML = `<div class="cal-stage jr">
         <div class="cal-top"><button class="cal-x" id="es-x">✕</button><div style="flex:1"></div></div>
-        <div class="cal-kicker">🎧 Learn a song by ear</div>
-        <div class="cal-say">Non-jazz. 20 minutes. What are you learning?</div>
-        <input id="es-in" class="es-in" type="text" autocomplete="off" placeholder="Song — Artist">
-        <div class="es-ideas">Ideas: ${SONG_IDEAS.map((a) => `<button data-artist="${a}">${a}</button>`).join("")}</div>
-        ${open.length ? `<div class="cal-sec" style="margin:1rem 0 0.4rem">Keep working on</div>${open.map(songRow).join("")}` : ""}
-        ${done.length ? `<details class="es-done"><summary>⭐ Mastered (${done.length})</summary>${done.map(songRow).join("")}</details>` : ""}
-        <button class="cal-cta" id="es-go" disabled>▶ Start 20 min</button>
+        <div class="cal-kicker">${cfg.icon} ${cfg.title}</div>
+        <div class="cal-say">${cfg.say}</div>
+        <input id="es-in" class="es-in" type="text" autocomplete="off" placeholder="${cfg.placeholder}">
+        ${cfg.ideas ? `<div class="es-ideas">Ideas: ${cfg.ideas.map((a) => `<button data-artist="${a}">${a}</button>`).join("")}</div>` : ""}
+        ${cfg.options ? `<div class="es-ideas es-opts">${cfg.options.label}: ${cfg.options.list.map((o) => `<button data-opt="${o}">${o}</button>`).join("")}</div>` : ""}
+        ${cfg.durations ? `<div class="es-ideas es-dur">Time: ${cfg.durations.map((m) => `<button data-dur="${m}"${m === minutes ? ' class="on"' : ""}>${m} min</button>`).join("")}</div>` : ""}
+        ${open.length ? `<div class="cal-sec" style="margin:1rem 0 0.4rem">${cfg.libLabel}</div>${open.map(row).join("")}` : ""}
+        ${done.length ? `<details class="es-done"><summary>⭐ Mastered (${done.length})</summary>${done.map(row).join("")}</details>` : ""}
+        <button class="cal-cta" id="es-go" disabled>▶ Start ${minutes} min</button>
         <button class="cal-cta ghost-cta" id="es-skip">⏭ Skip today</button>
       </div>`;
     const inp = $("#es-in"), go = $("#es-go");
-    const sync = () => { go.disabled = !inp.value.trim(); root.querySelectorAll(".es-song").forEach((b) => b.classList.toggle("sel", songKey(b.dataset.song) === songKey(inp.value))); };
+    const sync = () => { go.disabled = !inp.value.trim(); go.textContent = `▶ Start ${minutes} min`; root.querySelectorAll(".es-song").forEach((b) => b.classList.toggle("sel", songKey(b.dataset.song) === songKey(inp.value))); root.querySelectorAll("[data-dur]").forEach((b) => b.classList.toggle("on", +b.dataset.dur === minutes)); };
     inp.oninput = sync;
     root.querySelectorAll("[data-artist]").forEach((b) => (b.onclick = () => { inp.value = ` — ${b.dataset.artist}`; inp.focus(); try { inp.setSelectionRange(0, 0); } catch (_) {} sync(); }));
-    root.querySelectorAll(".es-song").forEach((b) => (b.onclick = () => { inp.value = b.dataset.song; sync(); }));
+    root.querySelectorAll("[data-opt]").forEach((b) => (b.onclick = () => { opt = b.dataset.opt; root.querySelectorAll("[data-opt]").forEach((x) => x.classList.toggle("on", x === b)); }));
+    root.querySelectorAll("[data-dur]").forEach((b) => (b.onclick = () => { minutes = +b.dataset.dur; sync(); }));
+    root.querySelectorAll(".es-song").forEach((b) => (b.onclick = () => { inp.value = b.dataset.song; if (cfg.durations && +b.dataset.min) minutes = +b.dataset.min; sync(); }));
     $("#es-x").onclick = () => enter();
-    $("#es-skip").onclick = () => skipStep("earsong");
+    $("#es-skip").onclick = () => skipStep(cfg.item);
     go.onclick = () => {
-      const song = inp.value.trim().replace(/^—\s*/, ""); if (!song) return;
-      const prev = lib.find((x) => x.key === songKey(song)), n = (prev ? prev.sessions : 0) + 1;
-      startCountdown({ item: "earsong", icon: "🎧", title: "Learn a song by ear", minutes: 20, notePh: "Notes (optional) — sections, key, chords, what you figured out",
-        top: `<div class="es-now"><b>${song.replace(/</g, "&lt;")}</b><span>session ${n}${prev && prev.mastered ? " · ⭐ already mastered" : " of ~2–3"}</span></div>`,
-        bottom: `<label class="es-mast"><input type="checkbox" id="es-mast" ${prev && prev.mastered ? "checked" : ""}> ⭐ I've got it — mark mastered</label>`,
-        logExtra: () => { const m = !!($("#es-mast") || {}).checked; return { song, songKey: songKey(song), songSession: n, mastered: m, unmastered: !!(prev && prev.mastered && !m) }; } });
+      const name = inp.value.trim().replace(/^—\s*/, ""); if (!name) return;
+      const prev = lib.find((x) => x.key === songKey(name)), n = (prev ? prev.sessions : 0) + 1, F = cfg.field;
+      startCountdown({ item: cfg.item, icon: cfg.icon, title: cfg.title, minutes, metKey: cfg.metKey, metOn: cfg.metOn, notePh: cfg.notePh,
+        top: `<div class="es-now"><b>${esc(name)}</b><span>${cfg.goal ? `session ${n}${prev && prev.mastered ? " · ⭐ already mastered" : ` ${cfg.goal}`}` : `time #${n}`}${opt ? ` · ${opt}` : ""}</span></div>${cfg.reminders ? `<div class="es-rem">${cfg.reminders.map(([id, t]) => `<label><input type="checkbox" id="${id}"> ${t}</label>`).join("")}</div>` : ""}`,
+        bottom: cfg.masterable ? `<label class="es-mast"><input type="checkbox" id="es-mast" ${prev && prev.mastered ? "checked" : ""}> ⭐ I've got it — mark mastered</label>` : "",
+        logExtra: () => {
+          const m = !!($("#es-mast") || {}).checked, out = { [F]: name, [`${F}Key`]: songKey(name), [`${F}Session`]: n };
+          if (cfg.masterable) Object.assign(out, { mastered: m, unmastered: !!(prev && prev.mastered && !m) });
+          if (cfg.options) out[cfg.options.field] = opt;
+          (cfg.reminders || []).forEach(([id, , field]) => { out[field] = !!($(`#${id}`) || {}).checked; });
+          return out;
+        } });
     };
   }
+  // 🎧 Learn a song by ear (non-jazz), 20 minutes; aim 2–3 sessions per song or ⭐ mastered.
+  const SONG_IDEAS = ["Elton John", "Stevie Wonder", "Tame Impala", "Mac DeMarco", "Pink Floyd"];
+  const startEarSong = () => startPicker({ item: "earsong", field: "song", icon: "🎧", title: "Learn a song by ear", say: "Non-jazz. 20 minutes. What are you learning?",
+    placeholder: "Song — Artist", ideas: SONG_IDEAS, libLabel: "Keep working on", goal: "of ~2–3", masterable: true, minutes: 20,
+    notePh: "Notes (optional) — sections, key, chords, what you figured out" });
+  // 🎷 Learn a jazz tune — from a transcription and/or by ear — with guide tones and
+  // the right Alan scales through the whole tune (both ticked off and logged).
+  const startJazzTune = () => startPicker({ item: "jazztune", field: "tune", icon: "🎷", title: "Learn a jazz tune", say: "Which tune? From a transcription, by ear, or both.",
+    placeholder: "Tune (e.g. Stella by Starlight)", options: { label: "How", field: "method", list: ["Transcription", "By ear", "Both"] }, libLabel: "Keep working on", goal: "of ~2–3", masterable: true, minutes: 20,
+    reminders: [["jt-gt", "🎯 Guide tones (3rds &amp; 7ths) through the whole tune", "guideTones"], ["jt-as", "🎼 The right Alan scales through every chord", "alanScales"]],
+    notePh: "Notes (optional) — sections, changes, licks, what's still shaky" });
+  // 🧩 Misc: anything, your time (5–45 min), metronome available; past tasks pop up with how often.
+  const startMisc = () => startPicker({ item: "misc", field: "task", icon: "🧩", title: "Misc practice", say: "What do you want to practise?",
+    placeholder: "e.g. Comping in 12 keys", libLabel: "Done before", durations: [5, 10, 15, 20, 30, 45], minutes: 15, metKey: "pt.journal.bpm.misc", metOn: false,
+    notePh: "Notes (optional)" });
 
   // 📓 Practice journal: the routine day by day (no AP-test scores, by request).
   async function renderJournal() {
@@ -1672,20 +1714,28 @@ export function setupCalibrate(ctx) {
     const wk = Date.now() - 7 * 86400000, J = S.filter((x) => D.kindOf(x) === "journal");
     const mins = (arr) => Math.round(arr.reduce((a, x) => a + practSec(x), 0) / 60), lib = songLibrary(S);
     const drillMin = (arr) => Math.round(arr.reduce((a, x) => a + (x.durSec || 0), 0) / 60);
-    let streak = 0; for (const d of [...new Set(S.map(dayOf))].sort().reverse()) { const st = routineStatus(S, d); if (ROUTINE.every((r) => st[r.key] === "done")) streak++; else if (d !== D.localDate(Date.now())) break; }
+    let streak = 0; for (const d of [...new Set(S.map(dayOf))].sort().reverse()) { const st = routineStatus(S, d); if (ROUTINE.every((r) => r.optional || st[r.key] === "done")) streak++; else if (d !== D.localDate(Date.now())) break; }
     const row = (d) => {
       const st = routineStatus(S, d), td = S.filter((x) => dayOf(x) === d);
       const wu = td.filter((x) => x.item === "warmup" && !x.skipped), wb = td.filter((x) => x.item === "workbook" && !x.skipped), dr = td.filter((x) => D.kindOf(x) === "drill");
       const es = td.filter((x) => x.item === "earsong" && !x.skipped && x.song);
-      const notes = td.filter((x) => D.kindOf(x) === "journal" && x.note).map((x) => `<div class="jr-n">${x.item === "warmup" ? "🎹" : x.item === "earsong" ? "🎧" : "📘"} ${x.note.replace(/</g, "&lt;")}</div>`).join("");
+      const libChip = (item, field, label, icon) => {
+        const xs = td.filter((x) => x.item === item && !x.skipped && x[field]);
+        if (!xs.length) return chip(item, label);
+        const names = [...new Map(xs.map((x) => [x[`${field}Key`] || songKey(x[field]), x])).values()].map((x) => { const same = xs.filter((y) => (y[`${field}Key`] || songKey(y[field])) === (x[`${field}Key`] || songKey(x[field]))); return `${x[field].replace(/</g, "&lt;")}${same.length > 1 ? ` ×${same.length}` : ""}${same.some((y) => y.mastered) ? " ⭐" : ""}`; });
+        return chip(item, `${icon} ${names.join(", ")} ${fmt(xs.reduce((a, x) => a + practSec(x), 0) * 1000)}`);
+      };
+      const sc = td.filter((x) => x.item === "scales" && !x.skipped);
+      const notes = td.filter((x) => D.kindOf(x) === "journal" && x.note).map((x) => `<div class="jr-n">${({ warmup: "🎹", earsong: "🎧", scales: "🎼", jazztune: "🎷", misc: "🧩" })[x.item] || "📘"} ${x.note.replace(/</g, "&lt;")}</div>`).join("");
       const chip = (k, label) => `<span class="jr-chip ${st[k] || "todo"}">${st[k] === "done" ? "✓" : st[k] === "skipped" ? "⏭" : "○"} ${label}</span>`;
       return `<div class="jr-day"><div class="jr-d">${new Date(d + "T12:00:00").toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}</div>
-          <div class="jr-chips">${chip("aptest", "AP test")}${chip("calibration", "Calibration")}${chip("warmup", wu.length ? `Warmups ${fmt(wu.reduce((a, x) => a + practSec(x), 0) * 1000)}${wu[0].bpm ? ` @${wu[wu.length - 1].bpm}` : ""}` : "Warmups")}${chip("earsong", es.length ? `🎧 ${[...new Map(es.map((x) => [x.songKey || songKey(x.song), x])).values()].map((x) => { const same = es.filter((y) => (y.songKey || songKey(y.song)) === (x.songKey || songKey(x.song))); return `${x.song.replace(/</g, "&lt;")}${same.length > 1 ? ` ×${same.length}` : ""}${same.some((y) => y.mastered) ? " ⭐" : ""}`; }).join(", ")} ${fmt(es.reduce((a, x) => a + practSec(x), 0) * 1000)}` : "Song by ear")}${chip("workbook", wb.length ? `Workbook ${fmt(wb.reduce((a, x) => a + practSec(x), 0) * 1000)}` : "Workbook")}${dr.length ? `<span class="jr-chip extra">🏋️ ${dr.length} drill${dr.length > 1 ? "s" : ""} · ${drillMin(dr)}m</span>` : ""}</div>${notes}</div>`;
+          <div class="jr-chips">${chip("aptest", "AP test")}${chip("calibration", "Calibration")}${chip("warmup", wu.length ? `Warmups ${fmt(wu.reduce((a, x) => a + practSec(x), 0) * 1000)}${wu[0].bpm ? ` @${wu[wu.length - 1].bpm}` : ""}` : "Warmups")}${chip("scales", sc.length ? `Alan scales ${fmt(sc.reduce((a, x) => a + practSec(x), 0) * 1000)}${sc.at(-1).bpm && sc.at(-1).metronome ? ` @${sc.at(-1).bpm}` : ""}` : "Alan scales")}${chip("earsong", es.length ? `🎧 ${[...new Map(es.map((x) => [x.songKey || songKey(x.song), x])).values()].map((x) => { const same = es.filter((y) => (y.songKey || songKey(y.song)) === (x.songKey || songKey(x.song))); return `${x.song.replace(/</g, "&lt;")}${same.length > 1 ? ` ×${same.length}` : ""}${same.some((y) => y.mastered) ? " ⭐" : ""}`; }).join(", ")} ${fmt(es.reduce((a, x) => a + practSec(x), 0) * 1000)}` : "Song by ear")}${libChip("jazztune", "tune", "Jazz tune", "🎷")}${chip("workbook", wb.length ? `Workbook ${fmt(wb.reduce((a, x) => a + practSec(x), 0) * 1000)}` : "Workbook")}${td.some((x) => x.item === "misc" && !x.skipped && x.task) ? libChip("misc", "task", "Misc", "🧩") : ""}${dr.length ? `<span class="jr-chip extra">🏋️ ${dr.length} drill${dr.length > 1 ? "s" : ""} · ${drillMin(dr)}m</span>` : ""}</div>${notes}</div>`;
     };
     root.innerHTML = `<div class="cal-ins">
         <div class="cal-top"><button class="cal-x" id="jr-back">‹</button><div class="cal-ins-h">Practice journal</div><div style="width:2rem"></div></div>
-        <div class="cal-ins-sum">This week: ${mins(J.filter((x) => x.item === "warmup" && x.startedAt >= wk))}m warmups · ${mins(J.filter((x) => x.item === "earsong" && x.startedAt >= wk))}m songs by ear · ${mins(J.filter((x) => x.item === "workbook" && x.startedAt >= wk))}m workbook · ${drillMin(S.filter((x) => D.kindOf(x) === "drill" && x.startedAt >= wk))}m drills · 🔥 full routine ${streak} day${streak === 1 ? "" : "s"} in a row</div>
-        ${lib.length ? `<div class="cal-sec">Songs by ear <span>aim: 2–3 sessions each</span></div><div class="es-lib">${lib.map((x) => `<div class="${x.mastered ? "mastered" : ""}"><b>${x.song.replace(/</g, "&lt;")}</b><span>${x.mastered ? "⭐ mastered · " : ""}${x.sessions} session${x.sessions === 1 ? "" : "s"} · ${Math.round(x.sec / 60)}m</span></div>`).join("")}</div><div class="cal-sec">Days</div>` : ""}
+        <div class="cal-ins-sum">This week: ${mins(J.filter((x) => x.item === "warmup" && x.startedAt >= wk))}m warmups · ${mins(J.filter((x) => x.item === "scales" && x.startedAt >= wk))}m Alan scales · ${mins(J.filter((x) => x.item === "earsong" && x.startedAt >= wk))}m songs by ear · ${mins(J.filter((x) => x.item === "jazztune" && x.startedAt >= wk))}m jazz tunes · ${mins(J.filter((x) => x.item === "misc" && x.startedAt >= wk))}m misc · ${mins(J.filter((x) => x.item === "workbook" && x.startedAt >= wk))}m workbook · ${drillMin(S.filter((x) => D.kindOf(x) === "drill" && x.startedAt >= wk))}m drills · 🔥 full routine ${streak} day${streak === 1 ? "" : "s"} in a row</div>
+        ${[[lib, "Songs by ear", "aim: 2–3 sessions each"], [practiceLibrary(S, "jazztune", "tune"), "Jazz tunes", "guide tones + Alan scales"], [practiceLibrary(S, "misc", "task"), "Misc", "how often you've done each"]].filter(([L]) => L.length).map(([L, h, sub]) => `<div class="cal-sec">${h} <span>${sub}</span></div><div class="es-lib">${L.map((x) => `<div class="${x.mastered ? "mastered" : ""}"><b>${x.name.replace(/</g, "&lt;")}</b><span>${x.mastered ? "⭐ mastered · " : ""}${x.sessions} ${h === "Misc" ? (x.sessions === 1 ? "time" : "times") : x.sessions === 1 ? "session" : "sessions"} · ${Math.round(x.sec / 60)}m</span></div>`).join("")}</div>`).join("")}
+        ${days.length ? `<div class="cal-sec">Days</div>` : ""}
         ${days.length ? days.map(row).join("") : `<div class="cal-hint">Nothing yet — start today's routine from the hub.</div>`}
         <div class="cal-ins-m">AP test scores stay hidden here by request; they're still saved for analysis.</div>
       </div>`;
@@ -1891,7 +1941,7 @@ export function setupCalibrate(ctx) {
         <div class="rt-card">
           <div class="chc-k">TODAY'S ROUTINE</div>
           ${routineList(rst, true)}
-          ${rnx ? `<button class="cal-cta" id="rt-next">▶ Next: ${rnx.icon} ${rnx.title}</button>` : `<div class="rt-done">🎉 Routine done — the rest is yours.</div>`}
+          ${rnx ? `<button class="cal-cta" id="rt-next">▶ Next: ${rnx.icon} ${rnx.title}</button>` : `<div class="rt-done">🎉 Routine done — the rest is yours.</div><button class="cal-cta" id="rt-next">▶ 🧩 Misc practice</button>`}
         </div>
 
         <button class="cal-hub-cal" id="hub-cal">
@@ -1926,7 +1976,8 @@ export function setupCalibrate(ctx) {
     $("#hub-exit").onclick = () => { exit(); if (ctx.goHome) ctx.goHome(); };
     $("#hub-cal").onclick = () => startCalibration();
     root.querySelectorAll("[data-rt]").forEach((b) => (b.onclick = () => ROUTINE.find((r) => r.key === b.dataset.rt).start()));
-    const rtn = $("#rt-next"); if (rtn) rtn.onclick = () => rnx.start();
+    root.querySelectorAll("[data-skip]").forEach((b) => (b.onclick = async () => { await logJournal(b.dataset.skip, { skipped: true, completed: false }); enter({ skipSync: true }); }));
+    const rtn = $("#rt-next"); if (rtn) rtn.onclick = () => (rnx || MISC()).start();
     $("#hub-journal").onclick = () => renderJournal();
     $("#hub-model").onclick = () => renderInsights();
     root.querySelectorAll("[data-drill]").forEach((b) => (b.onclick = () => startDrill(b.dataset.drill)));

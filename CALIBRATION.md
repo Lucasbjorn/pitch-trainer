@@ -18,15 +18,21 @@ You land on the **Training Hub**, which has three parts:
 **Account sync:** sign in with Google once on each device (from the hub's ☁️ card). After that, the phone, the laptop and the iPhone home-screen app all share one dataset (see *Account sync* below).
 
 ## 🗓️ Daily routine + 📓 practice journal (Oct 20)
-Lucas's every-day order (5 steps since Oct 27), as a **Today's routine** card at the top of the hub (each row startable on its own; **▶ Next** runs the first unfinished one; every step leads into the next with **▶ Start / ⏭ Skip today / Hub**):
+Lucas's every-day order (8 steps since Nov 13: AP test → calibration → Broadbent warmups → **Alan scales** → song by ear → **jazz tune** → workbook → **misc** (optional)), as a **Today's routine** card at the top of the hub (each row startable on its own; **▶ Next** runs the first unfinished one; every step leads into the next with **▶ Start / ⏭ Skip today / Hub**):
 1. **🧪 Cold AP test** — now **5 notes**, and **no score is shown anywhere** (not after the test, not in the hub, the journal or the ear model; Lucas: "don't even tell me my scores from now on"). Scores are still saved (`scoreHidden: true`, `nNotes: 5`) for analysis/export.
 2. **🎯 Daily calibration** — its finish screen offers **▶ Next in your routine** first.
 3. **🎹 Alan Broadbent warmups** (~5 min): a **stopwatch (no alarm)** + a **metronome** at 120 bpm (−5/−1/+1/+5, remembered in `pt.journal.bpm`, on/off). Pause stops both; the screen stays awake (Wake Lock) where supported.
 3b. **🎧 Learn a song by ear** (Oct 27; non-jazz, before the workbook): first **pick the song** — type "Song — Artist", tap an idea (Elton John · Stevie Wonder · Tame Impala · Mac DeMarco · Pink Floyd, which fills in the artist), or pick one you've worked on (each shows its sessions, "of ~2–3", last date; mastered ones are folded away). Then a **20-minute countdown** (same timer as the workbook: ±5 min, pause, Done/Skip, notes) with **⭐ I've got it — mark mastered**. Logged as journal `item: "earsong"` with `song`, `songKey` (normalized), `songSession` (n-th session on that song), `mastered` (and `unmastered` if you uncheck a mastered song). The journal has a **Songs by ear** list (sessions, minutes, ⭐).
+3a. **🎼 Alan scales** (Nov 13): 15-minute countdown with the metronome **on** by default (own tempo, `pt.journal.bpm.scales`). Journal `item: "scales"`.
+3c. **🎷 Learn a jazz tune** (Nov 13): same picker as songs — type the tune or pick a past one (sessions, ⭐ mastered), choose **Transcription / By ear / Both** (`method`), 20-minute countdown with two reminders to tick: **guide tones (3rds & 7ths) through the whole tune** (`guideTones`) and **the right Alan scales through every chord** (`alanScales`). Journal `item: "jazztune"`, `tune`, `tuneKey`, `tuneSession`, `mastered`.
 4. **📘 Voicing workbook**: a **30-minute countdown** (±5 min), pause/resume, and the **same metronome** (off by default; its own bpm, `pt.journal.bpm.workbook`); at zero a few soft boops + vibration, then it counts overtime until **✓ Done**.
 
 **Metronome sound (Oct 22: the first version was "a piercing tick"):** choose **🪵 Click** (a woodblock-like tock: 20 ms noise burst through a ~1 kHz band-pass) or **🔈 Boop** (a soft sine that drops 200 → 70 Hz in 70 ms); remembered in `pt.journal.metSound`. Neither has a steady pitch, so it never gives the ear a reference. Measured offline: old tick centroid ≈ 11.4 kHz at 0 dB → click ≈ 2.1 kHz at −12 dB, boop ≈ 310 Hz at −7 dB. It runs on its own look-ahead scheduler on the audio clock (sample-accurate). Journal entries record `bpm`, `bpms`, `metronome`, `metSound`.
 5. Then free practice.
+
+5b. **🧩 Misc practice** (Nov 13, optional — never holds up "routine done"): type anything or pick a past task (shows how many times you've done it and its last length), choose **5–45 min**, metronome available (off by default, `pt.journal.bpm.misc`). Journal `item: "misc"`, `task`, `taskKey`, `taskSession`, `targetSec`. Reachable from the routine-done screen and the hub.
+
+**Skipping:** every row on the hub's routine card has a **⏭** that skips that step for today (logged as a journal skip); each step's own screen also has ⏭ Skip.
 
 Any step: **⏸ pause**, **⏭ skip** (logged), **✕** (saves what you did and returns to the hub), optional **notes**.
 
