@@ -15,8 +15,8 @@
 
 export const SCHEMA_VERSION = 2;   // record shape (v2 adds mode, protocol, localDate, sessionOfDay)
 export const PROTOCOL = 10;         // v1 first week · v2 harder hold/anchor + song anchors · v3 anchor pop-ups, breathers, replay-once, RT from onset · v4 Neighbors station + trios · v5 cold draws, naming core, Gut & check, Inner tuner, Tag at home, Name or hold, note-lure anchor pop-ups · v6 Hold it: same note or a different note (no cents) · v7 "What key?" replaces Octave twins; misclick flag · v8 Imagine & sing back in the calibration, right after Song anchors · v9 shorter (~6 min): Imagine & sing first ×6, self-paced; Hold it + Find the note → drills · v10 Tune the knob (replaces Inner tuner in the calibration) + Flash naming
-export const SKILLS = ["cue", "name", "imagine", "anchor", "hold", "twins", "triad", "tune", "tri", "pair", "gut", "tuner", "taghome", "nhold", "aptest", "key", "knob", "flash"];
-export const SKILL_TITLE = { cue: "Song anchors", name: "Blindfold naming", imagine: "Imagine & sing", anchor: "Anchor lock", hold: "Hold it", twins: "Octave twins", triad: "Find the note", tune: "In tune?", tri: "Triangulate", pair: "Neighbors", gut: "Gut & check", tuner: "Inner tuner", taghome: "Tag at home?", nhold: "Name or hold?", aptest: "Daily AP test", key: "What key?", knob: "Tune the knob", flash: "Flash naming" };
+export const SKILLS = ["cue", "name", "imagine", "anchor", "hold", "twins", "triad", "tune", "tri", "pair", "gut", "tuner", "taghome", "nhold", "aptest", "key", "knob", "flash", "voices", "wt", "isng"];
+export const SKILL_TITLE = { cue: "Song anchors", name: "Blindfold naming", imagine: "Imagine & sing", anchor: "Anchor lock", hold: "Hold it", twins: "Octave twins", triad: "Find the note", tune: "In tune?", tri: "Triangulate", pair: "Neighbors", gut: "Gut & check", tuner: "Inner tuner", taghome: "Tag at home?", nhold: "Name or hold?", aptest: "Daily AP test", key: "What key?", knob: "Tune the knob", flash: "Flash naming", voices: "Pick apart", wt: "Whole-tone families", isng: "Sing intervals" };
 export const STATIONS_GRADED = SKILLS;
 // Drills you can launch. Anchor checks are pop-ups, not a drill; Triangulate was
 // retired in v5 (imagining an anchor turned close guesses into off-by-ones —
@@ -25,6 +25,8 @@ export const STATIONS_GRADED = SKILLS;
 export const RETIRED = ["tri", "twins"];
 // Lucas's favorites (Oct 19): first in the hub, weighted up by the coach.
 export const FAVORITES = ["imagine", "pair", "taghome", "tuner"];
+// Folded under "More drills" (Nov 13: unused, or ones he found weak) — still playable.
+export const TUCKED = ["gut", "nhold", "hold", "triad", "tune"];
 export const DRILLS = SKILLS.filter((s) => s !== "anchor" && s !== "aptest" && !RETIRED.includes(s));
 // Graded stations in the daily calibration (protocol 5), in running order.
 // v9 (~6 min): Imagine & sing first and longest (Lucas: "the best one"), self-paced;
@@ -261,10 +263,11 @@ const nChoicesOf = (t) => t.stim.nChoices || (Array.isArray(t.stim.pair) ? t.sti
 function chanceOf(t) {
   switch (t.station) {
     case "name": case "tri": case "gut": case "aptest": case "key": case "flash": return 1 / 12;
+    case "voices": return Math.pow(1 / 12, (t.voices || []).length || 2);
     case "cue": return 1 / (t.stim.choices || 12);
     case "pair": return 1 / nChoicesOf(t);
     case "twins": case "triad": return 1 / 3;
-    case "hold": case "anchor": case "tune": case "tuner": case "taghome": case "nhold": return 0.5;
+    case "hold": case "anchor": case "tune": case "tuner": case "taghome": case "nhold": case "wt": return 0.5;
     default: return 0;
   }
 }
@@ -378,6 +381,8 @@ export function analyze({ sessions = [], trials = [] } = {}) {
       { key: "aptest", station: "aptest", label: "Daily AP test · no answers shown" },
       { key: "name", station: "name" },
       { key: "flash", station: "flash", label: "Flash naming (late = miss)" },
+      { key: "voices", station: "voices", label: "Pick apart · whole chord" },
+      { key: "wt", station: "wt", label: "Whole-tone family" },
       { key: "pair", station: "pair", label: "Neighbors · cold", keep: (t) => warm(t) === false },
       { key: "note2cue", station: "cue", label: "Song anchors · note → tag", keep: (t) => t.stim.kind === "note2cue" },
       { key: "taghome", station: "taghome" }, { key: "tuner", station: "tuner" }, { key: "gut", station: "gut", label: "Gut & check · final" },
@@ -619,6 +624,34 @@ export function analyze({ sessions = [], trials = [] } = {}) {
       byKey: PC.map((nm, pc) => ({ name: nm, ...prop(kt.filter((t) => t.stim.keyPc === pc)) })).filter((x) => x.n) };
   }
 
+  // ---- 11c3b. Pick apart: can each voice of a chord be heard (and named) on its own? ------
+  //  A response set that is the chord's SHAPE shifted by k ≠ 0 semitones is the
+  //  relative-pitch signature: the intervals were heard, the absolute level wasn't.
+  {
+    const vt = by("voices").filter((t) => Array.isArray(t.voices));
+    const V = vt.flatMap((t) => t.voices.map((v, i) => ({ ...v, i, n: t.voices.length, size: t.voices.length })));
+    const posOf = (v) => (v.i === 0 ? "bottom" : v.i === v.n - 1 ? "top" : "inner");
+    const named = V.filter((v) => typeof v.correct === "boolean");
+    const sung = V.filter((v) => v.sing && v.sing.ok && Number.isFinite(v.sing.cents));
+    out.indices.voices = { n: vt.length, allCorrect: prop(vt), perVoice: prop(named),
+      byPos: ["bottom", "inner", "top"].map((pz) => ({ pos: pz, ...prop(named.filter((v) => posOf(v) === pz)), sungWithin50: (() => { const g = sung.filter((v) => posOf(v) === pz); return g.length ? g.filter((v) => Math.abs(v.sing.cents) <= 50).length / g.length : null; })(), nSung: sung.filter((v) => posOf(v) === pz).length })),
+      bySize: [2, 3, 4].map((k) => ({ size: k, ...prop(vt.filter((t) => t.voices.length === k)), perVoice: prop(named.filter((v) => v.size === k)) })).filter((x) => x.n),
+      transposedShape: vt.filter((t) => Number.isInteger(t.transposed) && t.transposed !== 0).length,
+      sungWithin50: sung.length ? sung.filter((v) => Math.abs(v.sing.cents) <= 50).length / sung.length : null, nSung: sung.length };
+  }
+
+  // ---- 11c3c. Whole-tone families + sung intervals ------------------------------------
+  {
+    const wt = by("wt").filter(graded);
+    out.indices.wt = { ...prop(wt), which: prop(wt.filter((t) => t.stim.kind !== "sing")), sing: prop(wt.filter((t) => t.stim.kind === "sing")),
+      anchored: prop(wt.filter((t) => t.stim.anchor && t.stim.kind !== "sing")), cold: prop(wt.filter((t) => !t.stim.anchor && t.stim.kind !== "sing")),
+      byFam: [0, 1].map((f) => ({ fam: f, ...prop(wt.filter((t) => t.stim.fam === f && t.stim.kind !== "sing")) })) };
+    const iv = by("isng").filter(graded), sizes = [...new Set(iv.map((t) => Math.abs(t.stim.semis)))].sort((a, b) => a - b);
+    const sungI = iv.filter((t) => t.sing && t.sing.ok && Number.isFinite(t.sing.cents));
+    out.indices.isng = { ...prop(iv), up: prop(iv.filter((t) => t.stim.semis > 0)), down: prop(iv.filter((t) => t.stim.semis < 0)),
+      bySize: sizes.map((z) => ({ semis: z, ...prop(iv.filter((t) => Math.abs(t.stim.semis) === z)) })), medAbsCents: median(sungI.map((t) => Math.abs(t.sing.cents))), nSung: sungI.length };
+  }
+
   // ---- 11c4. Tune the knob: where the IMAGINED note sits, without the voice ----------------
   //  errCents = slider setting − true pitch. Compare its bias with the sung bias: same
   //  sign and size → the template itself is off; centred → the offset is vocal.
@@ -772,6 +805,15 @@ export function paramsFor(skill, L) {
     // L4 a I–IV–V–I progression → L5 varied progressions. Name the key / root.
     case "key": return { kind: l >= 3 ? "prog" : "triad", inv: l >= 1, minor: l === 2, octaves: l >= 1 ? [3, 4] : [4],
       progs: l >= 4 ? ["I-IV-V-I", "I-vi-IV-V-I", "ii-V-I", "I-IV-I-V-I"] : ["I-IV-V-I"] };
+    // Whole-tone families (C family = C D E F# G# A#; D♭ family = the other six): L1 with the
+    // home notes as anchors → no anchor → 3-note phrases → wider octaves → short notes.
+    case "wt": return { anchor: l === 0, phrase: l >= 2, octaves: [[4], [4], [3, 4], [3, 4, 5], [2, 3, 4, 5, 6]][l], dur: l >= 4 ? 0.6 : 1.2 };
+    // Sing intervals: hear a named note, sing the asked interval up or down. Grows from
+    // half/whole steps to every interval up to the octave.
+    case "isng": return { intervals: [[1, 2], [1, 2, 3], [1, 2, 3, 4, 5], [1, 2, 3, 4, 5, 6, 7], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]][l], octaves: [[3], [3], [3, 4], [3, 4], [3, 4]][l] };
+    // Pick apart: hear a chord, sing and name each voice. Sizes grow; inversions and
+    // 7th chords come in; `spread` opens the voicing across two octaves.
+    case "voices": return { sizes: [[2], [2, 3], [3], [3, 4], [4]][l], inv: l >= 3, sevenths: l >= 4, spread: l >= 5, octaves: [[4], [3, 4], [3, 4], [3, 4], [3, 4]][l] };
     // Tune the knob: imagine a named note, slide a tone onto it. `tol` = how close counts
     // as right (for levels only; the logged error in cents is the real measure).
     case "knob": return { tol: [50, 40, 30, 20, 15][l], octaves: [[3], [3], [3, 4], [3, 4], [3, 4, 5]][l], range: 300 };
@@ -910,6 +952,8 @@ export function suggestDrills(data = {}, now = Date.now()) {
     if (sk === "tuner") { if (I.imagery.nSung >= 8 && Math.abs(I.imagery.meanBiasCents) >= 15) flag(0.1, `your sung notes run ${Math.round(I.imagery.meanBiasCents)}¢ — tune the notes you imagine`); }
     if (sk === "knob") { score += 0.15; reason += " · is your flat singing in the template or the voice?"; }
     if (sk === "flash") { score += 0.15; reason += " · trains the fast route"; }
+    if (sk === "wt" || sk === "isng") score += 0.1;
+    if (sk === "voices") { score += 0.15; reason += " · hear each voice inside a chord"; }
     if (sk === "key") { score += 0.15; reason += " · learning chords by their overall color"; }
     if (sk === "nhold") { score += 0.15; reason += " · does knowing the name help you hold it?"; }
     if (sk === "hold" && I.hold.enoughCost && I.hold.toneCost && I.hold.toneCost.d > 0.2) flag(0.2, "notes in between knock the pitch out of memory — practice holding it by name");

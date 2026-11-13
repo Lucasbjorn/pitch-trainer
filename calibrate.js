@@ -16,6 +16,7 @@
 
 import { PitchDetector } from "https://esm.sh/pitchy@4";
 import * as D from "./calibrate-data.js";
+import * as PD from "./practice-data.js";
 import { calUpload, calDownload, calCloudStatus, signInGoogle } from "./social.js";
 
 export function setupCalibrate(ctx) {
@@ -23,7 +24,14 @@ export function setupCalibrate(ctx) {
   const PC = PITCH_NAMES;
   const root = document.getElementById("calibrate");
   // The day's anchor note (rotates daily, weakest first; "always C" toggle).
-  const anchorMode = () => { try { return localStorage.getItem("pt.cal.anchorMode") || "rotate"; } catch (_) { return "rotate"; } };
+  // 🔑 Key of the week (Nov 13): one global setting; when on, every practice module
+  // and today's anchor note follow it (the anchor walks up the scale, a degree a day).
+  const keyWeekOn = () => { try { return localStorage.getItem("pt.keyweek") !== "off"; } catch (_) { return true; } };
+  const keyOverride = () => { try { return localStorage.getItem("pt.keyweek.key") || null; } catch (_) { return null; } };
+  const KW = () => (keyWeekOn() ? PD.keyOfWeek(D.localDate(Date.now()), keyOverride()) : null);
+  const anchorMode = () => { if (keyWeekOn()) return "key"; try { return localStorage.getItem("pt.cal.anchorMode") || "rotate"; } catch (_) { return "rotate"; } };
+  const todayAnchor = (all) => (anchorMode() === "key" ? KW().anchorPc : D.anchorOfDay(all, D.localDate(Date.now()), anchorMode()));
+  const anchorWhy = () => { const m = anchorMode(), kw = KW(); return m === "fixed" ? " (always C)" : m === "key" ? ` · degree ${kw.degree} of ${kw.tonic} major (key of the week)` : " · rotates daily, weakest first"; };
   let dayAnchor = 0;
   const TITLE = D.SKILL_TITLE;
   const META = {
@@ -41,6 +49,9 @@ export function setupCalibrate(ctx) {
     tuner:   { icon: "🎛️", color: "#ccfbf1", blurb: "Imagine a named note, then hear one a hair off: higher or lower than yours? No mic." },
     knob:    { icon: "🎛️", color: "#e0f2fe", blurb: "Imagine a named note, then slide a tone until it matches what you hear inside. Where does your inner pitch sit?" },
     flash:   { icon: "⚡", color: "#fef9c3", blurb: "Name it before the bar runs out — trains instant recognition over slow checking." },
+    wt:      { icon: "⚪", color: "#f1f5f9", blurb: "The two whole-tone scales as two families: which one is this note in? Sing them back, too." },
+    isng:    { icon: "↕️", color: "#ecfccb", blurb: "Hear a named note, sing a half step, whole step, 3rd… up or down. Grows to every interval." },
+    voices:  { icon: "🔬", color: "#fae8ff", blurb: "Hear a chord, then pull it apart: sing and name each voice, bottom to top." },
     aptest:  { icon: "🧪", color: "#ede9fe", blurb: "10 notes, no answers shown until the end — the pure AP number." },
     nhold:   { icon: "🏷️", color: "#e0f2fe", blurb: "Hold a note through noise or stray notes — sometimes you're told its name. Same, or a semitone off?" },
     taghome: { icon: "🏠", color: "#fce7f3", blurb: "A song tag, sometimes shifted: is it at its real pitch? Makes the tags carry pitch." },
@@ -888,6 +899,7 @@ export function setupCalibrate(ctx) {
         <div class="cal-phase" id="cal-phase">🌀 clearing…</div>
         ${grid(PC.map((_, j) => j))}
         <button class="cal-cta ghost-cta" id="gut-keep" hidden>✓ Keep it</button>
+        <button class="cal-cta ghost-cta" id="gut-again" hidden>▶ Hear it again</button>
         <div class="cal-fb" id="cal-fb"></div>
       </div>` + foot());
     await sleep(BREATH); await cleanser(); if (abort) return null;
@@ -899,13 +911,16 @@ export function setupCalibrate(ctx) {
     const say = $("#gut-say"); if (say) say.innerHTML = `Gut: <b>${PC[gut]}</b>. Now check it with your inner MIDI — keep it, or tap a different note.`;
     setPhase("🧠 check ↓");
     const keep = $("#gut-keep"); if (keep) { keep.hidden = false; keep.textContent = `✓ Keep ${PC[gut]}`; keep.onclick = () => done(String(gut)); }
+    let checkReplays = 0;                                           // Nov 13: hear it again while checking (as often as you like)
+    const ag = $("#gut-again"); if (ag) { ag.hidden = false; ag.onclick = () => { checkReplays++; playMidi(m, 1.4); }; }
     root.querySelectorAll("#cal-grid [data-v]").forEach((b) => (b.onclick = () => done(b.dataset.v)));
     const v2 = await wait(); if (abort || v2 == null) return null;
     const resp = +v2, rtCheck = Math.round(performance.now() - t1), correct = resp === pc, gutCorrect = gut === pc, changed = resp !== gut;
     if (keep) keep.hidden = true;
+    if (ag) ag.hidden = true;
     record("gut", correct);
     logTrial("gut", { ti: info.i, stim: { pc, oct, midi: m, timbre: "piano", wash: true, draw: dr.draw, warm: dr.warm, warmAgoMs: dr.warmAgoMs }, gut, gutCorrect, resp, correct, changed,
-      rt: a1.rt, rtCheck, errGut: gutCorrect ? 0 : D.circ(pc, gut), errSemis: correct ? 0 : D.circ(pc, resp) });
+      rt: a1.rt, rtCheck, checkReplays, errGut: gutCorrect ? 0 : D.circ(pc, gut), errSemis: correct ? 0 : D.circ(pc, resp) });
     markChoices("#cal-grid", pc, resp);
     const verdict = !changed ? (correct ? "gut was right ✓" : "kept the gut — it was off") : gutCorrect ? "your check talked you OUT of the right answer" : correct ? "your check fixed it ✓" : "the check didn't save it";
     fb(correct, `${correct ? "✅" : "❌"} it was ${PC[pc]} · gut ${PC[gut]}${changed ? ` → ${PC[resp]}` : ""} — ${verdict}`);
@@ -1165,7 +1180,188 @@ export function setupCalibrate(ctx) {
     return abort ? null : { correct };
   }
 
-  const TRIAL = { cue: trCue, name: trName, imagine: trImagine, anchor: trAnchor, hold: trHold, twins: trTwins, triad: trTriad, tune: trTune, tri: trTri, pair: trPair, gut: trGut, tuner: trTuner, taghome: trTagHome, nhold: trNHold, key: trKey, knob: trKnob, flash: trFlash };
+  // 🔬 Pick apart (Nov 13): a chord sounds as one unit; you take it apart — sing each
+  // voice (mic grades it, if on) and name it, bottom to top. Nothing is revealed until
+  // all voices are in. If the answers are the chord's shape shifted by k semitones,
+  // that's logged as `transposed: k` — the intervals were heard, the level wasn't.
+  async function trVoices(info) {
+    const p = P("voices"), sing = singOn(), size = pick(p.sizes), dr = drawPc(), rootPc = dr.item, oct = pick(p.octaves);
+    const Q = size === 2 ? pick([[3], [4], [5], [7], [8], [9], [10], [11]]) : size === 3 ? pick([[4, 7], [3, 7], [3, 6], [4, 8]]) : pick(p.sevenths ? [[4, 7, 11], [3, 7, 10], [4, 7, 10], [3, 6, 10]] : [[4, 7, 11], [3, 7, 10]]);
+    let chord = [0, ...Q].map((x) => midiOf(rootPc, oct) + x);
+    const inversion = p.inv && size >= 3 ? rand(size) : 0;
+    for (let i = 0; i < inversion; i++) chord.push(chord.shift() + 12);
+    if (p.spread && size >= 3 && Math.random() < 0.5) chord = [chord[0] - 12, ...chord.slice(1)];
+    chord.sort((a, b) => a - b);
+    const pcs = chord.map(pcOf), POS = size === 2 ? ["bottom", "top"] : size === 3 ? ["bottom", "middle", "top"] : ["bottom", "2nd", "3rd", "top"];
+    let replays = 0;
+    stage(head("voices", info) + `
+      <div class="cal-stage">
+        <div class="cal-say" id="vc-say">${size} notes. Hear them as one — then pull them apart, bottom to top.</div>
+        <div class="cal-phase" id="cal-phase">🌀 clearing…</div>
+        <div class="vc-slots" id="vc-slots">${POS.map((x, i) => `<span class="vc-slot" data-i="${i}">${x}</span>`).join("")}</div>
+        <button class="cal-cta ghost-cta" id="vc-replay" hidden>▶ chord again</button>
+        <div class="cal-meter" id="vc-meter" hidden><div class="cal-meter-bar" id="cal-meter"></div></div>
+        <div class="cal-choices" id="vc-sing" hidden><button class="cal-choice" data-v="go">🎤 Sing it</button></div>
+        ${grid(PC.map((_, j) => j))}
+        <div class="cal-fb" id="cal-fb"></div>
+      </div>` + foot());
+    await sleep(BREATH); await cleanser(); if (abort) return null;
+    setPhase("🎧 the chord");
+    await playChord(chord, 2.2); await sleep(1500); if (abort) return null;
+    const rb = $("#vc-replay"); if (rb) { rb.hidden = false; rb.onclick = () => { replays++; playChord(chord, 2.2); }; }
+    const voices = []; const t0 = performance.now();
+    for (let i = 0; i < size && !abort; i++) {
+      root.querySelectorAll(".vc-slot").forEach((el) => el.classList.toggle("on", +el.dataset.i === i));
+      let sung = null;
+      if (sing) {
+        setPhase(`🎤 sing the ${POS[i]} note`);
+        const go = await ask("#vc-sing"); if (abort || go.v == null) return null;
+        const sg = $("#vc-sing"); if (sg) sg.hidden = true;
+        const mt = $("#vc-meter"); if (mt) mt.hidden = false;
+        sung = await captureSung(2300, (lvl) => { const b2 = $("#cal-meter"); if (b2) b2.style.width = `${Math.round(lvl * 100)}%`; });
+        if (abort) return null;
+        if (mt) mt.hidden = true;
+        if (sung && sung.ok) { sung.cents = Math.round(((((sung.midi - pcs[i]) % 12) + 18) % 12 - 6) * 100); sung.oct = Math.floor(Math.round(sung.midi) / 12) - 1; }
+      }
+      setPhase(`🎯 name the ${POS[i]} note ↓`);
+      const { v, rt } = await ask("#cal-grid"); if (abort || v == null) return null;
+      const resp = +v;
+      root.querySelectorAll("#cal-grid [data-v]").forEach((b2) => { b2.onclick = null; b2.classList.toggle("picked", b2.dataset.v === v); });
+      voices.push({ pos: POS[i], midi: chord[i], pc: pcs[i], resp, correct: resp === pcs[i], rt, sing: sung });
+      await sleep(250);
+      root.querySelectorAll("#cal-grid .picked").forEach((b2) => b2.classList.remove("picked"));
+    }
+    if (abort) return null;
+    if (rb) rb.hidden = true;
+    const nCorrect = voices.filter((x) => x.correct).length, correct = nCorrect === size;
+    // Same shape, shifted? (every response − its voice = the same k, k ≠ 0)
+    const ks = new Set(voices.map((x) => D.circ(x.pc, x.resp))), transposed = ks.size === 1 ? [...ks][0] : null;
+    record("voices", correct);
+    logTrial("voices", { ti: info.i, stim: { root: rootPc, quality: Q.join("-"), size, inversion, spread: chord[1] - chord[0] > 12, chord, pcs, oct, draw: dr.draw, warm: dr.warm, warmAgoMs: dr.warmAgoMs },
+      voices, nCorrect, correct, transposed, rt: Math.round(performance.now() - t0), replays, resp: voices.map((x) => x.resp).join("-") });
+    if (run) run.answered = true;
+    // Reveal: each voice with its name, bottom to top, then the chord again.
+    const slots = root.querySelectorAll(".vc-slot");
+    slots.forEach((el, i) => { el.textContent = `${PC[pcs[i]]}${voices[i].correct ? " ✓" : ` ✗ (${PC[voices[i].resp]})`}`; el.classList.toggle("ok", voices[i].correct); el.classList.toggle("bad", !voices[i].correct); el.classList.remove("on"); });
+    const sungTxt = sing ? voices.filter((x) => x.sing && x.sing.ok).map((x) => `${PC[x.pc]} ${x.sing.cents > 0 ? "+" : ""}${x.sing.cents}¢`).join(" · ") : "";
+    fb(correct, `${correct ? "✅ All " + size : `${nCorrect}/${size}`}${transposed ? ` — same shape, ${Math.abs(transposed)} semitone${Math.abs(transposed) > 1 ? "s" : ""} ${transposed > 0 ? "up" : "down"} (relative pitch did the work)` : ""}${sungTxt ? `<br>sung: ${sungTxt}` : ""}`);
+    await sleep(400);
+    for (let i = 0; i < size && !abort; i++) { slots[i].classList.add("on"); await playMidi(chord[i], 0.8); await sleep(650); slots[i].classList.remove("on"); }
+    if (abort) return null;
+    await playChord(chord, 1.6); await sleep(1700);
+    lastLabeled = chord[chord.length - 1];
+    return abort ? null : { correct };
+  }
+
+  // ⚪ Whole-tone families (Nov 13): the two whole-tone scales learned as two entities.
+  // "C family" = C D E F# G# A# (even pitch classes), "D♭ family" = C# D# F G A B.
+  // Which-family questions (with the home notes as anchors at L1; 3-note phrases from
+  // L3), and — with 🎤 on — sing-back: hear the home note and a phrase, sing its last note.
+  const WT_NAME = ["C family", "D♭ family"], WT_NOTES = ["C D E F♯ G♯ A♯", "D♭ E♭ F G A B"];
+  async function trWT(info) {
+    const p = P("wt"), sing = singOn(), dr = drawPc(), pc = dr.item, fam = pc % 2, oct = pick(p.octaves), m = midiOf(pc, oct);
+    const kind = sing && Math.random() < 0.3 ? "sing" : p.phrase && Math.random() < 0.6 ? "phrase" : "note";
+    const famPcs = [0, 2, 4, 6, 8, 10].map((x) => x + fam), others = shuffle(famPcs.filter((x) => x !== pc)).slice(0, 2);
+    const phrase = kind === "note" ? [m] : [...others.map((x) => midiOf(x, oct)), m];
+    const anchor = p.anchor || kind === "sing";
+    stage(head("wt", info) + `
+      <div class="cal-stage">
+        <div class="cal-say">${kind === "sing" ? `Sing it back — the <b>${WT_NAME[fam]}</b>` : kind === "phrase" ? "Which whole-tone family is this phrase in?" : "Which whole-tone family is this note in?"}</div>
+        <div class="cal-hint">${WT_NAME[0]}: ${WT_NOTES[0]} · ${WT_NAME[1]}: ${WT_NOTES[1]}</div>
+        <div class="cal-phase" id="cal-phase">🌀 clearing…</div>
+        <div class="cal-choices" id="cal-ch" hidden>${kind === "sing" ? `<button class="cal-choice" data-v="go">🎤 Sing the last note</button>` : WT_NAME.map((n, i) => `<button class="cal-choice" data-v="${i}">${n}</button>`).join("")}</div>
+        <div class="cal-meter" id="wt-meter" hidden><div class="cal-meter-bar" id="cal-meter"></div></div>
+        ${kind === "sing" ? "" : replayBtn}
+        <div class="cal-fb" id="cal-fb"></div>
+      </div>` + foot());
+    await sleep(BREATH); await cleanser(); if (abort) return null;
+    if (anchor) {                                                   // the home notes, with their names
+      setPhase(kind === "sing" ? `⚓ home: ${fam ? "D♭" : "C"}` : "⚓ home notes: C (C family) · D♭ (D♭ family)");
+      if (kind === "sing") { run.answered = true; await playMidi(midiOf(fam, oct), 0.9); await sleep(900); run.answered = false; }
+      else { run.answered = true; await playMidi(midiOf(0, oct), 0.8); await sleep(850); await playMidi(midiOf(1, oct), 0.8); await sleep(1100); run.answered = false; }
+      if (abort) return null;
+    }
+    const hear = async () => { for (let i = 0; i < phrase.length && !abort; i++) { await playMidi(phrase[i], p.dur); if (i < phrase.length - 1) await sleep(p.dur * 600); } };
+    setPhase("🎧 listen");
+    if (kind === "note") await hear(); else { await hear(); }
+    if (abort) return null;
+    let rp = { n: 0 };
+    if (kind !== "sing") rp = armReplay(hear);
+    setPhase(kind === "sing" ? "🎤 your turn" : "↓ which family?");
+    const { v, rt } = await ask("#cal-ch"); if (abort || v == null) return null;
+    let correct, resp = v, sung = null;
+    if (kind === "sing") {
+      const ch = $("#cal-ch"); if (ch) ch.hidden = true; const mt = $("#wt-meter"); if (mt) mt.hidden = false;
+      sung = await captureSung(2300, (lvl) => { const b2 = $("#cal-meter"); if (b2) b2.style.width = `${Math.round(lvl * 100)}%`; });
+      if (abort) return null;
+      if (mt) mt.hidden = true;
+      if (sung.ok) { sung.cents = Math.round(((((sung.midi - pc) % 12) + 18) % 12 - 6) * 100); sung.oct = Math.floor(Math.round(sung.midi) / 12) - 1; }
+      correct = sung.ok ? Math.abs(sung.cents) <= 50 : null; resp = "sung";
+    } else correct = +v === fam;
+    record("wt", correct);
+    logTrial("wt", { ti: info.i, stim: { pc, fam, kind, anchor, phrase: phrase.map(pcOf), oct, draw: dr.draw, warm: dr.warm, warmAgoMs: dr.warmAgoMs }, resp, correct, rt, replays: rp.n, sing: sung });
+    if (kind !== "sing") markChoices("#cal-ch", fam, +v); else if (run) run.answered = true;
+    fb(correct !== false, kind === "sing" ? (sung && sung.ok ? `${correct ? "✅" : "❌"} you sang ${Math.abs(sung.cents) <= 15 ? "dead on" : `${sung.cents > 0 ? "+" : ""}${sung.cents}¢`} from ${PC[pc]} — ${WT_NAME[fam]}` : "🎤 didn't catch a pitch — here it is:") : `${correct ? "✅" : "❌"} ${PC[pc]} is in the <b>${WT_NAME[fam]}</b> — here's the family:`);
+    await sleep(400);
+    // The whole family up and back to the asked note — named on screen (no tag: keeps it quick).
+    exposed(pc);
+    for (const x of famPcs) { if (abort) return null; await playMidi(midiOf(x, 4), 0.35); await sleep(240); }
+    await sleep(250); await playMidi(m, 0.9); await sleep(900);
+    lastLabeled = m;
+    return abort ? null : { correct };
+  }
+
+  // ↕️ Sing intervals (Nov 13): hear a named note (with its tag), sing the asked interval
+  // up or down. Starts with half and whole steps; grows to every interval to the octave.
+  const IV_NAME = { 1: "half step", 2: "whole step", 3: "minor 3rd", 4: "major 3rd", 5: "perfect 4th", 6: "tritone", 7: "perfect 5th", 8: "minor 6th", 9: "major 6th", 10: "minor 7th", 11: "major 7th", 12: "octave" };
+  async function trIsng(info) {
+    const p = P("isng"), sing = singOn(), dr = drawPc(), pc = dr.item, oct = pick(p.octaves), m = midiOf(pc, oct);
+    const size = pick(p.intervals), semis = (Math.random() < 0.5 ? -1 : 1) * size, tgt = m + semis, tpc = pcOf(tgt);
+    stage(head("isng", info) + `
+      <div class="cal-stage">
+        <div class="cal-say">Sing a <b>${IV_NAME[size]} ${semis > 0 ? "up" : "down"}</b> from</div>
+        <div class="cal-big">${PC[pc]}</div>
+        <div class="cal-phase" id="cal-phase">🌀 clearing…</div>
+        <div class="cal-choices" id="cal-ch" hidden><button class="cal-choice" data-v="go">${sing ? "🎤 Sing it" : "✓ I've got it"}</button></div>
+        <div class="cal-meter" id="iv-meter" hidden><div class="cal-meter-bar" id="cal-meter"></div></div>
+        <div class="cal-choices" id="iv-rate" hidden><button class="cal-choice" data-v="nailed">🎯 Nailed it</button><button class="cal-choice" data-v="off">😬 Off</button></div>
+        <div class="cal-fb" id="cal-fb"></div>
+      </div>` + foot());
+    await sleep(BREATH); await cleanser(); if (abort) return null;
+    run.answered = true;                                            // the note comes with its name + tag (the anchor)
+    setPhase(`⚓ ${PC[pc]}`);
+    await playMidi(m, 1.0); await sleep(800); if (abort) return null;
+    await cueSample(pc); if (abort) return null;
+    await playMidi(m, 1.0); if (abort) return null;
+    run.answered = false;
+    setPhase(sing ? "🎤 when you're ready" : "🧠 hear it inside, then tap");
+    const go = await ask("#cal-ch"); if (abort || go.v == null) return null;
+    const ch = $("#cal-ch"); if (ch) ch.hidden = true;
+    let sung = null, correct = null, resp = "sung";
+    if (sing) {
+      const mt = $("#iv-meter"); if (mt) mt.hidden = false;
+      sung = await captureSung(2300, (lvl) => { const b2 = $("#cal-meter"); if (b2) b2.style.width = `${Math.round(lvl * 100)}%`; });
+      if (abort) return null;
+      if (mt) mt.hidden = true;
+      if (sung.ok) { sung.cents = Math.round(((((sung.midi - tpc) % 12) + 18) % 12 - 6) * 100); sung.oct = Math.floor(Math.round(sung.midi) / 12) - 1; correct = Math.abs(sung.cents) <= 50; }
+    }
+    if (run) run.answered = true;
+    if (sing && sung && sung.ok) fb(correct, `${correct ? "✅" : "❌"} target ${PC[tpc]} — you sang ${Math.abs(sung.cents) <= 15 ? "dead on" : `${Math.abs(sung.cents)}¢ ${sung.cents > 0 ? "sharp" : "flat"}${Math.abs(sung.cents) > 50 ? ` (closer to ${PC[pcOf(sung.midi)]})` : ""}`}. Here it is:`);
+    else fb(true, `Target: <b>${PC[tpc]}</b> — here it is:`);
+    await sleep(300);
+    await playMidi(m, 0.7); await sleep(650); await playMidi(tgt, 1.0); await sleep(900); if (abort) return null;
+    if (!sing || !sung || !sung.ok) {                               // no mic reading → rate yourself
+      const r = await ask("#iv-rate"); if (abort) return null;
+      resp = r.v; correct = r.v === "nailed" ? true : r.v === "off" ? false : null;
+      const rr = $("#iv-rate"); if (rr) rr.hidden = true;
+    }
+    record("isng", correct);
+    logTrial("isng", { ti: info.i, stim: { pc, from: m, semis, size, name: IV_NAME[size], target: tpc, oct, draw: dr.draw, warm: dr.warm, warmAgoMs: dr.warmAgoMs }, resp, correct, rt: go.rt, sing: sung });
+    await cueSample(tpc);
+    return abort ? null : { correct };
+  }
+
+  const TRIAL = { cue: trCue, name: trName, imagine: trImagine, anchor: trAnchor, hold: trHold, twins: trTwins, triad: trTriad, tune: trTune, tri: trTri, pair: trPair, gut: trGut, tuner: trTuner, taghome: trTagHome, nhold: trNHold, key: trKey, knob: trKnob, flash: trFlash, voices: trVoices, wt: trWT, isng: trIsng };
 
   async function countdown(el, secs) {
     for (let s = secs; s > 0; s--) { if (abort) return; if (el) el.textContent = s; await sleep(1000); }
@@ -1180,7 +1376,7 @@ export function setupCalibrate(ctx) {
     const t0 = performance.now(); let skipped = false;
     stage(head("attune") + `
       <div class="cal-stage">
-        <div class="cal-hint">${anchorMode() === "fixed" ? "your home note" : "today's note · rotates daily, weakest first"}</div>
+        <div class="cal-hint">${anchorMode() === "fixed" ? "your home note" : `today's note${anchorWhy()}`}</div>
         <div class="cal-big pulse" id="cal-anchor">${PC[run.anchor]}</div>
         <div class="cal-say">Breathe. Let it settle in — hum it quietly.</div>
         <div class="cal-hint">Note · its song tag · note. It's your anchor for today.</div>
@@ -1289,7 +1485,7 @@ export function setupCalibrate(ctx) {
     const all = await D.allData();
     const today = D.localDate(Date.now());
     const plan = D.makePlan(all);
-    dayAnchor = D.anchorOfDay(all, today, anchorMode());
+    dayAnchor = todayAnchor(all);
     const session = {
       id: newId("s"), kind: "calibration", schema: D.SCHEMA_VERSION, protocol: D.PROTOCOL,
       startedAt: Date.now(), localDate: today,
@@ -1475,16 +1671,55 @@ export function setupCalibrate(ctx) {
   // Each step leads into the next; any step can be paused or skipped. Warmups,
   // workbook and skips are journal sessions (kind "journal") — synced like
   // everything else, but kept apart from the ear-training stats.
-  const ROUTINE = [
+  // The cold AP test and the calibration always come first; then Lucas's practice
+  // modules in HIS order, each on/off (⚙︎ Edit on the hub; pt.routine.cfg).
+  const FIXED = [
     { key: "aptest", icon: "🧪", title: "Cold AP test", sub: "5 notes · no score", start: () => startApTest() },
     { key: "calibration", icon: "🎯", title: "Daily calibration", sub: "~6½ min", start: () => startCalibration() },
-    { key: "warmup", icon: "🎹", title: "Alan Broadbent warmups", sub: "metronome + stopwatch · ~5 min", start: () => startWarmup() },
-    { key: "scales", icon: "🎼", title: "Alan scales", sub: "15-minute timer + metronome", start: () => startScales() },
-    { key: "earsong", icon: "🎧", title: "Learn a song by ear", sub: "non-jazz · 20-minute timer", start: () => startEarSong() },
-    { key: "jazztune", icon: "🎷", title: "Learn a jazz tune", sub: "transcription or by ear · guide tones + Alan scales", start: () => startJazzTune() },
-    { key: "workbook", icon: "📘", title: "Voicing workbook", sub: "30-minute timer", start: () => startWorkbook() },
-    { key: "misc", icon: "🧩", title: "Misc practice", sub: "your pick, your time · optional", optional: true, start: () => startMisc() },
   ];
+  const MODULES = {
+    wholetone: { icon: "⚪", title: "Whole-tone families", sub: "ear · 12 questions", ear: "wt", start: () => startEarModule("wholetone", "wt") },
+    intervals: { icon: "↕️", title: "Sing intervals", sub: "ear · 12 questions", ear: "isng", start: () => startEarModule("intervals", "isng") },
+    warmup: { icon: "🎹", title: "Alan Broadbent warmups", sub: "metronome + stopwatch · ~5 min", start: () => startWarmup() },
+    scales: { icon: "🎼", title: "Alan scales", sub: "3 of the 9 scales · 15 min", start: () => startScales() },
+    chorale: { icon: "⛪", title: "Bach chorale", sub: "next one in the key · 20 min", sessions: true, field: "chorale", start: () => startChorale() },
+    earsong: { icon: "🎧", title: "Learn a pop song by ear", sub: "suggestions in the key · 20 min", sessions: true, field: "song", start: () => startEarSong() },
+    jazztune: { icon: "🎷", title: "Learn a jazz tune", sub: "guide tones + Alan scales · 20 min", sessions: true, field: "tune", start: () => startJazzTune() },
+    transcribe: { icon: "✍️", title: "Transcribe language", sub: "rhythm changes or blues · 30 min", field: "source", start: () => startTranscribe() },
+    evans: { icon: "📗", title: "Bill Evans Omnibook", sub: "by ear first, then the book · 20 min", sessions: true, field: "tune", start: () => startEvans() },
+    compose: { icon: "🖋️", title: "Write a tune", sub: "a blues or anything · 20 min", sessions: true, field: "piece", start: () => startCompose() },
+    revisit: { icon: "🔁", title: "Revisit something old", sub: "old piece or transcription, new key · 30 min", field: "piece", start: () => startRevisit() },
+    workbook: { icon: "📘", title: "Voicing workbook", sub: "30-minute timer", start: () => startWorkbook() },
+    misc: { icon: "🧩", title: "Misc practice", sub: "your pick, your time · optional", optional: true, field: "task", start: () => startMisc() },
+  };
+  const DEFAULT_ORDER = ["wholetone", "intervals", "warmup", "scales", "chorale", "earsong", "jazztune", "transcribe", "evans", "compose", "revisit", "workbook", "misc"];
+  function routineCfg() {
+    let c = null; try { c = JSON.parse(localStorage.getItem("pt.routine.cfg")); } catch (_) {}
+    const order = (c && Array.isArray(c.order) ? c.order : []).filter((k) => MODULES[k]);
+    DEFAULT_ORDER.forEach((k) => { if (!order.includes(k)) order.push(k); });                 // new modules join at the end
+    return { order, off: new Set((c && c.off) || []) };
+  }
+  const saveRoutineCfg = (c) => { try { localStorage.setItem("pt.routine.cfg", JSON.stringify({ order: c.order, off: [...c.off] })); } catch (_) {} };
+  const routine = () => { const c = routineCfg(); return [...FIXED, ...c.order.filter((k) => !c.off.has(k)).map((k) => ({ key: k, ...MODULES[k] }))]; };
+  const stepOf = (key) => FIXED.find((r) => r.key === key) || (MODULES[key] ? { key, ...MODULES[key] } : null);
+  // ⚙︎ Edit the routine: order (↑/↓) and on/off. The calibration block stays first.
+  function renderRoutineEdit() {
+    clearTimers(); run = null;
+    const c = routineCfg();
+    const draw = () => {
+      root.innerHTML = `<div class="cal-ins">
+          <div class="cal-top"><button class="cal-x" id="re-back">‹</button><div class="cal-ins-h">Your routine</div><div style="width:2rem"></div></div>
+          <div class="cal-ins-sum">The cold AP test and the calibration always come first. Then these, in this order:</div>
+          <div class="re-list">${c.order.map((k, i) => { const m = MODULES[k]; return `<div class="re-row${c.off.has(k) ? " off" : ""}"><label><input type="checkbox" data-on="${k}" ${c.off.has(k) ? "" : "checked"}> ${m.icon} ${m.title}<i>${m.sub}</i></label><button data-up="${i}" ${i ? "" : "disabled"}>↑</button><button data-dn="${i}" ${i < c.order.length - 1 ? "" : "disabled"}>↓</button></div>`; }).join("")}</div>
+          <button class="cal-cta" id="re-done">Done</button>
+        </div>`;
+      root.querySelectorAll("[data-on]").forEach((b) => (b.onchange = () => { if (b.checked) c.off.delete(b.dataset.on); else c.off.add(b.dataset.on); saveRoutineCfg(c); draw(); }));
+      root.querySelectorAll("[data-up]").forEach((b) => (b.onclick = () => { const i = +b.dataset.up; [c.order[i - 1], c.order[i]] = [c.order[i], c.order[i - 1]]; saveRoutineCfg(c); draw(); }));
+      root.querySelectorAll("[data-dn]").forEach((b) => (b.onclick = () => { const i = +b.dataset.dn; [c.order[i + 1], c.order[i]] = [c.order[i], c.order[i + 1]]; saveRoutineCfg(c); draw(); }));
+      $("#re-back").onclick = () => enter(); $("#re-done").onclick = () => enter();
+    };
+    draw();
+  }
   // Journal entries belong to the day they STARTED (a timer closed days later used
   // to land on the closing day).
   const dayOf = (x) => (D.kindOf(x) === "journal" && x.startedAt ? D.localDate(x.startedAt) : x.localDate || D.localDate(x.startedAt));
@@ -1500,12 +1735,13 @@ export function setupCalibrate(ctx) {
     return st;
   }
   // Optional steps (Misc) never hold up "routine done".
-  const nextStep = (st) => ROUTINE.find((r) => !r.optional && st[r.key] !== "done" && st[r.key] !== "skipped") || null;
-  const MISC = () => ROUTINE.find((r) => r.key === "misc");
+  const nextStep = (st) => routine().find((r) => !r.optional && st[r.key] !== "done" && st[r.key] !== "skipped") || null;
+  const MISC = () => stepOf("misc");
   async function logJournal(item, fields) {
     const now = Date.now();
     const f = { ...fields };
     if (f.activeSec != null && f.activeSec > capSec(f)) { f.rawSec = f.activeSec; f.activeSec = capSec(f); f.capped = true; }
+    const kw = KW(); if (kw && f.key === undefined) f.key = kw.tonic;                 // which key-of-the-week it counted toward
     await D.putSession({ id: newId("j"), kind: "journal", item, schema: D.SCHEMA_VERSION, protocol: D.PROTOCOL, localDate: D.localDate(f.startedAt || now), startedAt: f.startedAt || now, endedAt: now, device: D.deviceInfo(), ...f }).catch(() => {});
     D.syncAll().then(noteSync).catch(() => {});
   }
@@ -1513,7 +1749,7 @@ export function setupCalibrate(ctx) {
   // Between steps: "✓ done — next: …" with Start / Skip / Hub.
   async function routineNext(fromKey) {
     clearTimers(); run = null;
-    const data = await D.allData(), st = routineStatus(data.sessions), nx = nextStep(st), from = ROUTINE.find((r) => r.key === fromKey);
+    const data = await D.allData(), st = routineStatus(data.sessions), nx = nextStep(st), from = stepOf(fromKey);
     const fromTxt = from ? `${st[fromKey] === "skipped" ? "⏭ Skipped" : "✓ Done"}: ${from.title}` : "";
     if (!nx) {
       root.innerHTML = `<div class="cal-stage cal-finish">
@@ -1540,7 +1776,7 @@ export function setupCalibrate(ctx) {
     $("#rt-go").onclick = () => nx.start(); $("#rt-skip").onclick = () => skipStep(nx.key); $("#rt-hub").onclick = () => enter();
   }
   function routineList(st, clickable = false) {
-    return `<div class="rt-list">${ROUTINE.map((r) => {
+    return `<div class="rt-list">${routine().map((r) => {
       const s2 = st[r.key], mark = s2 === "done" ? "✓" : s2 === "skipped" ? "⏭" : "○";
       const inner = `<span class="rt-m">${mark}</span><span class="rt-i">${r.icon}</span><span class="rt-t">${r.title}<i>${r.sub}</i></span>`;
       if (!clickable) return `<div class="rt-row ${s2 || "todo"}">${inner}</div>`;
@@ -1633,6 +1869,7 @@ export function setupCalibrate(ctx) {
     root.innerHTML = `<div class="cal-stage jr">
         <div class="cal-top"><button class="cal-x" id="jr-x">✕</button><div style="flex:1"></div></div>
         <div class="cal-kicker">🎹 Alan Broadbent warmups</div>
+        ${KW() ? `<div class="kw-banner">🔑 ${KW().label} — warm up in this key</div>` : ""}
         <div class="jr-clock" id="jr-clock">0:00</div>
         <div class="cal-hint">stopwatch · no alarm</div>
         ${mp.html}
@@ -1664,6 +1901,7 @@ export function setupCalibrate(ctx) {
     root.innerHTML = `<div class="cal-stage jr">
         <div class="cal-top"><button class="cal-x" id="jr-x">✕</button><div style="flex:1"></div></div>
         <div class="cal-kicker">${cfg.icon} ${cfg.title}</div>
+        ${KW() ? `<div class="kw-banner">🔑 ${KW().label}${cfg.keyTip ? ` — ${cfg.keyTip}` : ""}</div>` : ""}
         ${cfg.top || ""}
         <div class="jr-clock" id="jr-clock">${cfg.minutes}:00</div>
         <div class="cal-hint" id="jr-sub">of <span id="jr-target">${cfg.minutes}</span> min</div>
@@ -1702,10 +1940,17 @@ export function setupCalibrate(ctx) {
   }
 
   // Voicing workbook: 30 minutes, with the metronome (off by default).
-  const startWorkbook = () => startCountdown({ item: "workbook", icon: "📘", title: "Voicing workbook", minutes: 30, metKey: "pt.journal.bpm.workbook", notePh: "Notes (optional) — pages, voicings, what clicked" });
+  const startWorkbook = () => startCountdown({ item: "workbook", icon: "📘", title: "Voicing workbook", minutes: 30, metKey: "pt.journal.bpm.workbook", keyTip: "take today's voicings into this key", notePh: "Notes (optional) — pages, voicings, what clicked" });
 
   // 🎼 Alan scales: 15 minutes with the metronome on (its own remembered tempo).
-  const startScales = () => startCountdown({ item: "scales", icon: "🎼", title: "Alan scales", minutes: 15, metKey: "pt.journal.bpm.scales", metOn: true, notePh: "Notes (optional) — which scales, keys, tempo" });
+  // From Alan Broadbent's "Jazz Scales for Chords": three of the nine a day, on I, ii
+  // and V of the key of the week (or C), so all nine come round every three days.
+  function startScales() {
+    const kw = KW(), tonic = kw ? kw.tonic : "C", today = Math.floor(Date.now() / 86400000), list = PD.scalesForDay(tonic, today);
+    return startCountdown({ item: "scales", icon: "🎼", title: "Alan scales", minutes: 15, metKey: "pt.journal.bpm.scales", metOn: true, notePh: "Notes (optional) — which scales, tempo, what was shaky",
+      top: `<div class="es-rem sc-today"><div class="cal-hint">Today's three${kw ? "" : " (in C — or any key)"}:</div>${list.map((x, i) => `<label><input type="checkbox" id="sc-${i}"> <b>${x.label}</b> · ${x.name}</label>`).join("")}</div>`,
+      logExtra: () => ({ scales: list.map((x) => x.label + " " + x.name), scalesDone: list.filter((_, i) => ($(`#sc-${i}`) || {}).checked).length, scaleKey: tonic }) });
+  }
 
   // Libraries of things practised over several sessions (songs, jazz tunes, misc
   // tasks): name, sessions, minutes, last date, ⭐ mastered. `field` is the name's
@@ -1727,6 +1972,7 @@ export function setupCalibrate(ctx) {
   async function startPicker(cfg) {
     abort = false; clearTimers(); run = null;
     const lib = practiceLibrary((await D.allData()).sessions, cfg.item, cfg.field), open = lib.filter((x) => !x.mastered), done = lib.filter((x) => x.mastered);
+    if (cfg.suggest) { const have = new Set(lib.map((x) => x.key)); cfg.suggest = cfg.suggest.filter((x) => !have.has(songKey(x))).slice(0, cfg.suggestMax || 99); }
     const when = (t) => new Date(t).toLocaleDateString([], { month: "short", day: "numeric" });
     const esc = (t) => t.replace(/</g, "&lt;"), q = (t) => t.replace(/"/g, "&quot;");
     let minutes = cfg.minutes, opt = null;
@@ -1736,6 +1982,8 @@ export function setupCalibrate(ctx) {
         <div class="cal-kicker">${cfg.icon} ${cfg.title}</div>
         <div class="cal-say">${cfg.say}</div>
         <input id="es-in" class="es-in" type="text" autocomplete="off" placeholder="${cfg.placeholder}">
+        ${KW() ? `<div class="kw-banner">🔑 ${KW().label}${cfg.keyTip ? ` — ${cfg.keyTip}` : ""}</div>` : ""}
+        ${cfg.suggest && cfg.suggest.length ? `<div class="es-ideas es-sug">${cfg.suggestLabel || "Suggestions"}: ${cfg.suggest.map((x) => `<button data-fill="${x.replace(/"/g, "&quot;")}">${x}</button>`).join("")}</div>` : ""}
         ${cfg.ideas ? `<div class="es-ideas">Ideas: ${cfg.ideas.map((a) => `<button data-artist="${a}">${a}</button>`).join("")}</div>` : ""}
         ${cfg.options ? `<div class="es-ideas es-opts">${cfg.options.label}: ${cfg.options.list.map((o) => `<button data-opt="${o}">${o}</button>`).join("")}</div>` : ""}
         ${cfg.durations ? `<div class="es-ideas es-dur">Time: ${cfg.durations.map((m) => `<button data-dur="${m}"${m === minutes ? ' class="on"' : ""}>${m} min</button>`).join("")}</div>` : ""}
@@ -1747,7 +1995,8 @@ export function setupCalibrate(ctx) {
     const inp = $("#es-in"), go = $("#es-go");
     const sync = () => { go.disabled = !inp.value.trim(); go.textContent = `▶ Start ${minutes} min`; root.querySelectorAll(".es-song").forEach((b) => b.classList.toggle("sel", songKey(b.dataset.song) === songKey(inp.value))); root.querySelectorAll("[data-dur]").forEach((b) => b.classList.toggle("on", +b.dataset.dur === minutes)); };
     inp.oninput = sync;
-    root.querySelectorAll("[data-artist]").forEach((b) => (b.onclick = () => { inp.value = ` — ${b.dataset.artist}`; inp.focus(); try { inp.setSelectionRange(0, 0); } catch (_) {} sync(); }));
+    root.querySelectorAll("[data-artist]").forEach((b) => (b.onclick = () => { if (cfg.ideaFill) inp.value = b.dataset.artist; else { inp.value = ` — ${b.dataset.artist}`; inp.focus(); try { inp.setSelectionRange(0, 0); } catch (_) {} } sync(); }));
+    root.querySelectorAll("[data-fill]").forEach((b) => (b.onclick = () => { inp.value = b.dataset.fill; sync(); }));
     root.querySelectorAll("[data-opt]").forEach((b) => (b.onclick = () => { opt = b.dataset.opt; root.querySelectorAll("[data-opt]").forEach((x) => x.classList.toggle("on", x === b)); }));
     root.querySelectorAll("[data-dur]").forEach((b) => (b.onclick = () => { minutes = +b.dataset.dur; sync(); }));
     root.querySelectorAll(".es-song").forEach((b) => (b.onclick = () => { inp.value = b.dataset.song; if (cfg.durations && +b.dataset.min) minutes = +b.dataset.min; sync(); }));
@@ -1756,7 +2005,7 @@ export function setupCalibrate(ctx) {
     go.onclick = () => {
       const name = inp.value.trim().replace(/^—\s*/, ""); if (!name) return;
       const prev = lib.find((x) => x.key === songKey(name)), n = (prev ? prev.sessions : 0) + 1, F = cfg.field;
-      startCountdown({ item: cfg.item, icon: cfg.icon, title: cfg.title, minutes, metKey: cfg.metKey, metOn: cfg.metOn, notePh: cfg.notePh,
+      startCountdown({ item: cfg.item, icon: cfg.icon, title: cfg.title, minutes, metKey: cfg.metKey, metOn: cfg.metOn, notePh: cfg.notePh, keyTip: cfg.keyTip,
         top: `<div class="es-now"><b>${esc(name)}</b><span>${cfg.goal ? `session ${n}${prev && prev.mastered ? " · ⭐ already mastered" : ` ${cfg.goal}`}` : `time #${n}`}${opt ? ` · ${opt}` : ""}</span></div>${cfg.reminders ? `<div class="es-rem">${cfg.reminders.map(([id, t]) => `<label><input type="checkbox" id="${id}"> ${t}</label>`).join("")}</div>` : ""}`,
         bottom: cfg.masterable ? `<label class="es-mast"><input type="checkbox" id="es-mast" ${prev && prev.mastered ? "checked" : ""}> ⭐ I've got it — mark mastered</label>` : "",
         logExtra: () => {
@@ -1770,16 +2019,70 @@ export function setupCalibrate(ctx) {
   }
   // 🎧 Learn a song by ear (non-jazz), 20 minutes; aim 2–3 sessions per song or ⭐ mastered.
   const SONG_IDEAS = ["Elton John", "Stevie Wonder", "Tame Impala", "Mac DeMarco", "Pink Floyd"];
-  const startEarSong = () => startPicker({ item: "earsong", field: "song", icon: "🎧", title: "Learn a song by ear", say: "Non-jazz. 20 minutes. What are you learning?",
+  const startEarSong = () => { const kw = KW(), sug = kw ? PD.popInKey(kw) : []; return startPicker({ item: "earsong", field: "song", icon: "🎧", title: "Learn a pop song by ear", say: "Non-jazz. 20 minutes. What are you learning?",
     placeholder: "Song — Artist", ideas: SONG_IDEAS, libLabel: "Keep working on", goal: "of ~2–3", masterable: true, minutes: 20,
-    notePh: "Notes (optional) — sections, key, chords, what you figured out" });
+    suggest: sug.map((x) => `${x.title} — ${x.artist}`), suggestLabel: kw ? `In ${kw.tonic} major / ${kw.minor} (keys from memory — check)` : "",
+    keyTip: kw && !sug.length ? `no song on the list is in ${kw.tonic} — learn any song, then play it in ${kw.tonic}` : "",
+    notePh: "Notes (optional) — sections, key, chords, what you figured out" }); };
   // 🎷 Learn a jazz tune — from a transcription and/or by ear — with guide tones and
   // the right Alan scales through the whole tune (both ticked off and logged).
   const startJazzTune = () => startPicker({ item: "jazztune", field: "tune", icon: "🎷", title: "Learn a jazz tune", say: "Which tune? From a transcription, by ear, or both.",
-    placeholder: "Tune (e.g. Stella by Starlight)", options: { label: "How", field: "method", list: ["Transcription", "By ear", "Both"] }, libLabel: "Keep working on", goal: "of ~2–3", masterable: true, minutes: 20,
-    reminders: [["jt-gt", "🎯 Guide tones (3rds &amp; 7ths) through the whole tune", "guideTones"], ["jt-as", "🎼 The right Alan scales through every chord", "alanScales"]],
+    placeholder: "Tune (e.g. Stella by Starlight)", suggest: [...PD.TUNES_LEARN, ...PD.TUNES_KINDA], suggestMax: 6, suggestLabel: "From your list (need to learn → kinda know)", options: { label: "How", field: "method", list: ["Transcription", "By ear", "Both"] }, libLabel: "Keep working on", goal: "of ~2–3", masterable: true, minutes: 20,
+    reminders: [["jt-gt", "🎯 Guide tones (3rds &amp; 7ths) through the whole tune", "guideTones"], ["jt-as", "🎼 The right Alan scales through every chord", "alanScales"], ...(KW() ? [["jt-ik", `🔑 Also in ${KW().tonic} (if time permits)`, "inKey"]] : [])],
     notePh: "Notes (optional) — sections, changes, licks, what's still shaky" });
   // 🧩 Misc: anything, your time (5–45 min), metronome available; past tasks pop up with how often.
+  // ✍️ Transcribe language over rhythm changes or blues (you pick each day), 30 min.
+  const startTranscribe = () => startPicker({ item: "transcribe", field: "source", icon: "✍️", title: "Transcribe language", say: "Over rhythm changes or blues — whose solo?",
+    placeholder: "e.g. Sonny Stitt — The Eternal Triangle", options: { label: "Over", field: "form", list: ["Rhythm changes", "Blues"] }, libLabel: "Before", minutes: 30,
+    reminders: [["tr-lick", KW() ? `🔑 Take one lick into ${KW().tonic}` : "Take one lick through a few keys", "lickInKey"]], notePh: "Notes (optional) — licks, bars, where they sit" });
+  // 📗 Bill Evans Omnibook: try it by ear first, then check with the book.
+  const startEvans = () => startPicker({ item: "evans", field: "tune", icon: "📗", title: "Bill Evans Omnibook", say: "Which tune? By ear first, then check with the book.",
+    placeholder: "e.g. Waltz for Debby", libLabel: "Keep working on", goal: "of ~2–3", masterable: true, minutes: 20,
+    reminders: [["ev-ear", "👂 By ear first — no book", "byEar"], ["ev-chk", "📗 Then check it against the Omnibook", "checked"], ...(KW() ? [["ev-key", `🔑 Take a phrase into ${KW().tonic}`, "inKey"]] : [])],
+    notePh: "Notes (optional) — what you heard right, what the book showed" });
+  // 🖋️ Write a tune: a blues or anything — just dedicated time.
+  const startCompose = () => startPicker({ item: "compose", field: "piece", icon: "🖋️", title: "Write a tune", say: "A blues, a contrafact, anything. Name it (a working title is fine).",
+    placeholder: KW() ? `e.g. Blues in ${KW().tonic}` : "e.g. Blues in F", ideas: ["Blues", "Rhythm changes contrafact", "Ballad", "Waltz", "Pop song"], ideaFill: true, libLabel: "Keep writing", goal: "of ~2–3", masterable: true, minutes: 20,
+    keyTip: "write it in this key", notePh: "Notes (optional) — form, idea, what's next" });
+  // 🔁 Revisit something old: a childhood classical piece, an old transcription into a new key…
+  const startRevisit = () => startPicker({ item: "revisit", field: "piece", icon: "🔁", title: "Revisit something old", say: "Relearn something you used to play, or take an old transcription to a new key.",
+    placeholder: "e.g. Bach Invention 8 · my Kelly transcription", ideas: ["Classical piece I played as a kid", "Old transcription → new key", "A song I learned by ear"], ideaFill: true, libLabel: "Before", minutes: 30,
+    keyTip: "take it into this key", notePh: "Notes (optional)" });
+  // ⛪ Bach chorale (bach-chorales.com): the next one in the key of the week (major, then
+  // relative minor; Riemenschneider order), "↻ another", or redo one from before.
+  async function startChorale() {
+    abort = false; clearTimers(); run = null;
+    const S = (await D.allData()).sessions, lib = practiceLibrary(S, "chorale", "chorale"), done = new Set(lib.map((x) => x.key));
+    const kw = KW(); let skip = 0, cur = null;
+    const pick2 = () => { cur = PD.nextChorale(new Set(S.filter((x) => x.item === "chorale" && x.bwv).map((x) => x.bwv)), kw, skip); };
+    pick2();
+    const draw = () => {
+      root.innerHTML = `<div class="cal-stage jr">
+          <div class="cal-top"><button class="cal-x" id="es-x">✕</button><div style="flex:1"></div></div>
+          <div class="cal-kicker">⛪ Bach chorale</div>
+          ${kw ? `<div class="kw-banner">🔑 ${kw.label}</div>` : ""}
+          ${cur ? `<div class="ch-card"><b>BWV ${cur.bwv}</b><span>${cur.title}</span><i>${cur.key} ${cur.minor ? "minor" : "major"}${cur.r ? ` · Riemenschneider ${cur.r}` : ""}</i>
+            <a href="${cur.href}" target="_blank" rel="noopener" id="ch-open">Open the score ↗</a></div>
+            ${kw && !(cur.minor ? cur.pc === kw.minorPc : cur.pc === kw.pc) ? `<div class="cal-hint">No more chorales in ${kw.tonic} major / ${kw.minor} — this one's in another key: learn it, then play it in ${kw.tonic}.</div>` : ""}` : `<div class="cal-hint">You've done them all!</div>`}
+          <button class="cal-cta" id="ch-go"${cur ? "" : " disabled"}>▶ Start 20 min</button>
+          <button class="cal-cta ghost-cta" id="ch-next">↻ Another one</button>
+          ${lib.length ? `<div class="cal-sec" style="margin:1rem 0 0.4rem">Redo one from before</div>${lib.map((x) => `<button class="es-song" data-redo="${x.key}"><b>${x.name.replace(/</g, "&lt;")}</b><span>${x.mastered ? "⭐ mastered · " : ""}${x.sessions} session${x.sessions === 1 ? "" : "s"}</span></button>`).join("")}` : ""}
+          <button class="cal-cta ghost-cta" id="es-skip">⏭ Skip today</button>
+        </div>`;
+      $("#es-x").onclick = () => enter(); $("#es-skip").onclick = () => skipStep("chorale");
+      $("#ch-next").onclick = () => { skip++; pick2(); draw(); };
+      root.querySelectorAll("[data-redo]").forEach((b) => (b.onclick = () => { const e = S.filter((x) => x.item === "chorale" && (x.choraleKey || songKey(x.chorale)) === b.dataset.redo).pop(); cur = e && PD.CHORALES.find((c) => c.bwv === e.bwv) || cur; skip = 0; draw(); }));
+      $("#ch-go").onclick = () => {
+        if (!cur) return;
+        const c = cur, prev = lib.find((x) => x.key === songKey(c.label)), n = (prev ? prev.sessions : 0) + 1;
+        startCountdown({ item: "chorale", icon: "⛪", title: "Bach chorale", minutes: 20, notePh: "Notes (optional) — voices learned, bars, what's hard",
+          top: `<div class="es-now"><b>BWV ${c.bwv} · ${c.title}</b><span>${c.key} ${c.minor ? "minor" : "major"} · session ${n} · <a href="${c.href}" target="_blank" rel="noopener">score ↗</a></span></div>`,
+          bottom: `<label class="es-mast"><input type="checkbox" id="es-mast" ${prev && prev.mastered ? "checked" : ""}> ⭐ I can play it — mark learned</label>`,
+          logExtra: () => { const m = !!($("#es-mast") || {}).checked; return { chorale: c.label, choraleKey: songKey(c.label), choraleSession: n, bwv: c.bwv, href: c.href, choraleTonic: c.key, choraleMinor: c.minor, mastered: m, unmastered: !!(prev && prev.mastered && !m) }; } });
+      };
+    };
+    draw();
+  }
   const startMisc = () => startPicker({ item: "misc", field: "task", icon: "🧩", title: "Misc practice", say: "What do you want to practise?",
     placeholder: "e.g. Comping in 12 keys", libLabel: "Done before", durations: [5, 10, 15, 20, 30, 45], minutes: 15, metKey: "pt.journal.bpm.misc", metOn: false,
     notePh: "Notes (optional)" });
@@ -1787,32 +2090,35 @@ export function setupCalibrate(ctx) {
   // 📓 Practice journal: the routine day by day (no AP-test scores, by request).
   async function renderJournal() {
     clearTimers();
-    const data = await D.allData(), S = data.sessions;
+    const data = await D.allData(), S = data.sessions, cfg = routineCfg();
     const days = [...new Set(S.map(dayOf))].sort().reverse().slice(0, 21);
     const wk = Date.now() - 7 * 86400000, J = S.filter((x) => D.kindOf(x) === "journal");
-    const mins = (arr) => Math.round(arr.reduce((a, x) => a + practSec(x), 0) / 60), lib = songLibrary(S);
+    const mins = (arr) => Math.round(arr.reduce((a, x) => a + practSec(x), 0) / 60);
     const drillMin = (arr) => Math.round(arr.reduce((a, x) => a + (x.durSec || 0), 0) / 60);
-    let streak = 0; for (const d of [...new Set(S.map(dayOf))].sort().reverse()) { const st = routineStatus(S, d); if (ROUTINE.every((r) => r.optional || st[r.key] === "done")) streak++; else if (d !== D.localDate(Date.now())) break; }
+    const esc = (t) => String(t).replace(/</g, "&lt;");
+    let streak = 0; for (const d of [...new Set(S.map(dayOf))].sort().reverse()) { const st = routineStatus(S, d); if (routine().every((r) => r.optional || st[r.key] === "done")) streak++; else if (d !== D.localDate(Date.now())) break; }
     const row = (d) => {
-      const st = routineStatus(S, d), td = S.filter((x) => dayOf(x) === d);
-      const wu = td.filter((x) => x.item === "warmup" && !x.skipped), wb = td.filter((x) => x.item === "workbook" && !x.skipped), dr = td.filter((x) => D.kindOf(x) === "drill");
-      const es = td.filter((x) => x.item === "earsong" && !x.skipped && x.song);
-      const libChip = (item, field, label, icon) => {
-        const xs = td.filter((x) => x.item === item && !x.skipped && x[field]);
-        if (!xs.length) return chip(item, label);
-        const names = [...new Map(xs.map((x) => [x[`${field}Key`] || songKey(x[field]), x])).values()].map((x) => { const same = xs.filter((y) => (y[`${field}Key`] || songKey(y[field])) === (x[`${field}Key`] || songKey(x[field]))); return `${x[field].replace(/</g, "&lt;")}${same.length > 1 ? ` ×${same.length}` : ""}${same.some((y) => y.mastered) ? " ⭐" : ""}`; });
-        return chip(item, `${icon} ${names.join(", ")} ${fmt(xs.reduce((a, x) => a + practSec(x), 0) * 1000)}`);
-      };
-      const sc = td.filter((x) => x.item === "scales" && !x.skipped);
-      const notes = td.filter((x) => D.kindOf(x) === "journal" && x.note).map((x) => `<div class="jr-n">${({ warmup: "🎹", earsong: "🎧", scales: "🎼", jazztune: "🎷", misc: "🧩" })[x.item] || "📘"} ${x.note.replace(/</g, "&lt;")}</div>`).join("");
+      const st = routineStatus(S, d), td = S.filter((x) => dayOf(x) === d), dr = td.filter((x) => D.kindOf(x) === "drill");
       const chip = (k, label) => `<span class="jr-chip ${st[k] || "todo"}">${st[k] === "done" ? "✓" : st[k] === "skipped" ? "⏭" : "○"} ${label}</span>`;
-      return `<div class="jr-day"><div class="jr-d">${new Date(d + "T12:00:00").toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}</div>
-          <div class="jr-chips">${chip("aptest", "AP test")}${chip("calibration", "Calibration")}${chip("warmup", wu.length ? `Warmups ${fmt(wu.reduce((a, x) => a + practSec(x), 0) * 1000)}${wu[0].bpm ? ` @${wu[wu.length - 1].bpm}` : ""}` : "Warmups")}${chip("scales", sc.length ? `Alan scales ${fmt(sc.reduce((a, x) => a + practSec(x), 0) * 1000)}${sc.at(-1).bpm && sc.at(-1).metronome ? ` @${sc.at(-1).bpm}` : ""}` : "Alan scales")}${chip("earsong", es.length ? `🎧 ${[...new Map(es.map((x) => [x.songKey || songKey(x.song), x])).values()].map((x) => { const same = es.filter((y) => (y.songKey || songKey(y.song)) === (x.songKey || songKey(x.song))); return `${x.song.replace(/</g, "&lt;")}${same.length > 1 ? ` ×${same.length}` : ""}${same.some((y) => y.mastered) ? " ⭐" : ""}`; }).join(", ")} ${fmt(es.reduce((a, x) => a + practSec(x), 0) * 1000)}` : "Song by ear")}${libChip("jazztune", "tune", "Jazz tune", "🎷")}${chip("workbook", wb.length ? `Workbook ${fmt(wb.reduce((a, x) => a + practSec(x), 0) * 1000)}` : "Workbook")}${td.some((x) => x.item === "misc" && !x.skipped && x.task) ? libChip("misc", "task", "Misc", "🧩") : ""}${dr.length ? `<span class="jr-chip extra">🏋️ ${dr.length} drill${dr.length > 1 ? "s" : ""} · ${drillMin(dr)}m</span>` : ""}</div>${notes}</div>`;
+      // One chip per module that's in the routine (or was done that day): names, time, details.
+      const modChip = (k) => {
+        const m = MODULES[k], xs = td.filter((x) => x.item === k && !x.skipped);
+        if (!xs.length) return cfg.off.has(k) || m.optional ? (st[k] ? chip(k, m.title) : "") : chip(k, m.title);
+        const f = m.field, t = fmt(xs.reduce((a, x) => a + practSec(x), 0) * 1000);
+        const names = f ? [...new Map(xs.filter((x) => x[f]).map((x) => [x[`${f}Key`] || songKey(x[f]), x])).values()].map((x) => { const same = xs.filter((y) => y[f] && (y[`${f}Key`] || songKey(y[f])) === (x[`${f}Key`] || songKey(x[f]))); return `${esc(x[f])}${same.length > 1 ? ` ×${same.length}` : ""}${same.some((y) => y.mastered) ? " ⭐" : ""}`; }).join(", ") : "";
+        const last = xs.at(-1), extra = last.bpm && last.metronome !== false && (k === "warmup" || last.metronome) ? ` @${last.bpm}` : last.n ? ` · ${last.k}/${last.n}` : "";
+        return chip(k, `${m.icon} ${names || m.title} ${m.ear ? "" : t}${extra}`);
+      };
+      const notes = td.filter((x) => D.kindOf(x) === "journal" && x.note).map((x) => `<div class="jr-n">${(MODULES[x.item] || {}).icon || "📝"} ${esc(x.note)}</div>`).join("");
+      return `<div class="jr-day"><div class="jr-d">${new Date(d + "T12:00:00").toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}${td.find((x) => x.key) ? ` <span class="jr-kw">🔑 ${td.find((x) => x.key).key}</span>` : ""}</div>
+          <div class="jr-chips">${chip("aptest", "AP test")}${chip("calibration", "Calibration")}${cfg.order.map(modChip).join("")}${dr.length ? `<span class="jr-chip extra">🏋️ ${dr.length} drill${dr.length > 1 ? "s" : ""} · ${drillMin(dr)}m</span>` : ""}</div>${notes}</div>`;
     };
+    const weekTot = cfg.order.map((k) => [MODULES[k], mins(J.filter((x) => x.item === k && x.startedAt >= wk))]).filter(([, n]) => n).map(([m, n]) => `${n}m ${m.title.toLowerCase()}`);
+    const libs = cfg.order.filter((k) => MODULES[k].field).map((k) => [MODULES[k], practiceLibrary(S, k, MODULES[k].field)]).filter(([, L]) => L.length);
     root.innerHTML = `<div class="cal-ins">
         <div class="cal-top"><button class="cal-x" id="jr-back">‹</button><div class="cal-ins-h">Practice journal</div><div style="width:2rem"></div></div>
-        <div class="cal-ins-sum">This week: ${mins(J.filter((x) => x.item === "warmup" && x.startedAt >= wk))}m warmups · ${mins(J.filter((x) => x.item === "scales" && x.startedAt >= wk))}m Alan scales · ${mins(J.filter((x) => x.item === "earsong" && x.startedAt >= wk))}m songs by ear · ${mins(J.filter((x) => x.item === "jazztune" && x.startedAt >= wk))}m jazz tunes · ${mins(J.filter((x) => x.item === "misc" && x.startedAt >= wk))}m misc · ${mins(J.filter((x) => x.item === "workbook" && x.startedAt >= wk))}m workbook · ${drillMin(S.filter((x) => D.kindOf(x) === "drill" && x.startedAt >= wk))}m drills · 🔥 full routine ${streak} day${streak === 1 ? "" : "s"} in a row</div>
-        ${[[lib, "Songs by ear", "aim: 2–3 sessions each"], [practiceLibrary(S, "jazztune", "tune"), "Jazz tunes", "guide tones + Alan scales"], [practiceLibrary(S, "misc", "task"), "Misc", "how often you've done each"]].filter(([L]) => L.length).map(([L, h, sub]) => `<div class="cal-sec">${h} <span>${sub}</span></div><div class="es-lib">${L.map((x) => `<div class="${x.mastered ? "mastered" : ""}"><b>${x.name.replace(/</g, "&lt;")}</b><span>${x.mastered ? "⭐ mastered · " : ""}${x.sessions} ${h === "Misc" ? (x.sessions === 1 ? "time" : "times") : x.sessions === 1 ? "session" : "sessions"} · ${Math.round(x.sec / 60)}m</span></div>`).join("")}</div>`).join("")}
+        <div class="cal-ins-sum">This week: ${[...weekTot, `${drillMin(S.filter((x) => D.kindOf(x) === "drill" && x.startedAt >= wk))}m drills`].join(" · ")} · 🔥 full routine ${streak} day${streak === 1 ? "" : "s"} in a row</div>
+        ${libs.map(([m, L]) => `<div class="cal-sec">${m.title}</div><div class="es-lib">${L.map((x) => `<div class="${x.mastered ? "mastered" : ""}"><b>${esc(x.name)}</b><span>${x.mastered ? "⭐ mastered · " : ""}${x.sessions} ${m.sessions ? (x.sessions === 1 ? "session" : "sessions") : x.sessions === 1 ? "time" : "times"} · ${Math.round(x.sec / 60)}m</span></div>`).join("")}</div>`).join("")}
         ${days.length ? `<div class="cal-sec">Days</div>` : ""}
         ${days.length ? days.map(row).join("") : `<div class="cal-hint">Nothing yet — start today's routine from the hub.</div>`}
         <div class="cal-ins-m">AP test scores stay hidden here by request; they're still saved for analysis.</div>
@@ -1853,13 +2159,15 @@ export function setupCalibrate(ctx) {
     else if (run.recent.filter((x) => !x).length >= 2) { if (setLevel(run.level - 1, "autoDown")) toast(`⬇ Level ${run.level}`); run.recent = []; }
   }
 
-  async function startDrill(skill) {
-    const p = prepAudio(skill === "imagine");
+  // An ear module in the routine = a drill set of `target` questions, then on to the next module.
+  const startEarModule = (key, skill) => startDrill(skill, { target: 12, routineKey: key });
+  async function startDrill(skill, opts = {}) {
+    const p = prepAudio(["imagine", "voices", "wt", "isng"].includes(skill));
     root.innerHTML = `<div class="cal-stage cal-trans"><div class="cal-big">${META[skill].icon}</div><div class="cal-say">${TITLE[skill]}…</div></div>`;
     await p;
     const data = await D.allData();
     const plan = D.makePlan(data), level = drillLevel(skill, plan, data.sessions);
-    dayAnchor = D.anchorOfDay(data, D.localDate(Date.now()), anchorMode());
+    dayAnchor = todayAnchor(data);
     const session = { id: newId("d"), kind: "drill", skill, schema: D.SCHEMA_VERSION, protocol: D.PROTOCOL, startedAt: Date.now(),
       localDate: D.localDate(Date.now()), startLevel: level, events: [], completed: false, sing: singOn(), device: D.deviceInfo(), anchorPc: dayAnchor };
     await D.putSession(session);
@@ -1876,6 +2184,7 @@ export function setupCalibrate(ctx) {
         if (r.correct) { run.k++; run.streak++; run.best = Math.max(run.best, run.streak); } else run.streak = 0;
         adapt(r.correct);
       }
+      if (opts.target && run.n >= opts.target) { run.intent = "target"; break; }
       if (run.n % 12 === 0) {                                     // check-in: keep going / next drill / score over time
         const ck = await checkpoint();
         if (abort || ck == null) break;
@@ -1892,6 +2201,10 @@ export function setupCalibrate(ctx) {
     const intent = run.intent || "end", nextSkill = run.nextSkill;
     const s = await endDrill(intent);
     if (intent === "exit") return;
+    if (intent === "target" && opts.routineKey) {
+      await logJournal(opts.routineKey, { completed: true, startedAt: s.startedAt, activeSec: s.durSec, skill, n: s.graded, k: s.k, level: s.endLevel });
+      return routineNext(opts.routineKey);
+    }
     if (intent === "switch") return showPicker(skill);
     if (intent === "next" && nextSkill) return startDrill(nextSkill);
     if (intent === "history") return renderInsights();
@@ -1998,7 +2311,7 @@ export function setupCalibrate(ctx) {
     try { data = await D.allData(); } catch (_) {}
     const coach = D.suggestDrills(data), plan = D.makePlan(data);
     const today = D.localDate(Date.now());
-    dayAnchor = D.anchorOfDay(data, today, anchorMode());
+    dayAnchor = todayAnchor(data);
     const calsToday = data.sessions.filter((s) => D.kindOf(s) === "calibration" && s.completed && (s.localDate || D.localDate(s.startedAt)) === today);
     const sumAcc = (s) => { let n = 0, k = 0; Object.values(s.summary || {}).forEach((r) => { n += r.n; k += r.k; }); return n ? k / n : null; };
     const since = Date.now() - 3 * 86400000;
@@ -2007,6 +2320,12 @@ export function setupCalibrate(ctx) {
     const lastCal = calsToday[calsToday.length - 1];
     const apToday = data.sessions.filter((x) => D.kindOf(x) === "aptest" && x.completed && (x.localDate || D.localDate(x.startedAt)) === today)[0] || null;
     const rst = routineStatus(data.sessions, today), rnx = nextStep(rst);
+    // This week in the key: chorales, tunes written, songs by ear, scale minutes, standards taken into it.
+    const kwNow = KW(), inWeek = kwNow ? data.sessions.filter((x) => D.kindOf(x) === "journal" && !x.skipped && dayOf(x) >= kwNow.start && dayOf(x) <= kwNow.end) : [];
+    const distinct = (item, f) => new Set(inWeek.filter((x) => x.item === item && x[f]).map((x) => x[`${f}Key`] || songKey(x[f]))).size;
+    const weekBits = kwNow ? [[distinct("chorale", "chorale"), "chorale"], [distinct("compose", "piece"), "tune written"], [distinct("earsong", "song"), "song by ear"],
+      [Math.round(inWeek.filter((x) => x.item === "scales").reduce((a, x) => a + practSec(x), 0) / 60), "min Alan scales"], [inWeek.filter((x) => x.item === "jazztune" && x.inKey).length, `standard in ${kwNow.tonic}`]].filter(([n]) => n) : [];
+    const weekLine = weekBits.map(([n, w]) => `${n} ${w}${n > 1 && !w.startsWith("min") ? "s" : ""}`).join(" · ");
     const top = coach.ranked[0];
     const fmtTime = (ms) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     root.innerHTML = `<div class="cal-hub">
@@ -2017,7 +2336,8 @@ export function setupCalibrate(ctx) {
         <div class="cal-sync top" id="cal-sync">☁️ checking sync…</div>
 
         <div class="rt-card">
-          <div class="chc-k">TODAY'S ROUTINE</div>
+          <div class="rt-head"><div class="chc-k">TODAY'S ROUTINE</div><button class="rt-edit" id="rt-edit">⚙︎ Edit</button></div>
+          ${kwNow ? `<div class="rt-key">🔑 ${kwNow.label} <span>week ${kwNow.week} · until ${new Date(kwNow.end + "T12:00:00").toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}</span></div>${weekLine ? `<div class="rt-week">${weekLine}</div>` : ""}` : ""}
           ${routineList(rst, true)}
           ${rnx ? `<button class="cal-cta" id="rt-next">▶ Next: ${rnx.icon} ${rnx.title}</button>` : `<div class="rt-done">🎉 Routine done — the rest is yours.</div><button class="cal-cta" id="rt-next">▶ 🧩 Misc practice</button>`}
         </div>
@@ -2026,7 +2346,7 @@ export function setupCalibrate(ctx) {
           <div class="chc-k">DAILY CALIBRATION</div>
           <div class="chc-t">${lastCal ? `✓ Done at ${fmtTime(lastCal.startedAt)}${sumAcc(lastCal) != null ? ` · ${pct(sumAcc(lastCal))}` : ""}` : "Today's reading"}</div>
           <div class="chc-s">${lastCal ? `Run it again — extra runs count as practice (run #${calsToday.length + 1}).` : "~6½ min · imagine & sing, tune the knob, song tags, naming, flash, neighbors, keys. Your clean daily data point."}</div>
-          <div class="chc-anchor">⚓ Today's note: <b>${PC[dayAnchor]}</b>${anchorMode() === "fixed" ? " (always C)" : " · rotates daily, weakest first"}</div>
+          <div class="chc-anchor">⚓ Today's note: <b>${PC[dayAnchor]}</b>${anchorWhy()}</div>
           <div class="chc-go">${lastCal ? "↻ Run again" : "▶ Start"}</div>
         </button>
 
@@ -2042,25 +2362,33 @@ export function setupCalibrate(ctx) {
         </div>
 
         <div class="cal-sec">Drills <span>endless · adaptive · ⚓ anchor checks pop up anytime</span></div>
-        <div class="hub-cards">${[...D.FAVORITES.filter((x) => D.DRILLS.includes(x)), ...D.DRILLS.filter((x) => !D.FAVORITES.includes(x))].map((sk) => drillCard(sk, !coach.calibrateFirst && sk === top.skill ? "suggested" : "", `${D.FAVORITES.includes(sk) ? "⭐ " : ""}L${drillLevel(sk, plan, data.sessions)}${recentAcc(sk) != null ? ` · ${pct(recentAcc(sk))}` : ""}`)).join("")}</div>
+        ${(() => { const card2 = (sk) => drillCard(sk, !coach.calibrateFirst && sk === top.skill ? "suggested" : "", `${D.FAVORITES.includes(sk) ? "⭐ " : ""}L${drillLevel(sk, plan, data.sessions)}${recentAcc(sk) != null ? ` · ${pct(recentAcc(sk))}` : ""}`);
+          const all = [...D.FAVORITES.filter((x) => D.DRILLS.includes(x)), ...D.DRILLS.filter((x) => !D.FAVORITES.includes(x))];
+          // Nov 13: the ones he doesn't use (or found weak) are folded away, not deleted.
+          return `<div class="hub-cards">${all.filter((x) => !D.TUCKED.includes(x)).map(card2).join("")}</div><details class="more-drills"><summary>More drills (${all.filter((x) => D.TUCKED.includes(x)).length})</summary><div class="hub-cards">${all.filter((x) => D.TUCKED.includes(x)).map(card2).join("")}</div></details>`; })()}
 
         <div class="cal-sec">You</div>
         <button class="cal-cta ghost-cta" id="hub-model">📊 Your ear model & data</button>
         <button class="cal-cta ghost-cta" id="hub-journal">📓 Practice journal</button>
         <label class="cal-toggle"><input type="checkbox" id="cal-sing" ${singOn() ? "checked" : ""}> 🎤 Sing in “Imagine” (mic measures your inner pitch)</label>
-        <label class="cal-toggle"><input type="checkbox" id="cal-fixc" ${anchorMode() === "fixed" ? "checked" : ""}> ⚓ Always use C as the anchor (instead of a daily note)</label>
+        <label class="cal-toggle"><input type="checkbox" id="kw-on" ${keyWeekOn() ? "checked" : ""}> 🔑 Key of the week (every practice module + today's anchor note)</label>
+        ${keyWeekOn() ? `<label class="cal-toggle">This week's key: <select id="kw-key"><option value="">auto (${PD.keyOfWeek(today).tonic})</option>${PD.KEY_ORDER.map((k) => `<option value="${k}"${keyOverride() === k ? " selected" : ""}>${k} major</option>`).join("")}</select></label>`
+          : `<label class="cal-toggle"><input type="checkbox" id="cal-fixc" ${anchorMode() === "fixed" ? "checked" : ""}> ⚓ Always use C as the anchor (instead of a daily note)</label>`}
         <div class="cal-foot">Everything is logged on this device as you go, and synced to your account when you’re signed in. Export from “Your ear model” when you want me to analyze it.</div>
       </div>`;
     $("#hub-exit").onclick = () => { exit(); if (ctx.goHome) ctx.goHome(); };
     $("#hub-cal").onclick = () => startCalibration();
-    root.querySelectorAll("[data-rt]").forEach((b) => (b.onclick = () => ROUTINE.find((r) => r.key === b.dataset.rt).start()));
+    root.querySelectorAll("[data-rt]").forEach((b) => (b.onclick = () => stepOf(b.dataset.rt).start()));
+    const red = $("#rt-edit"); if (red) red.onclick = () => renderRoutineEdit();
     root.querySelectorAll("[data-skip]").forEach((b) => (b.onclick = async () => { await logJournal(b.dataset.skip, { skipped: true, completed: false }); enter({ skipSync: true }); }));
     const rtn = $("#rt-next"); if (rtn) rtn.onclick = () => (rnx || MISC()).start();
     $("#hub-journal").onclick = () => renderJournal();
     $("#hub-model").onclick = () => renderInsights();
     root.querySelectorAll("[data-drill]").forEach((b) => (b.onclick = () => startDrill(b.dataset.drill)));
     $("#cal-sing").onchange = (e) => { try { localStorage.setItem("pt.cal.sing", e.target.checked ? "1" : "0"); } catch (_) {} };
-    $("#cal-fixc").onchange = (e) => { try { localStorage.setItem("pt.cal.anchorMode", e.target.checked ? "fixed" : "rotate"); } catch (_) {} enter({ skipSync: true }); };
+    const fixc = $("#cal-fixc"); if (fixc) fixc.onchange = (e) => { try { localStorage.setItem("pt.cal.anchorMode", e.target.checked ? "fixed" : "rotate"); } catch (_) {} enter({ skipSync: true }); };
+    $("#kw-on").onchange = (e) => { try { localStorage.setItem("pt.keyweek", e.target.checked ? "on" : "off"); } catch (_) {} enter({ skipSync: true }); };
+    const kwk = $("#kw-key"); if (kwk) kwk.onchange = (e) => { try { if (e.target.value) localStorage.setItem("pt.keyweek.key", e.target.value); else localStorage.removeItem("pt.keyweek.key"); } catch (_) {} enter({ skipSync: true }); };
     if (opts.skipSync) renderSync(lastStatus || { configured: true }, false); else backgroundSync();
   }
 
@@ -2223,7 +2551,7 @@ export function setupCalibrate(ctx) {
     const nbRead = nb.n >= 8 ? `Next-door notes, no reference, any octave. 2 choices: ${pct(nb.two.acc)} (guessing 50%)${nb.trio.n ? ` · 3 choices, named only once you hear it: ${pct(nb.trio.acc)} (guessing 33%)${nb.trio.n >= 6 ? ` — middle note ${pct(nb.trio.middle.acc)}, edges ${pct(nb.trio.edge.acc)}` : ""}` : ""}.${nbCW}` : needs(nb.n, 8, "Neighbors trials");
     const muddy = [...nb.pairs, ...nb.trio.sets].filter((x) => x.n >= 3).sort((x, y) => x.acc - y.acc).slice(0, 3);
     const nbMeta = [nb.targetWarm.n && nb.targetCold.n ? `answer heard named <1 min before: ${pct(nb.targetWarm.acc)} (n=${nb.targetWarm.n}) · not: ${pct(nb.targetCold.acc)} (n=${nb.targetCold.n})` : "", `semitone ${pct(nb.semitone.acc)} · whole step ${pct(nb.wholeStep.acc)}`, muddy.length ? `muddiest: ${muddy.map((x) => `${x.pair} ${pct(x.acc)}`).join(", ")}` : ""].filter(Boolean).join(" — ");
-    const ck = I.checking, tn = I.tuner, th = I.tagHome, kn = I.knob, fl = I.flash;
+    const ck = I.checking, tn = I.tuner, th = I.tagHome, kn = I.knob, fl = I.flash, vo = I.voices;
     // Knob vs voice: same offset → it's the imagined template; knob centred → it's the voice.
     const knRead = kn.n >= 6 ? `Your imagined notes sit <b>${Math.abs(kn.meanBias) < 10 ? "right on" : `${Math.abs(Math.round(kn.meanBias))}¢ ${kn.meanBias < 0 ? "flat" : "sharp"}`}</b> when you set them by hand (typical miss ${Math.round(kn.medAbs)}¢).${im.nSung >= 5 ? ` Singing: ${im.meanBiasCents > 0 ? "+" : ""}${Math.round(im.meanBiasCents)}¢. ${Math.abs(kn.meanBias - im.meanBiasCents) < 15 ? "Same offset both ways → it's in the <b>inner template</b>, not your voice." : Math.abs(kn.meanBias) < 15 && Math.abs(im.meanBiasCents) >= 20 ? "Knob centred, voice off → the offset is in your <b>voice</b>, not your inner pitch." : "Knob and voice disagree — keep collecting."}` : ""}` : needs(kn.n, 6, "Tune the knob settings");
     const knMeta = [kn.byOct.map((x) => `oct ${x.oct}: ${x.bias > 0 ? "+" : ""}${Math.round(x.bias)}¢`).join(" · "), kn.byPc.length ? "by note: " + kn.byPc.map((x) => `${x.name} ${x.bias > 0 ? "+" : ""}${Math.round(x.bias)}¢`).join(", ") : ""].filter(Boolean).join(" — ");
@@ -2257,6 +2585,9 @@ export function setupCalibrate(ctx) {
         ${card("Neighbors", nbVal, nbRead, nbMeta)}
         ${card("Tune the knob", kn.n ? `${kn.meanBias > 0 ? "+" : ""}${Math.round(kn.meanBias)}¢` : "—", knRead, knMeta)}
         ${card("Flash naming", fl.n ? pct(fl.acc) : "—", flRead, fl.byWindow.map((x) => `${(x.windowMs / 1000).toFixed(1)} s: ${pct(x.acc)} (${x.late} late)`).join(" · "))}
+        ${card("Pick apart", vo.n ? pct(vo.perVoice.acc) : "—", vo.n >= 6 ? `Each voice of a chord named on its own: ${pct(vo.perVoice.acc)} per voice (guessing 8%), whole chord ${pct(vo.allCorrect.acc)}. By position: ${vo.byPos.filter((x) => x.n).map((x) => `${x.pos} ${pct(x.acc)}`).join(" · ")}.${vo.transposedShape ? ` ${vo.transposedShape} chord${vo.transposedShape > 1 ? "s" : ""} named as the right shape at the wrong level — relative pitch filling in.` : ""}${vo.nSung >= 4 ? ` Sung within ±50¢: ${pct(vo.sungWithin50)}${vo.byPos.filter((x) => x.nSung >= 2).length > 1 ? ` (${vo.byPos.filter((x) => x.nSung >= 2).map((x) => `${x.pos} ${pct(x.sungWithin50)}`).join(" · ")})` : ""}.` : ""}` : needs(vo.n, 6, "Pick apart chords"), vo.bySize.map((x) => `${x.size} notes: ${pct(x.perVoice.acc)} per voice, ${pct(x.acc)} whole`).join(" · "))}
+        ${card("Whole-tone families", I.wt.n ? pct(I.wt.which.acc) : "—", I.wt.n >= 8 ? `Which family a note or phrase belongs to (guessing 50%): with the home notes ${pct(I.wt.anchored.acc)}, without ${pct(I.wt.cold.acc)}.${I.wt.sing.n ? ` Sung back within ±50¢: ${pct(I.wt.sing.acc)}.` : ""}` : needs(I.wt.n, 8, "whole-tone questions"), I.wt.byFam.map((x) => `${x.fam ? "D♭" : "C"} family ${pct(x.acc)}`).join(" · "))}
+        ${card("Sing intervals", I.isng.n ? pct(I.isng.acc) : "—", I.isng.n >= 8 ? `Up ${pct(I.isng.up.acc)} · down ${pct(I.isng.down.acc)}${I.isng.nSung ? ` · typical miss ${Math.round(I.isng.medAbsCents)}¢` : ""}.` : needs(I.isng.n, 8, "sung intervals"), I.isng.bySize.map((x) => `${x.semis}st ${pct(x.acc)}`).join(" · "))}
         ${card("Gut & check", ckVal, ckRead, ckMeta)}
         ${card("Inner tuner", tnVal, tnRead, tn.byCents.map((x) => `±${x.cents}¢: ${pct(x.acc)}`).join(" · "))}
         ${card("Tag at home?", th.n ? pct(th.acc) : "—", thRead, th.byCents.map((x) => `±${x.cents}¢: ${pct(x.acc)} caught`).join(" · "))}
