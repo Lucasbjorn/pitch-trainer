@@ -15,8 +15,8 @@
 
 export const SCHEMA_VERSION = 2;   // record shape (v2 adds mode, protocol, localDate, sessionOfDay)
 export const PROTOCOL = 10;         // v1 first week · v2 harder hold/anchor + song anchors · v3 anchor pop-ups, breathers, replay-once, RT from onset · v4 Neighbors station + trios · v5 cold draws, naming core, Gut & check, Inner tuner, Tag at home, Name or hold, note-lure anchor pop-ups · v6 Hold it: same note or a different note (no cents) · v7 "What key?" replaces Octave twins; misclick flag · v8 Imagine & sing back in the calibration, right after Song anchors · v9 shorter (~6 min): Imagine & sing first ×6, self-paced; Hold it + Find the note → drills · v10 Tune the knob (replaces Inner tuner in the calibration) + Flash naming
-export const SKILLS = ["cue", "name", "imagine", "anchor", "hold", "twins", "triad", "tune", "tri", "pair", "gut", "tuner", "taghome", "nhold", "aptest", "key", "knob", "flash", "voices", "wt", "isng"];
-export const SKILL_TITLE = { cue: "Song anchors", name: "Blindfold naming", imagine: "Imagine & sing", anchor: "Anchor lock", hold: "Hold it", twins: "Octave twins", triad: "Find the note", tune: "In tune?", tri: "Triangulate", pair: "Neighbors", gut: "Gut & check", tuner: "Inner tuner", taghome: "Tag at home?", nhold: "Name or hold?", aptest: "Daily AP test", key: "What key?", knob: "Tune the knob", flash: "Flash naming", voices: "Pick apart", wt: "Whole-tone families", isng: "Sing intervals" };
+export const SKILLS = ["cue", "name", "imagine", "anchor", "hold", "twins", "triad", "tune", "tri", "pair", "gut", "tuner", "taghome", "nhold", "aptest", "key", "knob", "flash", "voices", "wt", "isng", "findc", "choir", "triweb"];
+export const SKILL_TITLE = { cue: "Song anchors", name: "Blindfold naming", imagine: "Imagine & sing", anchor: "Anchor lock", hold: "Hold it", twins: "Octave twins", triad: "Find the note", tune: "In tune?", tri: "Triangulate", pair: "Neighbors", gut: "Gut & check", tuner: "Inner tuner", taghome: "Tag at home?", nhold: "Name or hold?", aptest: "Daily AP test", key: "What key?", knob: "Tune the knob", flash: "Flash naming", voices: "Pick apart", wt: "Whole-tone families", isng: "Sing intervals", findc: "Find the C", choir: "Choir", triweb: "Triad web" };
 export const STATIONS_GRADED = SKILLS;
 // Drills you can launch. Anchor checks are pop-ups, not a drill; Triangulate was
 // retired in v5 (imagining an anchor turned close guesses into off-by-ones —
@@ -24,9 +24,11 @@ export const STATIONS_GRADED = SKILLS;
 // Octave twins retired in v7 (too easy, and answerable by relative pitch); "What key?" replaces it.
 export const RETIRED = ["tri", "twins"];
 // Lucas's favorites (Oct 19): first in the hub, weighted up by the coach.
-export const FAVORITES = ["imagine", "pair", "taghome", "tuner"];
+export const FAVORITES = ["findc", "imagine", "pair", "taghome", "tuner"];   // + Find the C (Nov 14: "my favorite game of all")
 // Folded under "More drills" (Nov 13: unused, or ones he found weak) — still playable.
 export const TUCKED = ["gut", "nhold", "hold", "triad", "tune"];
+// Work in progress (Nov 14): playable, but still being shaped — their own hub section.
+export const WIP = ["choir", "triweb"];
 export const DRILLS = SKILLS.filter((s) => s !== "anchor" && s !== "aptest" && !RETIRED.includes(s));
 // Graded stations in the daily calibration (protocol 5), in running order.
 // v9 (~6 min): Imagine & sing first and longest (Lucas: "the best one"), self-paced;
@@ -47,6 +49,10 @@ const DB_NAME = "pitches-calibration", DB_VER = 1, LS_KEY = "pt.cal.data", SYNC_
 // STORAGE
 // =============================================================================
 let dbp = null;
+// iOS Safari can leave IndexedDB hanging after the app sat in the background (a
+// transaction that never completes). Nothing here may hang: every step times out,
+// drops the connection (reopened next time) and falls back to localStorage.
+const within = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("idb timeout")), ms))]);
 function openDB() {
   if (dbp) return dbp;
   dbp = new Promise((res, rej) => {
@@ -57,7 +63,7 @@ function openDB() {
       if (!db.objectStoreNames.contains("sessions")) db.createObjectStore("sessions", { keyPath: "id" });
       if (!db.objectStoreNames.contains("trials")) db.createObjectStore("trials", { keyPath: "id" }).createIndex("sessionId", "sessionId");
     };
-    r.onsuccess = () => res(r.result);
+    r.onsuccess = () => { const db = r.result; db.onclose = () => { dbp = null; }; db.onversionchange = () => { try { db.close(); } catch (_) {} dbp = null; }; res(db); };
     r.onerror = () => rej(r.error);
   });
   dbp.catch(() => { dbp = null; });
@@ -68,25 +74,29 @@ function lsSave(d) { try { localStorage.setItem(LS_KEY, JSON.stringify(d)); } ca
 
 async function put(store, obj) {
   try {
-    const db = await openDB();
-    await new Promise((res, rej) => {
+    const db = await within(openDB(), 4000);
+    await within(new Promise((res, rej) => {
       const tx = db.transaction(store, "readwrite");
       tx.objectStore(store).put(obj);
       tx.oncomplete = res; tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error);
-    });
+    }), 4000);
   } catch (_) {
+    dbp = null;
     const d = lsLoad(); d[store][obj.id] = obj; lsSave(d);   // fallback: never drop a trial
   }
 }
 async function getAll(store) {
   let rows = [];
-  try {
-    const db = await openDB();
-    rows = await new Promise((res, rej) => {
-      const r = db.transaction(store, "readonly").objectStore(store).getAll();
-      r.onsuccess = () => res(r.result || []); r.onerror = () => rej(r.error);
-    });
-  } catch (_) {}
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const db = await within(openDB(), 4000);
+      rows = await within(new Promise((res, rej) => {
+        const r = db.transaction(store, "readonly").objectStore(store).getAll();
+        r.onsuccess = () => res(r.result || []); r.onerror = () => rej(r.error);
+      }), 6000);
+      break;
+    } catch (_) { dbp = null; }                                         // stale connection: reopen once
+  }
   const extra = Object.values(lsLoad()[store] || {});               // union with any fallback writes
   if (!extra.length) return rows;
   const byId = new Map(rows.map((x) => [x.id, x]));
@@ -264,6 +274,7 @@ function chanceOf(t) {
   switch (t.station) {
     case "name": case "tri": case "gut": case "aptest": case "key": case "flash": return 1 / 12;
     case "voices": return Math.pow(1 / 12, (t.voices || []).length || 2);
+    case "findc": return 1 / ((t.stim.nRoles || 4) * (t.stim.nQual || 3));
     case "cue": return 1 / (t.stim.choices || 12);
     case "pair": return 1 / nChoicesOf(t);
     case "twins": case "triad": return 1 / 3;
@@ -813,6 +824,14 @@ export function paramsFor(skill, L) {
     case "isng": return { intervals: [[1, 2], [1, 2, 3], [1, 2, 3, 4, 5], [1, 2, 3, 4, 5, 6, 7], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]][l], octaves: [[3], [3], [3, 4], [3, 4], [3, 4]][l] };
     // Pick apart: hear a chord, sing and name each voice. Sizes grow; inversions and
     // 7th chords come in; `spread` opens the voicing across two octaves.
+    // Find the C: a 7th chord with a C in it — where's the C (root/3rd/5th/7th), and what
+    // quality? → that names the chord. Qualities and voicings grow by level.
+    case "findc": return { quals: [["maj7", "7", "m7"], ["maj7", "7", "m7"], ["maj7", "7", "m7", "m7b5"], ["maj7", "7", "m7", "m7b5", "mMaj7"], ["maj7", "7", "m7", "m7b5", "mMaj7", "dim7"]][l],
+      inv: l >= 1, drop2: l >= 3, octaves: [[4], [4], [3, 4], [3, 4], [3, 4]][l], dur: l >= 4 ? 1.2 : 2.2 };
+    // Choir (WIP): SATB, two voices per ear; follow one voice through a short progression.
+    case "choir": return { steps: [2, 3, 4, 4, 4][l], voices: [["S", "B"], ["S", "A", "B"], ["S", "A", "T", "B"], ["S", "A", "T", "B"], ["S", "A", "T", "B"]][l] };
+    // Triad web (WIP): one triad, many relationships — sing a voice, name an interval, find the root.
+    case "triweb": return { quals: [["maj", "min"], ["maj", "min"], ["maj", "min", "dim"], ["maj", "min", "dim", "aug"], ["maj", "min", "dim", "aug"]][l], inv: l >= 1, octaves: [[4], [3, 4], [3, 4], [3, 4], [3, 4]][l] };
     case "voices": return { sizes: [[2], [2, 3], [3], [3, 4], [4]][l], inv: l >= 3, sevenths: l >= 4, spread: l >= 5, octaves: [[4], [3, 4], [3, 4], [3, 4], [3, 4]][l] };
     // Tune the knob: imagine a named note, slide a tone onto it. `tol` = how close counts
     // as right (for levels only; the logged error in cents is the real measure).

@@ -51,6 +51,9 @@ export function setupCalibrate(ctx) {
     flash:   { icon: "⚡", color: "#fef9c3", blurb: "Name it before the bar runs out — trains instant recognition over slow checking." },
     wt:      { icon: "⚪", color: "#f1f5f9", blurb: "The two whole-tone scales as two families: which one is this note in? Sing them back, too." },
     isng:    { icon: "↕️", color: "#ecfccb", blurb: "Hear a named note, sing a half step, whole step, 3rd… up or down. Grows to every interval." },
+    findc:   { icon: "🔍", color: "#fee2e2", blurb: "A 7th chord with a C in it: find the C, say what it is (root/3rd/5th/7th) and the quality — that names the chord." },
+    choir:   { icon: "🎧", color: "#e0e7ff", blurb: "WIP · SATB in stereo, two voices per ear: sing your voice and follow it as the chords move. Headphones." },
+    triweb:  { icon: "🕸️", color: "#f5f3ff", blurb: "WIP · One triad, every relationship: sing any voice, name intervals, find the root — then each voice with its tag." },
     voices:  { icon: "🔬", color: "#fae8ff", blurb: "Hear a chord, then pull it apart: sing and name each voice, bottom to top." },
     aptest:  { icon: "🧪", color: "#ede9fe", blurb: "10 notes, no answers shown until the end — the pure AP number." },
     nhold:   { icon: "🏷️", color: "#e0f2fe", blurb: "Hold a note through noise or stray notes — sometimes you're told its name. Same, or a semitone off?" },
@@ -1256,6 +1259,189 @@ export function setupCalibrate(ctx) {
     return abort ? null : { correct };
   }
 
+  // 🔍 Find the C (Nov 14 — Lucas's favorite): he hears C absolutely, so: a 7th chord
+  // with a C in it → find the C, say what it is in the chord (root / 3rd / 5th / 7th)
+  // and the quality — that names the chord (C as the ♭3 of a m7 → Am7). Over time the
+  // chord's own colour should take over from the deduction.
+  const FC_Q = { maj7: [0, 4, 7, 11], "7": [0, 4, 7, 10], m7: [0, 3, 7, 10], m7b5: [0, 3, 6, 10], mMaj7: [0, 3, 7, 11], dim7: [0, 3, 6, 9] };
+  const FC_SYM = { maj7: "maj7", "7": "7", m7: "m7", m7b5: "m7♭5", mMaj7: "m(maj7)", dim7: "°7" };
+  const FC_ROLE = ["root", "3rd", "5th", "7th"];
+  const pcSet = (r, Q) => Q.map((x) => (r + x) % 12).sort((a, b) => a - b).join();
+  async function trFindC(info) {
+    const p = P("findc"), qual = pick(p.quals), Q = FC_Q[qual], role = rand(4), rootPc = (12 - Q[role]) % 12;
+    let chord = Q.map((x) => midiOf(rootPc, pick(p.octaves)) + x);
+    const inversion = p.inv ? rand(4) : 0;
+    for (let i = 0; i < inversion; i++) chord.push(chord.shift() + 12);
+    chord.sort((a, b) => a - b);
+    const drop2 = p.drop2 && Math.random() < 0.5; if (drop2) chord[2] -= 12;
+    chord.sort((a, b) => a - b);
+    while (chord[0] > 62) chord = chord.map((m) => m - 12);
+    while (chord[0] < 45) chord = chord.map((m) => m + 12);
+    const name = `${PC[rootPc]}${FC_SYM[qual]}`;
+    stage(head("findc", info) + `
+      <div class="cal-stage">
+        <div class="cal-say">Find the C. What is it in the chord — and what kind of 7th chord is it?</div>
+        <div class="cal-phase" id="cal-phase">🌀 clearing…</div>
+        <div class="cal-choices" id="fc-role" hidden>${FC_ROLE.map((r, i) => `<button class="cal-choice" data-v="${i}">C = ${r}</button>`).join("")}</div>
+        <div class="cal-choices" id="fc-qual" hidden>${p.quals.map((q) => `<button class="cal-choice" data-v="${q}">${FC_SYM[q]}</button>`).join("")}</div>
+        <button class="cal-cta ghost-cta" id="fc-replay" hidden>▶ chord again</button>
+        <div class="cal-fb" id="cal-fb"></div>
+      </div>` + foot());
+    await sleep(BREATH); await cleanser(); if (abort) return null;
+    setPhase("🎧 the chord"); await playChord(chord, p.dur); if (abort) return null;
+    let replays = 0; const rb = $("#fc-replay"); if (rb) { rb.hidden = false; rb.onclick = () => { replays++; playChord(chord, p.dur); }; }
+    setPhase("↓ where's the C?");
+    const a = await ask("#fc-role"); if (abort || a.v == null) return null;
+    root.querySelectorAll("#fc-role [data-v]").forEach((b) => { b.onclick = null; b.classList.toggle("picked", b.dataset.v === a.v); });
+    setPhase("↓ which 7th chord?");
+    const b = await ask("#fc-qual"); if (abort || b.v == null) return null;
+    if (rb) rb.hidden = true;
+    const roleResp = +a.v, qualResp = b.v, respRoot = (12 - FC_Q[qualResp][roleResp]) % 12;
+    const correct = pcSet(respRoot, FC_Q[qualResp]) === pcSet(rootPc, Q);          // °7 is symmetric: any spelling of the same notes counts
+    record("findc", correct);
+    logTrial("findc", { ti: info.i, stim: { rootPc, qual, role, chord, inversion, drop2, name, nRoles: 4, nQual: p.quals.length },
+      roleResp, qualResp, respRoot, roleOk: roleResp === role || correct, qualOk: qualResp === qual, resp: `${PC[respRoot]}${FC_SYM[qualResp]}`, correct, rt: a.rt + b.rt, rtRole: a.rt, rtQual: b.rt, replays });
+    root.querySelectorAll("#fc-role [data-v]").forEach((x) => x.classList.remove("picked"));
+    markChoices("#fc-role", role, roleResp); markChoices("#fc-qual", qual, qualResp);
+    fb(correct, `${correct ? "✅" : "❌"} <b>${name}</b> — C is the ${FC_ROLE[role]}${correct ? "" : ` (you said ${PC[respRoot]}${FC_SYM[qualResp]})`}. Here's the C, the root, then the chord:`);
+    await sleep(500);
+    await playMidi(chord.find((m) => pcOf(m) === 0), 0.9); await sleep(850); if (abort) return null;
+    await playMidi(chord.find((m) => pcOf(m) === rootPc) ?? midiOf(rootPc, 3), 0.9); await sleep(850); if (abort) return null;
+    await arpeggiate(chord); await playChord(chord, 1.8); await sleep(1900);
+    lastLabeled = chord[chord.length - 1];
+    return abort ? null : { correct };
+  }
+
+  // 🕸️ Triad web (WIP, Nov 14; after Aimee Nolte): one triad, all its relationships —
+  // sing any voice, name the interval between two voices, find the root. Then every
+  // voice is revealed with its name AND its PP-MIDI tag, so tags get learned in context.
+  // Uses the key of the week's own triads most of the time.
+  const TW_Q = { maj: [0, 4, 7], min: [0, 3, 7], dim: [0, 3, 6], aug: [0, 4, 8] };
+  const IV_SHORT = ["P1", "m2", "M2", "m3", "M3", "P4", "TT", "P5", "m6", "M6", "m7", "M7", "P8"];
+  async function trTriWeb(info) {
+    const p = P("triweb"), sing = singOn(), kw = KW();
+    const dia = kw ? [0, 2, 4, 5, 7, 9, 11].map((d, i) => ({ pc: (kw.pc + d) % 12, q: ["maj", "min", "min", "maj", "maj", "min", "dim"][i] })).filter((x) => p.quals.includes(x.q)) : [];
+    const pk = dia.length && Math.random() < 0.8 ? pick(dia) : { pc: rand(12), q: pick(p.quals) }, rootPc = pk.pc, qual = pk.q;
+    let chord = TW_Q[qual].map((x) => midiOf(rootPc, pick(p.octaves)) + x);
+    const inversion = p.inv ? rand(3) : 0;
+    for (let i = 0; i < inversion; i++) chord.push(chord.shift() + 12);
+    while (chord[0] > 64) chord = chord.map((m) => m - 12);
+    const POS = ["bottom", "middle", "top"], kind = pick(qual === "aug" ? ["sing", "interval"] : ["sing", "interval", "root"]);
+    const pair = kind === "interval" ? pick([[0, 1], [1, 2], [0, 2]]) : null, voice = kind === "sing" ? rand(3) : null;
+    const rootIdx = chord.findIndex((m) => pcOf(m) === rootPc), ivAns = pair ? chord[pair[1]] - chord[pair[0]] : null;
+    const IVS = [3, 4, 5, 6, 7, 8, 9];
+    const q = kind === "sing" ? `Sing the <b>${POS[voice]}</b> voice.` : kind === "interval" ? `Interval from the <b>${POS[pair[0]]}</b> to the <b>${POS[pair[1]]}</b> voice?` : "Which voice is the <b>root</b>?";
+    stage(head("triweb", info) + `
+      <div class="cal-stage">
+        <div class="cal-say">${q}</div>
+        <div class="cal-phase" id="cal-phase">🌀 clearing…</div>
+        <div class="vc-slots">${POS.map((x, i) => `<span class="vc-slot" data-i="${i}">${x}</span>`).join("")}</div>
+        <div class="cal-choices" id="tw-ch" hidden>${kind === "sing" ? `<button class="cal-choice" data-v="go">${sing ? "🎤 Sing it" : "✓ I hear it"}</button>`
+          : kind === "interval" ? IVS.map((x) => `<button class="cal-choice" data-v="${x}">${IV_SHORT[x]}</button>`).join("") : POS.map((x, i) => `<button class="cal-choice" data-v="${i}">${x}</button>`).join("")}</div>
+        <div class="cal-meter" id="tw-meter" hidden><div class="cal-meter-bar" id="cal-meter"></div></div>
+        <div class="cal-choices" id="tw-rate" hidden><button class="cal-choice" data-v="nailed">🎯 Nailed it</button><button class="cal-choice" data-v="off">😬 Off</button></div>
+        <button class="cal-cta ghost-cta" id="tw-replay" hidden>▶ chord again</button>
+        <div class="cal-fb" id="cal-fb"></div>
+      </div>` + foot());
+    await sleep(BREATH); await cleanser(); if (abort) return null;
+    setPhase("🎧 the triad"); await playChord(chord, 2.2); await sleep(600); if (abort) return null;
+    let replays = 0; const rb = $("#tw-replay"); if (rb) { rb.hidden = false; rb.onclick = () => { replays++; playChord(chord, 2.2); }; }
+    setPhase("↓");
+    const { v, rt } = await ask("#tw-ch"); if (abort || v == null) return null;
+    if (rb) rb.hidden = true;
+    let correct = null, resp = v, sung = null;
+    if (kind === "sing") {
+      const ch = $("#tw-ch"); if (ch) ch.hidden = true;
+      if (sing) {
+        const mt = $("#tw-meter"); if (mt) mt.hidden = false;
+        sung = await captureSung(2300, (lvl) => { const b2 = $("#cal-meter"); if (b2) b2.style.width = `${Math.round(lvl * 100)}%`; });
+        if (abort) return null; if (mt) mt.hidden = true;
+        if (sung.ok) { sung.cents = Math.round(((((sung.midi - pcOf(chord[voice])) % 12) + 18) % 12 - 6) * 100); correct = Math.abs(sung.cents) <= 50; }
+        resp = "sung";
+      } else {
+        if (run) run.answered = true;
+        await playMidi(chord[voice], 1.0); await sleep(1000);
+        const r = await ask("#tw-rate"); if (abort || r.v == null) return null;
+        correct = r.v === "nailed"; resp = r.v;
+      }
+    } else correct = kind === "interval" ? +v === ivAns : +v === rootIdx;
+    record("triweb", correct);
+    logTrial("triweb", { ti: info.i, stim: { rootPc, qual, inversion, chord, kind, pair, voice, ivAns, rootIdx }, resp, correct, rt, replays, sing: sung });
+    if (kind === "interval") markChoices("#tw-ch", ivAns, +v); else if (kind === "root") markChoices("#tw-ch", rootIdx, +v); else if (run) run.answered = true;
+    const ivs = `${IV_SHORT[chord[1] - chord[0]]} + ${IV_SHORT[chord[2] - chord[1]]} = ${IV_SHORT[chord[2] - chord[0]]}`;
+    fb(correct !== false, `${correct === true ? "✅" : correct === false ? "❌" : "🎤 didn't catch a pitch"} ${PC[rootPc]} ${qual} · ${["root position", "1st inversion", "2nd inversion"][inversion]} · ${ivs}. Each voice with its tag:`);
+    const slots = root.querySelectorAll(".vc-slot");
+    for (let i = 0; i < 3 && !abort; i++) { slots[i].textContent = `${PC[pcOf(chord[i])]}${i === rootIdx ? " (root)" : ""}`; slots[i].classList.add("on"); playMidi(chord[i], 1.2); await cueSample(pcOf(chord[i])); slots[i].classList.remove("on"); }
+    if (abort) return null;
+    await playChord(chord, 1.6); await sleep(1700);
+    lastLabeled = chord[2];
+    return abort ? null : { correct };
+  }
+
+  // 🎧 Choir (WIP, Nov 14): SATB in stereo — bass + tenor in the left ear, alto + soprano
+  // in the right. You get one voice; sing it, then follow it as the chords move (smooth
+  // voice leading, in the key of the week). Headphones on.
+  const CH_PROGS = [
+    [[48, 55, 64, 72], [53, 57, 65, 72], [55, 59, 62, 71], [48, 55, 64, 72]],              // I IV V I (in C; B T A S)
+    [[48, 55, 64, 72], [45, 57, 64, 72], [50, 57, 65, 69], [55, 59, 65, 71]],              // I vi ii V7
+  ];
+  const VN = { S: "soprano", A: "alto", T: "tenor", B: "bass" }, VI = { B: 0, T: 1, A: 2, S: 3 };
+  let choirSyn = null;
+  function choirPlay(ch, dur) {
+    if (!choirSyn) {
+      const mk = (pan) => { const pn = new Tone.Panner(pan).toDestination(), s = new Tone.PolySynth(Tone.Synth, { oscillator: { type: "triangle" }, envelope: { attack: 0.15, decay: 0.2, sustain: 0.7, release: 0.8 } }).connect(pn); s.volume.value = -12; return s; };
+      choirSyn = { L: mk(-0.9), R: mk(0.9) };
+    }
+    const f = (m) => Tone.Frequency(m, "midi").toFrequency(), now = Tone.now();
+    ch.forEach((m) => heard(m));
+    try { choirSyn.L.triggerAttackRelease([f(ch[0]), f(ch[1])], dur, now); choirSyn.R.triggerAttackRelease([f(ch[2]), f(ch[3])], dur, now); } catch (_) {}
+  }
+  async function trChoir(info) {
+    const p = P("choir"), sing = singOn(), kw = KW(), tonicPc = kw ? kw.pc : rand(12), shift = ((tonicPc + 6) % 12) - 6;
+    const prog = pick(CH_PROGS).slice(0, p.steps).map((ch) => ch.map((m) => m + shift));
+    const vName = pick(p.voices), vi = VI[vName], line = prog.map((c) => c[vi]);
+    stage(head("choir", info) + `
+      <div class="cal-stage">
+        <div class="cal-say">🎧 Headphones. Sing the <b>${VN[vName]}</b> (${vi < 2 ? "left" : "right"} ear) — and follow it as the chords move.</div>
+        <div class="cal-phase" id="cal-phase">🌀 clearing…</div>
+        <div class="vc-slots">${prog.map((_, i) => `<span class="vc-slot" data-i="${i}">chord ${i + 1}</span>`).join("")}</div>
+        <div class="cal-choices" id="co-go" hidden><button class="cal-choice" data-v="go">${sing ? "🎤 Sing it" : "✓ I hear it — next"}</button></div>
+        <div class="cal-meter" id="co-meter" hidden><div class="cal-meter-bar" id="cal-meter"></div></div>
+        <div class="cal-choices" id="co-rate" hidden><button class="cal-choice" data-v="nailed">🎯 Followed it</button><button class="cal-choice" data-v="off">😬 Lost it</button></div>
+        <div class="cal-fb" id="cal-fb"></div>
+      </div>` + foot());
+    await sleep(BREATH); await cleanser(); if (abort) return null;
+    const slots = root.querySelectorAll(".vc-slot"), sungs = [], t0 = performance.now();
+    for (let k = 0; k < prog.length && !abort; k++) {
+      slots.forEach((el, i) => el.classList.toggle("on", i === k));
+      setPhase(`🎧 chord ${k + 1}`); choirPlay(prog[k], 2.8); await sleep(2400); if (abort) return null;
+      setPhase(sing ? `🎤 sing the ${VN[vName]}` : `🧠 hear the ${VN[vName]} inside, then tap`);
+      const go = await ask("#co-go"); if (abort || go.v == null) return null;
+      if (sing) {
+        const g = $("#co-go"); if (g) g.hidden = true; const mt = $("#co-meter"); if (mt) mt.hidden = false;
+        const s2 = await captureSung(2000, (lvl) => { const b2 = $("#cal-meter"); if (b2) b2.style.width = `${Math.round(lvl * 100)}%`; });
+        if (abort) return null; if (mt) mt.hidden = true;
+        if (s2.ok) { s2.cents = Math.round(((((s2.midi - pcOf(line[k])) % 12) + 18) % 12 - 6) * 100); s2.good = Math.abs(s2.cents) <= 50; }
+        sungs.push(s2); slots[k].classList.add(s2.ok && s2.good ? "ok" : "bad");
+      }
+    }
+    if (abort) return null;
+    slots.forEach((el, i) => { el.classList.remove("on"); el.textContent = PC[pcOf(line[i])]; });
+    if (run) run.answered = true;
+    setPhase(`🎼 the ${VN[vName]} alone`);
+    for (let k = 0; k < line.length && !abort; k++) { slots[k].classList.add("on"); await playMidi(line[k], 0.9); await sleep(700); slots[k].classList.remove("on"); }
+    if (abort) return null;
+    let correct, resp;
+    if (sing) { correct = sungs.length === line.length && sungs.every((x) => x.ok && x.good); resp = "sung"; }
+    else { const r = await ask("#co-rate"); if (abort || r.v == null) return null; correct = r.v === "nailed"; resp = r.v; }
+    record("choir", correct);
+    logTrial("choir", { ti: info.i, stim: { tonicPc, voice: vName, prog, line, steps: prog.length }, resp, correct, rt: Math.round(performance.now() - t0), sing: sungs.length ? sungs : null });
+    fb(correct, `${correct ? "✅" : "❌"} The ${VN[vName]}: ${line.map((m) => PC[pcOf(m)]).join(" → ")}`);
+    await sleep(1600);
+    lastLabeled = line[line.length - 1];
+    return abort ? null : { correct };
+  }
+
   // ⚪ Whole-tone families (Nov 13): the two whole-tone scales learned as two entities.
   // "C family" = C D E F# Ab Bb (even pitch classes), "D♭ family" = C# D# F G A B.
   // Which-family questions (with the home notes as anchors at L1; 3-note phrases from
@@ -1362,7 +1548,7 @@ export function setupCalibrate(ctx) {
     return abort ? null : { correct };
   }
 
-  const TRIAL = { cue: trCue, name: trName, imagine: trImagine, anchor: trAnchor, hold: trHold, twins: trTwins, triad: trTriad, tune: trTune, tri: trTri, pair: trPair, gut: trGut, tuner: trTuner, taghome: trTagHome, nhold: trNHold, key: trKey, knob: trKnob, flash: trFlash, voices: trVoices, wt: trWT, isng: trIsng };
+  const TRIAL = { cue: trCue, name: trName, imagine: trImagine, anchor: trAnchor, hold: trHold, twins: trTwins, triad: trTriad, tune: trTune, tri: trTri, pair: trPair, gut: trGut, tuner: trTuner, taghome: trTagHome, nhold: trNHold, key: trKey, knob: trKnob, flash: trFlash, voices: trVoices, findc: trFindC, choir: trChoir, triweb: trTriWeb, wt: trWT, isng: trIsng };
 
   async function countdown(el, secs) {
     for (let s = secs; s > 0; s--) { if (abort) return; if (el) el.textContent = s; await sleep(1000); }
@@ -1679,10 +1865,13 @@ export function setupCalibrate(ctx) {
     { key: "calibration", icon: "🎯", title: "Daily calibration", sub: "~6½ min", start: () => startCalibration() },
   ];
   const MODULES = {
+    findc: { icon: "🔍", title: "Find the C", sub: "ear · 12 questions", ear: "findc", start: () => startEarModule("findc", "findc") },
     wholetone: { icon: "⚪", title: "Whole-tone families", sub: "listen + sing back · ~5 min", start: () => startWholeTone() },
     intervals: { icon: "↕️", title: "Sing intervals", sub: "ear · 12 questions", ear: "isng", start: () => startEarModule("intervals", "isng") },
     mind: { icon: "🧘", title: "Practice in your mind", sub: "imagine, sing, then hear it · 5 min", start: () => startMind() },
+    drone: { icon: "🎻", title: "Drone", sub: "sing over the tonic, then play it · 5 min", start: () => startDrone() },
     warmup: { icon: "🎹", title: "Alan Broadbent warmups", sub: "metronome + stopwatch · ~5 min", start: () => startWarmup() },
+    timekeep: { icon: "⏱", title: "Big beats", sub: "the click only on bar 1, doubling · 5 min", start: () => startTimekeep() },
     scales: { icon: "🎼", title: "Alan scales", sub: "3 of the 9 scales · 15 min", start: () => startScales() },
     chorale: { icon: "⛪", title: "Bach chorale", sub: "2 days each, in the key · 20 min", sessions: true, field: "chorale", start: () => startChorale() },
     earsong: { icon: "🎧", title: "Learn a pop song by ear", sub: "suggestions in the key · 20 min", sessions: true, field: "song", start: () => startEarSong() },
@@ -1692,9 +1881,10 @@ export function setupCalibrate(ctx) {
     compose: { icon: "🖋️", title: "Write a tune", sub: "a blues or anything · 20 min", sessions: true, field: "piece", start: () => startCompose() },
     revisit: { icon: "🔁", title: "Revisit something old", sub: "old piece or transcription, new key · 30 min", field: "piece", start: () => startRevisit() },
     workbook: { icon: "📘", title: "Voicing workbook", sub: "30-minute timer", start: () => startWorkbook() },
+    drums: { icon: "🥁", title: "Drums", sub: "metronome + big beats · 20 min", start: () => startDrums() },
     misc: { icon: "🧩", title: "Misc practice", sub: "your pick, your time · optional", optional: true, field: "task", start: () => startMisc() },
   };
-  const DEFAULT_ORDER = ["wholetone", "intervals", "mind", "warmup", "scales", "chorale", "earsong", "jazztune", "transcribe", "evans", "compose", "revisit", "workbook", "misc"];
+  const DEFAULT_ORDER = ["findc", "wholetone", "intervals", "mind", "drone", "warmup", "timekeep", "scales", "chorale", "earsong", "jazztune", "transcribe", "evans", "compose", "revisit", "workbook", "drums", "misc"];
   function routineCfg() {
     let c = null; try { c = JSON.parse(localStorage.getItem("pt.routine.cfg")); } catch (_) {}
     const order = (c && Array.isArray(c.order) ? c.order : []).filter((k) => MODULES[k]);
@@ -1819,7 +2009,8 @@ export function setupCalibrate(ctx) {
       src.buffer = b; src.connect(bp); bp.connect(lp); lp.connect(g); g.gain.value = accent ? 1.1 : 0.65; src.start(t);
     }
   }
-  function metStart(getBpm, onBeat) {
+  // `getEvery()` > 0 = "big beats": only the downbeat of every N bars clicks (4/4).
+  function metStart(getBpm, onBeat, getEvery = () => 0) {
     metStop();
     const ac = Tone.getContext().rawContext, out = ac.createGain(); out.gain.value = 0.9; out.connect(ac.destination);
     met = { ac, out, next: ac.currentTime + 0.08, beat: 0, iv: null, vis: [] };
@@ -1827,8 +2018,9 @@ export function setupCalibrate(ctx) {
       if (!met) return;
       if (met.next < ac.currentTime) met.next = ac.currentTime + 0.05;   // back from the background: don't burst
       while (met.next < ac.currentTime + 0.12) {
-        metVoice(ac, met.out, met.next, met.beat % 4 === 0, metSound());
-        const b = met.beat % 4, delay = Math.max(0, (met.next - ac.currentTime) * 1000);
+        const ev = getEvery();
+        if (!ev || met.beat % (4 * ev) === 0) metVoice(ac, met.out, met.next, met.beat % 4 === 0, metSound());
+        const b = ev ? -1 : met.beat % 4, delay = Math.max(0, (met.next - ac.currentTime) * 1000);   // no beat dots in big-beats mode: keep time inside
         met.vis.push(setTimeout(() => onBeat && onBeat(b), delay));
         met.next += 60 / getBpm(); met.beat++;
       }
@@ -1838,26 +2030,31 @@ export function setupCalibrate(ctx) {
   function metStop() { if (!met) return; clearInterval(met.iv); met.vis.forEach(clearTimeout); try { met.out.disconnect(); } catch (_) {} met = null; }
   // A metronome panel shared by the warmups and the workbook: beat dots, bpm
   // (−5/−1/+1/+5, remembered per activity), on/off, click ⇄ boop.
-  function metPanel(prefKey, defaultOn) {
-    const st = { bpm: +(localStorage.getItem(prefKey) || 120) || 120, on: defaultOn, running: true, log: [] };
+  // opts.chunks: the "big beats" button — tap to double the gap between clicks
+  // (every beat → 1 bar → 2 → 4 → 8 → 16 bars → back to every beat).
+  const EVERY = [0, 1, 2, 4, 8, 16], everyTxt = (e) => (e ? `⏱ Click every ${e} bar${e > 1 ? "s" : ""} — tap to double` : "⏱ Big beats: tap to click only on bar 1");
+  function metPanel(prefKey, defaultOn, opts = {}) {
+    const st = { bpm: +(localStorage.getItem(prefKey) || 120) || 120, on: defaultOn, running: true, log: [], every: opts.every || 0, everyMax: opts.every || 0 };
     st.log.push(st.bpm);
     const html = `<div class="jr-met">
         <div class="jr-beats" id="jr-beats">${[0, 1, 2, 3].map((i) => `<span data-b="${i}"></span>`).join("")}</div>
         <div class="jr-bpm"><button data-d="-5">−5</button><button data-d="-1">−</button><b id="jr-bpm">${st.bpm}</b><span>bpm</span><button data-d="1">+</button><button data-d="5">+5</button></div>
+        ${opts.chunks ? `<button class="cal-cta jr-chunk" id="jr-chunk">${everyTxt(st.every)}</button>` : ""}
         <div class="jr-mrow"><button class="cal-cta ghost-cta" id="jr-met">${st.on ? "🔇 Metronome off" : "🔊 Metronome on"}</button><button class="cal-cta ghost-cta" id="jr-snd">${metSound() === "boop" ? "🔈 Boop" : "🪵 Click"}</button></div>
       </div>`;
     const flash = (b) => root.querySelectorAll("#jr-beats span").forEach((x) => x.classList.toggle("on", +x.dataset.b === b));
-    const sync = () => { if (st.on && st.running) metStart(() => st.bpm, flash); else { metStop(); flash(-1); } };
+    const sync = () => { if (st.on && st.running) metStart(() => st.bpm, flash, () => st.every); else { metStop(); flash(-1); } };
     const wire = () => {
       root.querySelectorAll(".jr-bpm [data-d]").forEach((b) => (b.onclick = () => {
         st.bpm = Math.max(30, Math.min(300, st.bpm + +b.dataset.d)); $("#jr-bpm").textContent = st.bpm; st.log.push(st.bpm);
         try { localStorage.setItem(prefKey, String(st.bpm)); } catch (_) {}
       }));
+      const ch = $("#jr-chunk"); if (ch) ch.onclick = () => { st.every = EVERY[(EVERY.indexOf(st.every) + 1) % EVERY.length]; st.everyMax = Math.max(st.everyMax, st.every); ch.textContent = everyTxt(st.every); if (!st.every) flash(-1); };
       $("#jr-met").onclick = () => { st.on = !st.on; $("#jr-met").textContent = st.on ? "🔇 Metronome off" : "🔊 Metronome on"; sync(); };
       $("#jr-snd").onclick = () => { const nx = metSound() === "boop" ? "click" : "boop"; try { localStorage.setItem("pt.journal.metSound", nx); } catch (_) {} $("#jr-snd").textContent = nx === "boop" ? "🔈 Boop" : "🪵 Click"; };
       sync();
     };
-    return { st, html, wire, setRunning: (r) => { st.running = r; sync(); }, info: () => ({ bpm: st.bpm, bpms: [...new Set(st.log)], metronome: st.on || st.log.length > 1, metSound: metSound() }) };
+    return { st, html, wire, setRunning: (r) => { st.running = r; sync(); }, info: () => ({ bpm: st.bpm, bpms: [...new Set(st.log)], metronome: st.on || st.log.length > 1, metSound: metSound(), ...(opts.chunks ? { bigBeatsMax: st.everyMax } : {}) }) };
   }
 
   // ---- keep the screen awake while practicing (where supported) --------------------
@@ -1865,6 +2062,9 @@ export function setupCalibrate(ctx) {
   async function wakeOn() { try { if (navigator.wakeLock && !wake) { wake = await navigator.wakeLock.request("screen"); wake.addEventListener("release", () => { wake = null; }); } } catch (_) {} }
   function wakeOff() { try { if (wake) wake.release(); } catch (_) {} wake = null; }
   document.addEventListener("visibilitychange", () => { if (!document.hidden && practiceTimer) wakeOn(); });
+
+  // Instant feedback on Done/Skip while the entry saves (buttons can't be hit twice).
+  function savingUI() { root.querySelectorAll(".jr-ctl button").forEach((b) => (b.disabled = true)); const d = $("#jr-done"); if (d) d.textContent = "Saving…"; }
 
   // ---- a pausable clock (counts real time, so it stays right in the background) ----
   let practiceTimer = null;
@@ -1894,10 +2094,12 @@ export function setupCalibrate(ctx) {
       if (c.running) { c.acc = elapsed(c); c.running = false; mp.setRunning(false); $("#jr-pause").textContent = "▶ Resume"; }
       else { c.since = Date.now(); c.running = true; mp.setRunning(true); $("#jr-pause").textContent = "⏸ Pause"; }
     };
+    let finishing = false;
     const finish = async (how) => {
+      if (finishing) return; finishing = true;                       // one tap is enough (no double entries)
       const sec = Math.round(elapsed(c) / 1000), note = ($("#jr-note") || {}).value || "";
-      endPractice();
-      await logJournal("warmup", { startedAt, activeSec: sec, ...mp.info(), completed: how === "done", skipped: how === "skip", exited: how === "exit", note: note.trim() || null });
+      endPractice(); savingUI();
+      try { await logJournal("warmup", { startedAt, activeSec: sec, ...mp.info(), completed: how === "done", skipped: how === "skip", exited: how === "exit", note: note.trim() || null }); } catch (_) {}
       return how === "exit" ? enter() : routineNext("warmup");
     };
     $("#jr-done").onclick = () => finish("done"); $("#jr-skip").onclick = () => finish("skip"); $("#jr-x").onclick = () => finish("exit");
@@ -1909,7 +2111,7 @@ export function setupCalibrate(ctx) {
     abort = false; clearTimers(); run = null;
     try { await Tone.start(); } catch (_) {}
     let target = cfg.minutes * 60000, rang = false;
-    const startedAt = Date.now(), c = clockState(), mp = cfg.metKey ? metPanel(cfg.metKey, !!cfg.metOn) : null;
+    const startedAt = Date.now(), c = clockState(), mp = cfg.metKey ? metPanel(cfg.metKey, !!cfg.metOn, { chunks: cfg.chunks, every: cfg.every }) : null;
     root.innerHTML = `<div class="cal-stage jr">
         <div class="cal-top"><button class="cal-x" id="jr-x">✕</button><div style="flex:1"></div></div>
         <div class="cal-kicker">${cfg.icon} ${cfg.title}</div>
@@ -1924,6 +2126,7 @@ export function setupCalibrate(ctx) {
         <textarea id="jr-note" class="jr-note" placeholder="${cfg.notePh}"></textarea>
       </div>`;
     if (mp) mp.wire();
+    if (cfg.audio) cfg.audio.start();
     wakeOn();
     const knock = () => {                                           // soft and unpitched, like the metronome
       try { const ac = Tone.getContext().rawContext, out = ac.createGain(); out.gain.value = 0.9; out.connect(ac.destination); [0, 0.2, 0.4, 1.1, 1.3, 1.5].forEach((t) => metVoice(ac, out, ac.currentTime + 0.05 + t, t === 0 || t === 1.1, "boop")); } catch (_) {}
@@ -1938,18 +2141,59 @@ export function setupCalibrate(ctx) {
     practiceTimer = setInterval(draw, 250); draw();
     root.querySelectorAll("[data-m]").forEach((b) => (b.onclick = () => { target = Math.max(5 * 60000, target + +b.dataset.m * 60000); $("#jr-target").textContent = Math.round(target / 60000); if (target - elapsed(c) > 0) rang = false; draw(); }));
     $("#jr-pause").onclick = () => {
-      if (c.running) { c.acc = elapsed(c); c.running = false; if (mp) mp.setRunning(false); $("#jr-pause").textContent = "▶ Resume"; }
-      else { c.since = Date.now(); c.running = true; if (mp) mp.setRunning(true); $("#jr-pause").textContent = "⏸ Pause"; }
+      if (c.running) { c.acc = elapsed(c); c.running = false; if (mp) mp.setRunning(false); if (cfg.audio) cfg.audio.stop(); $("#jr-pause").textContent = "▶ Resume"; }
+      else { c.since = Date.now(); c.running = true; if (mp) mp.setRunning(true); if (cfg.audio) cfg.audio.start(); $("#jr-pause").textContent = "⏸ Pause"; }
     };
+    let finishing = false;
     const finish = async (how) => {
+      if (finishing) return; finishing = true;
       const sec = Math.round(elapsed(c) / 1000), note = ($("#jr-note") || {}).value || "", extra = cfg.logExtra ? cfg.logExtra() : {};
-      endPractice();
-      await logJournal(cfg.item, { startedAt, activeSec: sec, targetSec: Math.round(target / 1000), ...(mp ? mp.info() : {}), ...extra,
-        completed: how === "done", skipped: how === "skip", exited: how === "exit", note: note.trim() || null });
+      if (cfg.audio) cfg.audio.stop(true);
+      endPractice(); savingUI();
+      try { await logJournal(cfg.item, { startedAt, activeSec: sec, targetSec: Math.round(target / 1000), ...(mp ? mp.info() : {}), ...extra,
+        completed: how === "done", skipped: how === "skip", exited: how === "exit", note: note.trim() || null }); } catch (_) {}
       return how === "exit" ? enter() : routineNext(cfg.item);
     };
     $("#jr-done").onclick = () => finish("done"); $("#jr-skip").onclick = () => finish("skip"); $("#jr-x").onclick = () => finish("exit");
   }
+
+  // 🎻 Drone (Nov 14): the key of the week's tonic as a low drone (sines in octaves 1–2
+  // + a soft triangle an octave up, low-passed). Its PP-MIDI tag plays once first, to
+  // prime the ear. Sing a few bars over it, then play what you sang.
+  function droneAudio(pc) {
+    let nodes = null, primed = false, dead = false;
+    const api = {
+      async start() {
+        if (dead) return;
+        if (!primed) { primed = true; try { await ctx.ensureSampleBank(); } catch (_) {} await cueSample(pc); }
+        if (nodes || dead) return;
+        const f = Tone.Frequency(midiOf(pc, 2), "midi").toFrequency();
+        const out = new Tone.Gain(0).toDestination(), lp = new Tone.Filter(900, "lowpass").connect(out), g3 = new Tone.Gain(0.15).connect(lp);
+        const os = [new Tone.Oscillator(f, "sine").connect(lp), new Tone.Oscillator(f / 2, "sine").connect(lp), new Tone.Oscillator(f * 2, "triangle").connect(g3)];
+        os.forEach((o) => o.start()); out.gain.rampTo(0.35, 2);
+        nodes = { out, lp, g3, os };
+      },
+      stop(final = false) {
+        if (final) dead = true;
+        if (!nodes) return; const n = nodes; nodes = null;
+        try { n.out.gain.rampTo(0, 0.5); } catch (_) {}
+        setTimeout(() => { try { n.os.forEach((o) => { o.stop(); o.dispose(); }); n.g3.dispose(); n.lp.dispose(); n.out.dispose(); } catch (_) {} }, 700);
+      },
+    };
+    return api;
+  }
+  function startDrone() {
+    const kw = KW(), pc = kw ? kw.pc : 9;
+    return startCountdown({ item: "drone", icon: "🎻", title: `Drone on ${PC[pc]}`, minutes: 5, audio: droneAudio(pc), keyTip: "the tonic, low",
+      top: `<div class="cal-say">Sing a few bars over the drone — then play what you sang. Repeat.</div>`, logExtra: () => ({ dronePc: pc }), notePh: "Notes (optional) — what you sang, what was hard to find" });
+  }
+  // ⏱ Big beats (Nov 14): improvise while the click lands only on bar 1 of every
+  // 1 → 2 → 4 → 8 → 16 bars (tap to double). Keeps time inside you, in bigger chunks.
+  const startTimekeep = () => startCountdown({ item: "timekeep", icon: "⏱", title: "Big beats", minutes: 5, metKey: "pt.journal.bpm.timekeep", metOn: true, chunks: true, every: 1, keyTip: "improvise in this key",
+    top: `<div class="cal-say">Improvise. The click only marks bar 1 — keep the beats in between yourself. When it feels solid, tap to double.</div>`, notePh: "Notes (optional) — tempo, how far you got" });
+  // 🥁 Drums (Nov 14): 20 minutes, metronome + the same big-beats doubling.
+  const startDrums = () => startCountdown({ item: "drums", icon: "🥁", title: "Drums", minutes: 20, metKey: "pt.journal.bpm.drums", metOn: true, chunks: true,
+    top: `<div class="cal-hint">Groove with the click, then tap ⏱ to stretch it out to bar 1 only — then every 2, 4, 8 bars.</div>`, notePh: "Notes (optional) — grooves, tempos" });
 
   // Voicing workbook: 30 minutes, with the metronome (off by default).
   const startWorkbook = () => startCountdown({ item: "workbook", icon: "📘", title: "Voicing workbook", minutes: 30, metKey: "pt.journal.bpm.workbook", keyTip: "take today's voicings into this key", notePh: "Notes (optional) — pages, voicings, what clicked" });
@@ -2320,7 +2564,7 @@ export function setupCalibrate(ctx) {
   // An ear module in the routine = a drill set of `target` questions, then on to the next module.
   const startEarModule = (key, skill) => startDrill(skill, { target: 12, routineKey: key });
   async function startDrill(skill, opts = {}) {
-    const p = prepAudio(["imagine", "voices", "wt", "isng"].includes(skill));
+    const p = prepAudio(["imagine", "voices", "wt", "isng", "choir", "triweb"].includes(skill));
     root.innerHTML = `<div class="cal-stage cal-trans"><div class="cal-big">${META[skill].icon}</div><div class="cal-say">${TITLE[skill]}…</div></div>`;
     await p;
     const data = await D.allData();
@@ -2523,7 +2767,12 @@ export function setupCalibrate(ctx) {
         ${(() => { const card2 = (sk) => drillCard(sk, !coach.calibrateFirst && sk === top.skill ? "suggested" : "", `${D.FAVORITES.includes(sk) ? "⭐ " : ""}L${drillLevel(sk, plan, data.sessions)}${recentAcc(sk) != null ? ` · ${pct(recentAcc(sk))}` : ""}`);
           const all = [...D.FAVORITES.filter((x) => D.DRILLS.includes(x)), ...D.DRILLS.filter((x) => !D.FAVORITES.includes(x))];
           // Nov 13: the ones he doesn't use (or found weak) are folded away, not deleted.
-          return `<div class="hub-cards">${all.filter((x) => !D.TUCKED.includes(x)).map(card2).join("")}</div><details class="more-drills"><summary>More drills (${all.filter((x) => D.TUCKED.includes(x)).length})</summary><div class="hub-cards">${all.filter((x) => D.TUCKED.includes(x)).map(card2).join("")}</div></details>`; })()}
+          // Nov 14: work-in-progress games get their own fold, with the 4-tags placeholder.
+          const main = all.filter((x) => !D.TUCKED.includes(x) && !D.WIP.includes(x)), tucked = all.filter((x) => D.TUCKED.includes(x)), wip = all.filter((x) => D.WIP.includes(x));
+          return `<div class="hub-cards">${main.map(card2).join("")}</div>
+            <details class="more-drills"><summary>🧪 Work in progress (${wip.length + 1})</summary><div class="hub-cards">${wip.map(card2).join("")}
+              <div class="hub-card cal-dcard wip-ph" style="background:#f3f4f6"><span class="hub-emoji">🏷️</span><div class="hub-card-top"><div class="hub-card-title">Tag families</div><div class="hub-card-sub">Placeholder · 4 tags per note (cut from songs you name) for instant recognition, later mixed into other games. Tell Claude the songs.</div></div></div></div></details>
+            <details class="more-drills"><summary>More drills (${tucked.length})</summary><div class="hub-cards">${tucked.map(card2).join("")}</div></details>`; })()}
 
         <div class="cal-sec">You</div>
         <button class="cal-cta ghost-cta" id="hub-model">📊 Your ear model & data</button>
