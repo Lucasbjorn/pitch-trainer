@@ -493,3 +493,30 @@ export function nextChorale(done, kw = null, skip = 0) {
 // "needs to learn" and "kinda knows" — suggestions for the jazz tune module.
 export const TUNES_LEARN = ["On Green Dolphin Street", "All the Things You Are", "Sandu", "Stella by Starlight", "I Love You", "What Is This Thing Called Love", "Body and Soul", "Wave", "Someday My Prince Will Come", "Beautiful Love", "Days of Wine and Roses", "Naima", "The Girl from Ipanema", "You Don't Know What Love Is"];
 export const TUNES_KINDA = ["It Could Happen to You", "Just Friends", "I Mean You", "Ugetsu", "Bouncin' with Bud", "Billie's Bounce", "Almost Like Being in Love", "Invitation", "Half Nelson", "There Will Never Be Another You", "Star Eyes", "Autumn Leaves", "Oleo", "Recordame", "Misty", "Stompin' at the Savoy"];
+
+// 🧘 Practice in your mind: short cells (enclosures, scale fragments, arpeggios) as
+// semitones from the tonic. Spelled from the key's scale; chromatic notes take
+// sharps in sharp keys, flats in flat keys.
+export const MIND_PATTERNS = [
+  { name: "Enclosure of 3", deg: "4 – ♭3 – 3", st: [5, 3, 4] },
+  { name: "Enclosure of 5", deg: "6 – ♯4 – 5", st: [9, 6, 7] },
+  { name: "Enclosure of 1", deg: "2 – 7 – 1", st: [2, -1, 0] },
+  { name: "Double chromatic into 1", deg: "2 – ♭2 – 7 – 1", st: [2, 1, -1, 0] },
+  { name: "Double chromatic into 5", deg: "6 – ♭6 – ♯4 – 5", st: [9, 8, 6, 7] },
+  { name: "1 2 3 5", deg: "1 – 2 – 3 – 5", st: [0, 2, 4, 7] },
+  { name: "5 down to 1", deg: "5 – 4 – 3 – 2 – 1", st: [7, 5, 4, 2, 0] },
+  { name: "Maj7 arpeggio + 9", deg: "1 – 3 – 5 – 7 – 9", st: [0, 4, 7, 11, 14] },
+  { name: "Major scale up", deg: "1 → 8", st: [0, 2, 4, 5, 7, 9, 11, 12] },
+  { name: "Dorian on 2, up to 6", deg: "2 – 3 – 4 – 5 – 6", st: [2, 4, 5, 7, 9] },
+];
+const FLATKEYS = new Set(["F", "Bb", "Eb", "Ab", "Db"]);
+const PCF = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+export function spellIn(tonic, semis) {
+  const pc = (((pcOfName(tonic) + semis) % 12) + 12) % 12, sc = MAJOR[tonic];
+  return sc.find((n) => pcOfName(n) === pc) || (FLATKEYS.has(tonic) ? PCF : PCN)[pc];
+}
+// Today's cells: three patterns a day (rotating), each in the key of the week and one other key.
+export function mindForDay(tonic, dayIndex) {
+  const n = MIND_PATTERNS.length, other = KEY_ORDER.filter((k) => k !== tonic), k2 = other[((dayIndex % other.length) + other.length) % other.length];
+  return [0, 1, 2].map((i) => MIND_PATTERNS[(((dayIndex * 3 + i) % n) + n) % n]).map((p) => ({ ...p, keys: [tonic, k2] }));
+}

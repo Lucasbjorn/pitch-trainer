@@ -1680,6 +1680,7 @@ export function setupCalibrate(ctx) {
   const MODULES = {
     wholetone: { icon: "⚪", title: "Whole-tone families", sub: "ear · 12 questions", ear: "wt", start: () => startEarModule("wholetone", "wt") },
     intervals: { icon: "↕️", title: "Sing intervals", sub: "ear · 12 questions", ear: "isng", start: () => startEarModule("intervals", "isng") },
+    mind: { icon: "🧘", title: "Practice in your mind", sub: "imagine, sing, then hear it · 5 min", start: () => startMind() },
     warmup: { icon: "🎹", title: "Alan Broadbent warmups", sub: "metronome + stopwatch · ~5 min", start: () => startWarmup() },
     scales: { icon: "🎼", title: "Alan scales", sub: "3 of the 9 scales · 15 min", start: () => startScales() },
     chorale: { icon: "⛪", title: "Bach chorale", sub: "next one in the key · 20 min", sessions: true, field: "chorale", start: () => startChorale() },
@@ -1692,11 +1693,15 @@ export function setupCalibrate(ctx) {
     workbook: { icon: "📘", title: "Voicing workbook", sub: "30-minute timer", start: () => startWorkbook() },
     misc: { icon: "🧩", title: "Misc practice", sub: "your pick, your time · optional", optional: true, field: "task", start: () => startMisc() },
   };
-  const DEFAULT_ORDER = ["wholetone", "intervals", "warmup", "scales", "chorale", "earsong", "jazztune", "transcribe", "evans", "compose", "revisit", "workbook", "misc"];
+  const DEFAULT_ORDER = ["wholetone", "intervals", "mind", "warmup", "scales", "chorale", "earsong", "jazztune", "transcribe", "evans", "compose", "revisit", "workbook", "misc"];
   function routineCfg() {
     let c = null; try { c = JSON.parse(localStorage.getItem("pt.routine.cfg")); } catch (_) {}
     const order = (c && Array.isArray(c.order) ? c.order : []).filter((k) => MODULES[k]);
-    DEFAULT_ORDER.forEach((k) => { if (!order.includes(k)) order.push(k); });                 // new modules join at the end
+    DEFAULT_ORDER.forEach((k, i) => {                                                         // a new module joins where it sits by default
+      if (order.includes(k)) return;
+      const nx = DEFAULT_ORDER.slice(i + 1).find((x) => order.includes(x));
+      order.splice(nx ? order.indexOf(nx) : order.length, 0, k);
+    });
     return { order, off: new Set((c && c.off) || []) };
   }
   const saveRoutineCfg = (c) => { try { localStorage.setItem("pt.routine.cfg", JSON.stringify({ order: c.order, off: [...c.off] })); } catch (_) {} };
@@ -1952,6 +1957,88 @@ export function setupCalibrate(ctx) {
       logExtra: () => ({ scales: list.map((x) => x.label + " " + x.name), scalesDone: list.filter((_, i) => ($(`#sc-${i}`) || {}).checked).length, scaleKey: tonic }) });
   }
 
+  // 🧘 Practice in your mind (Nov 13; ~5 min, before the warmups). Three short cells a
+  // day (enclosures, scale fragments, arpeggios), each in the key of the week and one
+  // other key: read the note names (no sound) → imagine them → sing them one at a time
+  // (🎤, optional) → eyes closed, sing along as they play slowly → how close was it?
+  async function startMind(round = 0) {
+    abort = false; clearTimers(); run = null;
+    try { await Tone.start(); } catch (_) {}
+    try { await ctx.ensurePiano(); } catch (_) {}
+    const kw = KW(), tonic = kw ? kw.tonic : "C", day = Math.floor(Date.now() / 86400000) + round * 7;
+    const cells = PD.mindForDay(tonic, day).flatMap((p) => p.keys.map((k) => ({ ...p, key: k })));
+    const startedAt = Date.now(), c = clockState(), log = [];
+    let ix = 0, over = false;
+    wakeOn();
+    const finish = async (how) => {
+      if (over) return; over = true; abort = true; flushWaits(); stopMic(); endPractice(); abort = false;
+      await logJournal("mind", { startedAt, activeSec: Math.round(elapsed(c) / 1000), targetSec: 300, cells: log, nCells: log.length,
+        completed: how === "done", skipped: how === "skip", exited: how === "exit" });
+      return how === "exit" ? enter() : routineNext("mind");
+    };
+    const cell = () => {
+      const x = cells[ix], pc = PD.pcOfName(x.key), base = pc + 48 > 56 ? pc + 36 : pc + 48;
+      return { ...x, names: x.st.map((s) => PD.spellIn(x.key, s)), midis: x.st.map((s) => base + s) };
+    };
+    const screen = (x, body) => {
+      root.innerHTML = `<div class="cal-stage jr">
+          <div class="cal-top"><button class="cal-x" id="jr-x">✕</button><div style="flex:1"></div><div class="cal-step">${ix + 1}/${cells.length}</div></div>
+          <div class="cal-kicker">🧘 Practice in your mind</div>
+          <div class="mind-key"><b>${x.key} major</b> · ${x.name} <span>(${x.deg})</span></div>
+          <div class="mind-notes">${x.names.map((n, i) => `<span data-i="${i}">${n}</span>`).join("")}</div>
+          <div id="mi-body">${body}</div>
+          <div class="jr-ctl"><button class="cal-cta ghost-cta" id="mi-done">✓ Done for today</button><button class="cal-cta ghost-cta" id="jr-skip">⏭ Skip</button></div>
+        </div>`;
+      $("#jr-x").onclick = () => finish("exit"); $("#mi-done").onclick = () => finish("done"); $("#jr-skip").onclick = () => finish("skip");
+    };
+    const playAlong = async (x) => { for (const m of x.midis) { if (over) return; playMidi(m, 1.3); await sleep(1250); } };
+    const show = () => {
+      if (ix >= cells.length) {
+        root.innerHTML = `<div class="cal-stage cal-finish"><div class="cal-big">🧘</div><div class="cal-title2">That's today's ${cells.length}</div>
+            <div class="cal-say">${fmt(elapsed(c))} · ${log.filter((l) => l.rate === "yes").length} spot on</div>
+            <button class="cal-cta" id="mi-fin">✓ Done</button><button class="cal-cta ghost-cta" id="mi-more">↻ A few more</button></div>`;
+        $("#mi-fin").onclick = () => finish("done");
+        $("#mi-more").onclick = () => { const more = PD.mindForDay(tonic, day + 1 + log.length).flatMap((p) => p.keys.map((k) => ({ ...p, key: k }))); cells.push(...more); show(); };
+        return;
+      }
+      const x = cell();
+      screen(x, `<div class="cal-say">Eyes closed. Hear each note in your head, slowly, in order — no piano.</div>
+        <div class="jr-ctl"><button class="cal-cta" id="mi-sing">🎤 Sing it</button><button class="cal-cta ghost-cta" id="mi-skip">I've imagined it →</button></div>`);
+      $("#mi-sing").onclick = () => sing(x);
+      $("#mi-skip").onclick = () => along(x, null);
+    };
+    const sing = async (x) => {
+      $("#mi-body").innerHTML = `<div class="cal-say" id="mi-say">Sing and hold each note…</div>`;
+      const m = await ensureMic(); if (!m) { toast("No mic — just imagine it"); return along(x, null); }
+      const sung = [];
+      for (let i = 0; i < x.names.length && !over; i++) {
+        root.querySelectorAll(".mind-notes span").forEach((s) => s.classList.toggle("on", +s.dataset.i === i));
+        const say = $("#mi-say"); if (say) say.textContent = `Sing ${x.names[i]}…`;
+        let r = null; for (let t = 0; t < 4 && !over && !(r && r.ok); t++) r = await captureSung(1300);
+        if (over) return;
+        const want = x.midis[i], d = r && r.ok ? ((((r.midi - want) % 12) + 18) % 12) - 6 : null;     // cents-ish distance, octave-free
+        sung.push(r && r.ok ? { midi: r.midi, ok: Math.abs(d) < 0.5, off: Math.round(d * 100) } : { midi: null, ok: false });
+      }
+      return along(x, sung);
+    };
+    const along = async (x, sung) => {
+      root.querySelectorAll(".mind-notes span").forEach((s) => s.classList.remove("on"));
+      $("#mi-body").innerHTML = `<div class="cal-say">Close your eyes and sing along…</div>`;
+      await sleep(1200); await playAlong(x); if (over) return;
+      if (sung) root.querySelectorAll(".mind-notes span").forEach((s, i) => s.classList.add(sung[i].ok ? "ok" : "bad"));
+      $("#mi-body").innerHTML = `${sung ? `<div class="cal-hint">You sang ${sung.filter((s) => s.ok).length}/${sung.length} right</div>` : ""}
+        <div class="cal-say">How close was the version in your head?</div>
+        <div class="jr-ctl mi-rate"><button class="cal-cta" data-r="yes">✓ Spot on</button><button class="cal-cta ghost-cta" data-r="close">≈ Close</button><button class="cal-cta ghost-cta" data-r="off">✗ Off</button></div>
+        <button class="cal-cta ghost-cta" id="mi-again">↻ Hear it again</button>`;
+      $("#mi-again").onclick = () => playAlong(x);
+      root.querySelectorAll("[data-r]").forEach((b) => (b.onclick = () => {
+        log.push({ pattern: x.name, key: x.key, notes: x.names, sung, nRight: sung ? sung.filter((s) => s.ok).length : null, rate: b.dataset.r });
+        ix++; show();
+      }));
+    };
+    show();
+  }
+
   // Libraries of things practised over several sessions (songs, jazz tunes, misc
   // tasks): name, sessions, minutes, last date, ⭐ mastered. `field` is the name's
   // key in the journal entry (song / tune / task), with `<field>Key` normalized.
@@ -2026,17 +2113,17 @@ export function setupCalibrate(ctx) {
     notePh: "Notes (optional) — sections, key, chords, what you figured out" }); };
   // 🎷 Learn a jazz tune — from a transcription and/or by ear — with guide tones and
   // the right Alan scales through the whole tune (both ticked off and logged).
-  const startJazzTune = () => startPicker({ item: "jazztune", field: "tune", icon: "🎷", title: "Learn a jazz tune", say: "Which tune? From a transcription, by ear, or both.",
+  const startJazzTune = () => startPicker({ item: "jazztune", field: "tune", icon: "🎷", title: "Learn a jazz tune", keyTip: "learn it, then play it in this key too", say: "Which tune? From a transcription, by ear, or both.",
     placeholder: "Tune (e.g. Stella by Starlight)", suggest: [...PD.TUNES_LEARN, ...PD.TUNES_KINDA], suggestMax: 6, suggestLabel: "From your list (need to learn → kinda know)", options: { label: "How", field: "method", list: ["Transcription", "By ear", "Both"] }, libLabel: "Keep working on", goal: "of ~2–3", masterable: true, minutes: 20,
     reminders: [["jt-gt", "🎯 Guide tones (3rds &amp; 7ths) through the whole tune", "guideTones"], ["jt-as", "🎼 The right Alan scales through every chord", "alanScales"], ...(KW() ? [["jt-ik", `🔑 Also in ${KW().tonic} (if time permits)`, "inKey"]] : [])],
     notePh: "Notes (optional) — sections, changes, licks, what's still shaky" });
   // 🧩 Misc: anything, your time (5–45 min), metronome available; past tasks pop up with how often.
   // ✍️ Transcribe language over rhythm changes or blues (you pick each day), 30 min.
-  const startTranscribe = () => startPicker({ item: "transcribe", field: "source", icon: "✍️", title: "Transcribe language", say: "Over rhythm changes or blues — whose solo?",
+  const startTranscribe = () => startPicker({ item: "transcribe", field: "source", icon: "✍️", title: "Transcribe language", keyTip: "play each lick you take in this key too", say: "Over rhythm changes or blues — whose solo?",
     placeholder: "e.g. Sonny Stitt — The Eternal Triangle", options: { label: "Over", field: "form", list: ["Rhythm changes", "Blues"] }, libLabel: "Before", minutes: 30,
     reminders: [["tr-lick", KW() ? `🔑 Take one lick into ${KW().tonic}` : "Take one lick through a few keys", "lickInKey"]], notePh: "Notes (optional) — licks, bars, where they sit" });
   // 📗 Bill Evans Omnibook: try it by ear first, then check with the book.
-  const startEvans = () => startPicker({ item: "evans", field: "tune", icon: "📗", title: "Bill Evans Omnibook", say: "Which tune? By ear first, then check with the book.",
+  const startEvans = () => startPicker({ item: "evans", field: "tune", icon: "📗", title: "Bill Evans Omnibook", keyTip: "then play a chorus of it in this key", say: "Which tune? By ear first, then check with the book.",
     placeholder: "e.g. Waltz for Debby", libLabel: "Keep working on", goal: "of ~2–3", masterable: true, minutes: 20,
     reminders: [["ev-ear", "👂 By ear first — no book", "byEar"], ["ev-chk", "📗 Then check it against the Omnibook", "checked"], ...(KW() ? [["ev-key", `🔑 Take a phrase into ${KW().tonic}`, "inKey"]] : [])],
     notePh: "Notes (optional) — what you heard right, what the book showed" });
@@ -2083,7 +2170,7 @@ export function setupCalibrate(ctx) {
     };
     draw();
   }
-  const startMisc = () => startPicker({ item: "misc", field: "task", icon: "🧩", title: "Misc practice", say: "What do you want to practise?",
+  const startMisc = () => startPicker({ item: "misc", field: "task", icon: "🧩", title: "Misc practice", keyTip: "do it in this key", say: "What do you want to practise?",
     placeholder: "e.g. Comping in 12 keys", libLabel: "Done before", durations: [5, 10, 15, 20, 30, 45], minutes: 15, metKey: "pt.journal.bpm.misc", metOn: false,
     notePh: "Notes (optional)" });
 
