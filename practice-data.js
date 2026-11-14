@@ -511,8 +511,8 @@ export const MIND_PATTERNS = [
   { name: "Dorian on 2, up to 6", deg: "2 – 3 – 4 – 5 – 6", st: [2, 4, 5, 7, 9] },
 ];
 export const spellIn = (tonic, semis) => NAME[(((pcOfName(tonic) + semis) % 12) + 12) % 12];
-// Today's cells: three patterns a day (rotating), each in the key of the week and one other key.
+// Today's cells: six patterns a day (rotating), all in the key of the week.
 export function mindForDay(tonic, dayIndex) {
-  const n = MIND_PATTERNS.length, other = KEY_ORDER.filter((k) => k !== tonic), k2 = other[((dayIndex % other.length) + other.length) % other.length];
-  return [0, 1, 2].map((i) => MIND_PATTERNS[(((dayIndex * 3 + i) % n) + n) % n]).map((p) => ({ ...p, keys: [tonic, k2] }));
+  const n = MIND_PATTERNS.length;
+  return [0, 1, 2, 3, 4, 5].map((i) => MIND_PATTERNS[(((dayIndex * 6 + i) % n) + n) % n]).map((p) => ({ ...p, keys: [tonic] }));
 }

@@ -30,8 +30,8 @@ export function setupCalibrate(ctx) {
   const keyOverride = () => { try { return localStorage.getItem("pt.keyweek.key") || null; } catch (_) { return null; } };
   const KW = () => (keyWeekOn() ? PD.keyOfWeek(D.localDate(Date.now()), keyOverride()) : null);
   const anchorMode = () => { if (keyWeekOn()) return "key"; try { return localStorage.getItem("pt.cal.anchorMode") || "rotate"; } catch (_) { return "rotate"; } };
-  const todayAnchor = (all) => (anchorMode() === "key" ? KW().anchorPc : D.anchorOfDay(all, D.localDate(Date.now()), anchorMode()));
-  const anchorWhy = () => { const m = anchorMode(), kw = KW(); return m === "fixed" ? " (always C)" : m === "key" ? ` · degree ${kw.degree} of ${kw.tonic} major (key of the week)` : " · rotates daily, weakest first"; };
+  const todayAnchor = (all) => (anchorMode() === "key" ? KW().pc : D.anchorOfDay(all, D.localDate(Date.now()), anchorMode()));
+  const anchorWhy = () => { const m = anchorMode(), kw = KW(); return m === "fixed" ? " (always C)" : m === "key" ? ` · the key of the week (all week)` : " · rotates daily, weakest first"; };
   let dayAnchor = 0;
   const TITLE = D.SKILL_TITLE;
   const META = {
@@ -316,7 +316,10 @@ export function setupCalibrate(ctx) {
   }
   const foot = (info = {}) => (run && run.mode === "drill" && !info.popup ? `<div class="dr-foot"><button id="dr-hard">😵 too hard</button><button id="dr-easy">😴 too easy</button></div>` : "");
   function setPhase(t) { const el = $("#cal-phase"); if (el) el.textContent = t; }
-  function fb(ok, html) { const el = $("#cal-fb"); if (el) { el.innerHTML = html; el.className = "cal-fb " + (ok ? "ok" : "bad"); } }
+  function fb(ok, html) {
+    const el = $("#cal-fb"); if (el) { el.innerHTML = html; el.className = "cal-fb " + (ok ? "ok" : "bad"); }
+    if (run && run.mode !== "aptest" && run.lastTrial && !$("#cal-mis")) showMisclick();       // every graded answer gets ↩ misclick
+  }
   async function ask(sel) {
     const g = $(sel); if (!g) return { v: null, rt: null };
     g.hidden = false;
@@ -1758,12 +1761,12 @@ export function setupCalibrate(ctx) {
       root.innerHTML = `<div class="cal-stage cal-finish">
           <div class="cal-big">🎉</div><div class="cal-title2">Routine done</div>
           <div class="cal-say">${fromTxt ? `${fromTxt}. ` : ""}The rest of today is yours.</div>
-          ${routineList(st)}
+          ${routineList(st, true)}
           <button class="cal-cta" id="rt-misc">🧩 Misc practice</button>
           <button class="cal-cta ghost-cta" id="rt-hub">Training hub</button>
           <button class="cal-cta ghost-cta" id="rt-journal">📓 Practice journal</button>
         </div>`;
-      $("#rt-hub").onclick = () => enter(); $("#rt-journal").onclick = () => renderJournal(); $("#rt-misc").onclick = () => startMisc();
+      $("#rt-hub").onclick = () => enter(); $("#rt-journal").onclick = () => renderJournal(); $("#rt-misc").onclick = () => startMisc(); wirePick();
       return;
     }
     root.innerHTML = `<div class="cal-stage cal-finish">
@@ -1771,12 +1774,18 @@ export function setupCalibrate(ctx) {
         ${fromTxt ? `<div class="cal-hint">${fromTxt}</div>` : ""}
         <div class="cal-title2">Next: ${nx.title}</div>
         <div class="cal-say">${nx.sub}</div>
-        ${routineList(st)}
+        ${routineList(st, true)}
         <button class="cal-cta" id="rt-go">▶ Start</button>
         <button class="cal-cta ghost-cta" id="rt-skip">⏭ Skip today</button>
         <button class="cal-cta ghost-cta" id="rt-hub">Training hub</button>
       </div>`;
     $("#rt-go").onclick = () => nx.start(); $("#rt-skip").onclick = () => skipStep(nx.key); $("#rt-hub").onclick = () => enter();
+    wirePick();
+  }
+  // Any row of the routine list starts that step (out of order is fine); ⏭ skips it.
+  function wirePick() {
+    root.querySelectorAll(".rt-list [data-rt]").forEach((b) => (b.onclick = () => stepOf(b.dataset.rt).start()));
+    root.querySelectorAll(".rt-list [data-skip]").forEach((b) => (b.onclick = () => skipStep(b.dataset.skip)));
   }
   function routineList(st, clickable = false) {
     return `<div class="rt-list">${routine().map((r) => {
@@ -1872,7 +1881,7 @@ export function setupCalibrate(ctx) {
     root.innerHTML = `<div class="cal-stage jr">
         <div class="cal-top"><button class="cal-x" id="jr-x">✕</button><div style="flex:1"></div></div>
         <div class="cal-kicker">🎹 Alan Broadbent warmups</div>
-        ${KW() ? `<div class="kw-banner">🔑 ${KW().label} — warm up in this key</div>` : ""}
+        ${KW() ? `<div class="kw-banner">🔑 ${KW().tonic} major — warm up in this key</div>` : ""}
         <div class="jr-clock" id="jr-clock">0:00</div>
         <div class="cal-hint">stopwatch · no alarm</div>
         ${mp.html}
@@ -1904,7 +1913,7 @@ export function setupCalibrate(ctx) {
     root.innerHTML = `<div class="cal-stage jr">
         <div class="cal-top"><button class="cal-x" id="jr-x">✕</button><div style="flex:1"></div></div>
         <div class="cal-kicker">${cfg.icon} ${cfg.title}</div>
-        ${KW() ? `<div class="kw-banner">🔑 ${KW().label}${cfg.keyTip ? ` — ${cfg.keyTip}` : ""}</div>` : ""}
+        ${KW() ? `<div class="kw-banner">🔑 ${KW().tonic} major${cfg.keyTip ? ` — ${cfg.keyTip}` : ""}</div>` : ""}
         ${cfg.top || ""}
         <div class="jr-clock" id="jr-clock">${cfg.minutes}:00</div>
         <div class="cal-hint" id="jr-sub">of <span id="jr-target">${cfg.minutes}</span> min</div>
@@ -2016,8 +2025,7 @@ export function setupCalibrate(ctx) {
   }
 
   // 🧘 Practice in your mind (Nov 13; ~5 min, before the warmups). Three short cells a
-  // day (enclosures, scale fragments, arpeggios), each in the key of the week and one
-  // other key: read the note names (no sound) → imagine them → sing them one at a time
+  // day (enclosures, scale fragments, arpeggios), all in the key of the week: read the note names (no sound) → imagine them → sing them one at a time
   // (🎤, optional) → eyes closed, sing along as they play slowly → how close was it?
   async function startMind(round = 0) {
     abort = false; clearTimers(); run = null;
@@ -2127,7 +2135,7 @@ export function setupCalibrate(ctx) {
         <div class="cal-kicker">${cfg.icon} ${cfg.title}</div>
         <div class="cal-say">${cfg.say}</div>
         <input id="es-in" class="es-in" type="text" autocomplete="off" placeholder="${cfg.placeholder}">
-        ${KW() ? `<div class="kw-banner">🔑 ${KW().label}${cfg.keyTip ? ` — ${cfg.keyTip}` : ""}</div>` : ""}
+        ${KW() ? `<div class="kw-banner">🔑 ${KW().tonic} major${cfg.keyTip ? ` — ${cfg.keyTip}` : ""}</div>` : ""}
         ${cfg.suggest && cfg.suggest.length ? `<div class="es-ideas es-sug">${cfg.suggestLabel || "Suggestions"}: ${cfg.suggest.map((x) => `<button data-fill="${x.replace(/"/g, "&quot;")}">${x}</button>`).join("")}</div>` : ""}
         ${cfg.ideas ? `<div class="es-ideas">Ideas: ${cfg.ideas.map((a) => `<button data-artist="${a}">${a}</button>`).join("")}</div>` : ""}
         ${cfg.options ? `<div class="es-ideas es-opts">${cfg.options.label}: ${cfg.options.list.map((o) => `<button data-opt="${o}">${o}</button>`).join("")}</div>` : ""}
@@ -2173,17 +2181,17 @@ export function setupCalibrate(ctx) {
   // the right Alan scales through the whole tune (both ticked off and logged).
   const startJazzTune = () => startPicker({ item: "jazztune", field: "tune", icon: "🎷", title: "Learn a jazz tune", keyTip: "learn it, then play it in this key too", say: "Which tune? From a transcription, by ear, or both.",
     placeholder: "Tune (e.g. Stella by Starlight)", suggest: [...PD.TUNES_LEARN, ...PD.TUNES_KINDA], suggestMax: 6, suggestLabel: "From your list (need to learn → kinda know)", options: { label: "How", field: "method", list: ["Transcription", "By ear", "Both"] }, libLabel: "Keep working on", goal: "of ~2–3", masterable: true, minutes: 20,
-    reminders: [["jt-gt", "🎯 Guide tones (3rds &amp; 7ths) through the whole tune", "guideTones"], ["jt-as", "🎼 The right Alan scales through every chord", "alanScales"], ...(KW() ? [["jt-ik", `🔑 Also in ${KW().tonic} (if time permits)`, "inKey"]] : [])],
+    reminders: [["jt-gt", "🎯 Guide tones (3rds &amp; 7ths) through the whole tune", "guideTones"], ["jt-as", "🎼 The right Alan scales through every chord", "alanScales"]],
     notePh: "Notes (optional) — sections, changes, licks, what's still shaky" });
   // 🧩 Misc: anything, your time (5–45 min), metronome available; past tasks pop up with how often.
   // ✍️ Transcribe language over rhythm changes or blues (you pick each day), 30 min.
-  const startTranscribe = () => startPicker({ item: "transcribe", field: "source", icon: "✍️", title: "Transcribe language", keyTip: "play each lick you take in this key too", say: "Over rhythm changes or blues — whose solo?",
+  const startTranscribe = () => startPicker({ item: "transcribe", field: "source", icon: "✍️", title: "Transcribe language", keyTip: "play one lick you take in this key too", say: "Over rhythm changes or blues — whose solo?",
     placeholder: "e.g. Sonny Stitt — The Eternal Triangle", options: { label: "Over", field: "form", list: ["Rhythm changes", "Blues"] }, libLabel: "Before", minutes: 30,
-    reminders: [["tr-lick", KW() ? `🔑 Take one lick into ${KW().tonic}` : "Take one lick through a few keys", "lickInKey"]], notePh: "Notes (optional) — licks, bars, where they sit" });
+    notePh: "Notes (optional) — licks, bars, where they sit" });
   // 📗 Bill Evans Omnibook: try it by ear first, then check with the book.
   const startEvans = () => startPicker({ item: "evans", field: "tune", icon: "📗", title: "Bill Evans Omnibook", keyTip: "then play a chorus of it in this key", say: "Which tune? By ear first, then check with the book.",
     placeholder: "e.g. Waltz for Debby", libLabel: "Keep working on", goal: "of ~2–3", masterable: true, minutes: 20,
-    reminders: [["ev-ear", "👂 By ear first — no book", "byEar"], ["ev-chk", "📗 Then check it against the Omnibook", "checked"], ...(KW() ? [["ev-key", `🔑 Take a phrase into ${KW().tonic}`, "inKey"]] : [])],
+    reminders: [["ev-ear", "👂 By ear first — no book", "byEar"], ["ev-chk", "📗 Then check it against the Omnibook", "checked"]],
     notePh: "Notes (optional) — what you heard right, what the book showed" });
   // 🖋️ Write a tune: a blues or anything — just dedicated time.
   const startCompose = () => startPicker({ item: "compose", field: "piece", icon: "🖋️", title: "Write a tune", say: "A blues, a contrafact, anything. Name it (a working title is fine).",
