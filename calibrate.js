@@ -1330,9 +1330,7 @@ export function setupCalibrate(ctx) {
     await sleep(BREATH); await cleanser(); if (abort) return null;
     run.answered = true;                                            // the note comes with its name + tag (the anchor)
     setPhase(`⚓ ${PC[pc]}`);
-    await playMidi(m, 1.0); await sleep(800); if (abort) return null;
-    await cueSample(pc); if (abort) return null;
-    await playMidi(m, 1.0); if (abort) return null;
+    playMidi(m, 1.6); await cueSample(pc); if (abort) return null;    // note + tag together, once (Lucas, Nov 13)
     run.answered = false;
     setPhase(sing ? "🎤 when you're ready" : "🧠 hear it inside, then tap");
     const go = await ask("#cal-ch"); if (abort || go.v == null) return null;
@@ -1678,12 +1676,12 @@ export function setupCalibrate(ctx) {
     { key: "calibration", icon: "🎯", title: "Daily calibration", sub: "~6½ min", start: () => startCalibration() },
   ];
   const MODULES = {
-    wholetone: { icon: "⚪", title: "Whole-tone families", sub: "ear · 12 questions", ear: "wt", start: () => startEarModule("wholetone", "wt") },
+    wholetone: { icon: "⚪", title: "Whole-tone families", sub: "listen + sing back · ~5 min", start: () => startWholeTone() },
     intervals: { icon: "↕️", title: "Sing intervals", sub: "ear · 12 questions", ear: "isng", start: () => startEarModule("intervals", "isng") },
     mind: { icon: "🧘", title: "Practice in your mind", sub: "imagine, sing, then hear it · 5 min", start: () => startMind() },
     warmup: { icon: "🎹", title: "Alan Broadbent warmups", sub: "metronome + stopwatch · ~5 min", start: () => startWarmup() },
     scales: { icon: "🎼", title: "Alan scales", sub: "3 of the 9 scales · 15 min", start: () => startScales() },
-    chorale: { icon: "⛪", title: "Bach chorale", sub: "next one in the key · 20 min", sessions: true, field: "chorale", start: () => startChorale() },
+    chorale: { icon: "⛪", title: "Bach chorale", sub: "2 days each, in the key · 20 min", sessions: true, field: "chorale", start: () => startChorale() },
     earsong: { icon: "🎧", title: "Learn a pop song by ear", sub: "suggestions in the key · 20 min", sessions: true, field: "song", start: () => startEarSong() },
     jazztune: { icon: "🎷", title: "Learn a jazz tune", sub: "guide tones + Alan scales · 20 min", sessions: true, field: "tune", start: () => startJazzTune() },
     transcribe: { icon: "✍️", title: "Transcribe language", sub: "rhythm changes or blues · 30 min", field: "source", start: () => startTranscribe() },
@@ -1957,6 +1955,66 @@ export function setupCalibrate(ctx) {
       logExtra: () => ({ scales: list.map((x) => x.label + " " + x.name), scalesDone: list.filter((_, i) => ($(`#sc-${i}`) || {}).checked).length, scaleKey: tonic }) });
   }
 
+  // ⚪ Whole-tone families, the routine version (Nov 13: "learning, not testing"). One
+  // family a day (alternating). 1) Listen: the scale up and down, slowly, each note
+  // named with its PP-MIDI tag quietly alongside. 2) Sing back short phrases, eyes on
+  // each note's colour. No grading. (The quiz version stays a drill in the hub.)
+  async function startWholeTone() {
+    abort = false; clearTimers(); run = null;
+    try { await Tone.start(); } catch (_) {}
+    try { await ctx.ensurePiano(); } catch (_) {}
+    try { await ctx.ensureSampleBank(); } catch (_) {}
+    const fam = Math.floor(Date.now() / 86400000) % 2, pcs = [0, 2, 4, 6, 8, 10].map((x) => x + fam);
+    const startedAt = Date.now(), c = clockState();
+    let over = false, loops = 0, phrases = 0, gen = 0;
+    wakeOn();
+    const tag = (pc) => { try { const b = ctx.getBank && ctx.getBank(); if (b) b.play(PC[pc], { volume: -14 }); } catch (_) {} };
+    const finish = async (how) => {
+      if (over) return; over = true; abort = true; flushWaits(); endPractice(); abort = false;
+      await logJournal("wholetone", { startedAt, activeSec: Math.round(elapsed(c) / 1000), targetSec: 300, fam, family: WT_NAME[fam], listenLoops: loops, phrases,
+        completed: how === "done", skipped: how === "skip", exited: how === "exit" });
+      return how === "exit" ? enter() : routineNext("wholetone");
+    };
+    const screen = (say, body) => {
+      root.innerHTML = `<div class="cal-stage jr">
+          <div class="cal-top"><button class="cal-x" id="jr-x">✕</button><div style="flex:1"></div><div class="cal-step" id="wt-clock">0:00</div></div>
+          <div class="cal-kicker">⚪ Whole-tone · today the ${WT_NAME[fam]}</div>
+          <div class="mind-notes">${pcs.map((p) => `<span data-pc="${p}">${PC[p]}</span>`).join("")}</div>
+          <div class="cal-say">${say}</div>
+          <div id="wt-body">${body}</div>
+          <div class="jr-ctl"><button class="cal-cta ghost-cta" id="wt-done">✓ Done</button><button class="cal-cta ghost-cta" id="jr-skip">⏭ Skip</button></div>
+        </div>`;
+      $("#jr-x").onclick = () => finish("exit"); $("#wt-done").onclick = () => finish("done"); $("#jr-skip").onclick = () => finish("skip");
+    };
+    practiceTimer = setInterval(() => { const el = $("#wt-clock"); if (el) el.textContent = fmt(elapsed(c)); }, 500);
+    const lit = (pc) => root.querySelectorAll(".mind-notes span").forEach((s) => s.classList.toggle("on", +s.dataset.pc === pc));
+    // play a list of midis slowly, lighting each name, tag quietly alongside
+    const play = async (ms, step = 1300, my = gen) => {
+      for (const m of ms) { if (over || my !== gen) return; lit(pcOf(m)); playMidi(m, 1.4); tag(pcOf(m)); await sleep(step); }
+      lit(-1);
+    };
+    const scale = () => { const up = [...pcs.map((p) => 48 + p), 60 + fam]; return [...up, ...up.slice(0, -1).reverse()]; };
+    const listen = async () => {
+      const my = ++gen;
+      screen("Just listen. Let each note's colour sink in — the name and its tag together.", `<button class="cal-cta" id="wt-sing">🎤 Sing phrases →</button>`);
+      $("#wt-sing").onclick = () => singBack();
+      for (let i = 0; i < 4 && !over && my === gen; i++) { await play(scale(), 1300, my); if (my === gen && !over) { loops++; await sleep(900); } }
+      if (my === gen && !over) singBack();
+    };
+    const singBack = async () => {
+      const my = ++gen; phrases++;
+      const ph = shuffle([...pcs]).slice(0, 3 + (phrases > 4 ? 1 : 0)).map((p) => 48 + p + (p < 4 && Math.random() < 0.5 ? 12 : 0));
+      screen("Listen, then sing it back — feel the colour of each note as you sing it.",
+        `<div class="jr-ctl"><button class="cal-cta ghost-cta" id="wt-again">↻ Again</button><button class="cal-cta" id="wt-next">Next phrase →</button></div>
+         <button class="cal-cta ghost-cta" id="wt-listen">🎧 Back to listening</button>`);
+      $("#wt-again").onclick = async () => { const g = ++gen; await play(ph, 1100, g); };
+      $("#wt-next").onclick = () => singBack();
+      $("#wt-listen").onclick = () => listen();
+      await play(ph, 1100, my);
+    };
+    listen();
+  }
+
   // 🧘 Practice in your mind (Nov 13; ~5 min, before the warmups). Three short cells a
   // day (enclosures, scale fragments, arpeggios), each in the key of the week and one
   // other key: read the note names (no sound) → imagine them → sing them one at a time
@@ -2143,10 +2201,15 @@ export function setupCalibrate(ctx) {
     const kw = KW(); let skip = 0, cur = null;
     const pick2 = () => { cur = PD.nextChorale(new Set(S.filter((x) => x.item === "chorale" && x.bwv).map((x) => x.bwv)), kw, skip); };
     pick2();
+    // Two days per chorale: yesterday's (if not marked learned and only one day in) comes back as day 2.
+    const CH = S.filter((x) => x.item === "chorale" && x.bwv && !x.skipped).sort((a, b) => a.startedAt - b.startedAt), last = CH.at(-1);
+    const lastDays = last ? new Set(CH.filter((x) => x.bwv === last.bwv).map(dayOf)).size : 0;
+    let day2 = last && !last.mastered && lastDays < 2 && dayOf(last) !== D.localDate(Date.now()) ? PD.CHORALES.find((c) => c.bwv === last.bwv) : null;
+    if (day2) cur = day2;
     const draw = () => {
       root.innerHTML = `<div class="cal-stage jr">
           <div class="cal-top"><button class="cal-x" id="es-x">✕</button><div style="flex:1"></div></div>
-          <div class="cal-kicker">⛪ Bach chorale</div>
+          <div class="cal-kicker">⛪ Bach chorale${day2 && cur === day2 ? " · day 2 of 2" : ""}</div>
           ${kw ? `<div class="kw-banner">🔑 ${kw.label}</div>` : ""}
           ${cur ? `<div class="ch-card"><b>BWV ${cur.bwv}</b><span>${cur.title}</span><i>${cur.key} ${cur.minor ? "minor" : "major"}${cur.r ? ` · Riemenschneider ${cur.r}` : ""}</i>
             <a href="${cur.href}" target="_blank" rel="noopener" id="ch-open">Open the score ↗</a></div>
@@ -2157,7 +2220,7 @@ export function setupCalibrate(ctx) {
           <button class="cal-cta ghost-cta" id="es-skip">⏭ Skip today</button>
         </div>`;
       $("#es-x").onclick = () => enter(); $("#es-skip").onclick = () => skipStep("chorale");
-      $("#ch-next").onclick = () => { skip++; pick2(); draw(); };
+      $("#ch-next").onclick = () => { if (day2 && cur === day2) day2 = null; else skip++; pick2(); draw(); };
       root.querySelectorAll("[data-redo]").forEach((b) => (b.onclick = () => { const e = S.filter((x) => x.item === "chorale" && (x.choraleKey || songKey(x.chorale)) === b.dataset.redo).pop(); cur = e && PD.CHORALES.find((c) => c.bwv === e.bwv) || cur; skip = 0; draw(); }));
       $("#ch-go").onclick = () => {
         if (!cur) return;
