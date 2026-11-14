@@ -21,7 +21,7 @@ import { calUpload, calDownload, calCloudStatus, signInGoogle } from "./social.j
 
 export function setupCalibrate(ctx) {
   const { Tone, PITCH_NAMES } = ctx;
-  const PC = PITCH_NAMES;
+  const PC = PD.NAME;                                              // flats except F# (display); the tag bank keys by PITCH_NAMES
   const root = document.getElementById("calibrate");
   // The day's anchor note (rotates daily, weakest first; "always C" toggle).
   // 🔑 Key of the week (Nov 13): one global setting; when on, every practice module
@@ -191,7 +191,7 @@ export function setupCalibrate(ctx) {
     if (abort) return;
     try {
       const b = ctx.getBank && ctx.getBank(); if (!b) return;
-      const nm = PC[pcOf(pc)], r = b.play(nm, {});
+      const nm = PITCH_NAMES[pcOf(pc)], r = b.play(nm, {});
       heard(midiOf(pcOf(pc), 4), "tag");
       if (!wait) return;                                            // fire and go (answer while it plays)
       const buf = r && b.buffers[nm] && b.buffers[nm][r.variantIdx];
@@ -205,7 +205,7 @@ export function setupCalibrate(ctx) {
     if (abort) return null;
     try {
       const b = ctx.getBank && ctx.getBank(); if (!b) return null;
-      const bufs = b.buffers[PC[pcOf(pc)]] || [], vi = rand(bufs.length), buf = bufs[vi]; if (!buf) return null;
+      const bufs = b.buffers[PITCH_NAMES[pcOf(pc)]] || [], vi = rand(bufs.length), buf = bufs[vi]; if (!buf) return null;
       const g = new Tone.GrainPlayer({ url: buf, grainSize: 0.07, overlap: 0.035, detune: cents, loop: false }).toDestination();
       g.volume.value = -1 + (Math.random() * 3 - 1.5);
       heard(midiOf(pcOf(pc), 4), "tag", cents);
@@ -1254,10 +1254,10 @@ export function setupCalibrate(ctx) {
   }
 
   // ⚪ Whole-tone families (Nov 13): the two whole-tone scales learned as two entities.
-  // "C family" = C D E F# G# A# (even pitch classes), "D♭ family" = C# D# F G A B.
+  // "C family" = C D E F# Ab Bb (even pitch classes), "D♭ family" = C# D# F G A B.
   // Which-family questions (with the home notes as anchors at L1; 3-note phrases from
   // L3), and — with 🎤 on — sing-back: hear the home note and a phrase, sing its last note.
-  const WT_NAME = ["C family", "D♭ family"], WT_NOTES = ["C D E F♯ G♯ A♯", "D♭ E♭ F G A B"];
+  const WT_NAME = ["C family", "D♭ family"], WT_NOTES = ["C D E F♯ A♭ B♭", "D♭ E♭ F G A B"];
   async function trWT(info) {
     const p = P("wt"), sing = singOn(), dr = drawPc(), pc = dr.item, fam = pc % 2, oct = pick(p.octaves), m = midiOf(pc, oct);
     const kind = sing && Math.random() < 0.3 ? "sing" : p.phrase && Math.random() < 0.6 ? "phrase" : "note";
@@ -1968,7 +1968,7 @@ export function setupCalibrate(ctx) {
     const startedAt = Date.now(), c = clockState();
     let over = false, loops = 0, phrases = 0, gen = 0;
     wakeOn();
-    const tag = (pc) => { try { const b = ctx.getBank && ctx.getBank(); if (b) b.play(PC[pc], { volume: -14 }); } catch (_) {} };
+    const tag = (pc) => { try { const b = ctx.getBank && ctx.getBank(); if (b) b.play(PITCH_NAMES[pc], { volume: -14 }); } catch (_) {} };
     const finish = async (how) => {
       if (over) return; over = true; abort = true; flushWaits(); endPractice(); abort = false;
       await logJournal("wholetone", { startedAt, activeSec: Math.round(elapsed(c) / 1000), targetSec: 300, fam, family: WT_NAME[fam], listenLoops: loops, phrases,

@@ -5,7 +5,9 @@
 //     Chords" (9 scale types), and piano-forward pop songs by key.
 // Pure, so it's unit-tested (tools/test-cal-analysis.mjs).
 
-export const PCN = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+// Note names everywhere in the training hub: flats, except F# (Lucas, Nov 13).
+export const NAME = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
+export const PCN = NAME;
 // Spelled major scales (the names a pianist reads), keyed by tonic.
 export const MAJOR = {
   C: ["C", "D", "E", "F", "G", "A", "B"], G: ["G", "A", "B", "C", "D", "E", "F#"], D: ["D", "E", "F#", "G", "A", "B", "C#"],
@@ -25,7 +27,7 @@ export function keyOfWeek(dateStr, override = null) {
   const week = d < w2 ? 0 : Math.floor((d - w2) / 7) + 1;
   const start = week === 0 ? KEY_WEEK1 : new Date((w2 + (week - 1) * 7) * 86400000).toISOString().slice(0, 10);
   const end = new Date((week === 0 ? w2 - 1 : w2 + (week - 1) * 7 + 6) * 86400000).toISOString().slice(0, 10);
-  const tonic = override || KEY_ORDER[week % KEY_ORDER.length], scale = MAJOR[tonic];
+  const tonic = override || KEY_ORDER[week % KEY_ORDER.length], scale = MAJOR[tonic].map((n) => NAME[pcOfName(n)]);
   const day = Math.max(0, d - dayNum(start));
   return { week: week + 1, start, end, tonic, pc: pcOfName(tonic), scale, minor: `${scale[5]}m`, minorPc: pcOfName(scale[5]),
     label: `${tonic} major / ${scale[5]} minor`, day, anchorName: scale[day % 7], anchorPc: pcOfName(scale[day % 7]), degree: (day % 7) + 1 };
@@ -39,7 +41,7 @@ export const ALAN_SCALES = [
   { deg: 4, chord: "7(#9)", name: "altered" }, { deg: 0, chord: "°7", name: "whole-half diminished" }, { deg: 0, chord: "7(#5)", name: "whole tone" },
 ];
 export function scalesForDay(tonic, dayIndex) {
-  const sc = MAJOR[tonic] || MAJOR.C, i0 = ((dayIndex % 3) + 3) % 3 * 3;
+  const sc = (MAJOR[tonic] || MAJOR.C).map((n) => NAME[pcOfName(n)]), i0 = ((dayIndex % 3) + 3) % 3 * 3;
   return ALAN_SCALES.slice(i0, i0 + 3).map((x) => ({ ...x, label: `${sc[x.deg]}${x.chord}`, name: x.name }));
 }
 
@@ -56,7 +58,7 @@ export const POP_SONGS = [
   ["Don't Stop Me Now", "Queen", "F", "M"], ["The Scientist", "Coldplay", "F", "M"], ["Easy on Me", "Adele", "F", "M"], ["Set Fire to the Rain", "Adele", "D", "m"],
   ["Piano Man", "Billy Joel", "C", "M"], ["Let It Be", "The Beatles", "C", "M"], ["Imagine", "John Lennon", "C", "M"], ["Tiny Dancer", "Elton John", "C", "M"],
   ["New York State of Mind", "Billy Joel", "C", "M"], ["Hallelujah", "Leonard Cohen / Jeff Buckley", "C", "M"],
-].map(([t, a, k, m]) => ({ title: t, artist: a, key: k, minor: m === "m", pc: pcOfName(k) }));
+].map(([t, a, k, m]) => ({ title: t, artist: a, key: NAME[pcOfName(k)], minor: m === "m", pc: pcOfName(k) }));
 // Songs in the key of the week: its major, or its relative minor.
 export const popInKey = (kw) => POP_SONGS.filter((s) => (s.minor ? s.pc === kw.minorPc : s.pc === kw.pc));
 
@@ -478,7 +480,7 @@ export const CHORALES = [
   ["1125", "BWV1125.htm", null, "O Gott, du frommer Gott (melody #3)", "D", "M"],
   ["1126", "BWV1126.htm", null, "Befiehl du deine Wege (melody #2)", "D", "m"],
   ["deest", "BWV_deest_O_Traurigkeit.htm", null, "O Traurigkeit, o Herzeleid!", "G", "m"]
-].map(([bwv, href, r, title, k, m]) => ({ bwv, href: CHORALE_BASE + href, r, title, key: k, minor: m === "m", pc: pcOfName(k), label: `BWV ${bwv} · ${title} (${k} ${m === "m" ? "minor" : "major"})` }));
+].map(([bwv, href, r, title, k0, m], _, __, k = NAME[pcOfName(k0)]) => ({ bwv, href: CHORALE_BASE + href, r, title, key: k, minor: m === "m", pc: pcOfName(k), label: `BWV ${bwv} · ${title} (${k} ${m === "m" ? "minor" : "major"})` }));
 // Next chorale: in the key of the week (major, then relative minor) if on, skipping
 // ones already done; Riemenschneider order (roughly easier first). `skip` = n to pass over.
 export function nextChorale(done, kw = null, skip = 0) {
@@ -495,8 +497,7 @@ export const TUNES_LEARN = ["On Green Dolphin Street", "All the Things You Are",
 export const TUNES_KINDA = ["It Could Happen to You", "Just Friends", "I Mean You", "Ugetsu", "Bouncin' with Bud", "Billie's Bounce", "Almost Like Being in Love", "Invitation", "Half Nelson", "There Will Never Be Another You", "Star Eyes", "Autumn Leaves", "Oleo", "Recordame", "Misty", "Stompin' at the Savoy"];
 
 // 🧘 Practice in your mind: short cells (enclosures, scale fragments, arpeggios) as
-// semitones from the tonic. Spelled from the key's scale; chromatic notes take
-// sharps in sharp keys, flats in flat keys.
+// semitones from the tonic, named with NAME (flats, except F#).
 export const MIND_PATTERNS = [
   { name: "Enclosure of 3", deg: "4 – ♭3 – 3", st: [5, 3, 4] },
   { name: "Enclosure of 5", deg: "6 – ♯4 – 5", st: [9, 6, 7] },
@@ -509,12 +510,7 @@ export const MIND_PATTERNS = [
   { name: "Major scale up", deg: "1 → 8", st: [0, 2, 4, 5, 7, 9, 11, 12] },
   { name: "Dorian on 2, up to 6", deg: "2 – 3 – 4 – 5 – 6", st: [2, 4, 5, 7, 9] },
 ];
-const FLATKEYS = new Set(["F", "Bb", "Eb", "Ab", "Db"]);
-const PCF = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
-export function spellIn(tonic, semis) {
-  const pc = (((pcOfName(tonic) + semis) % 12) + 12) % 12, sc = MAJOR[tonic];
-  return sc.find((n) => pcOfName(n) === pc) || (FLATKEYS.has(tonic) ? PCF : PCN)[pc];
-}
+export const spellIn = (tonic, semis) => NAME[(((pcOfName(tonic) + semis) % 12) + 12) % 12];
 // Today's cells: three patterns a day (rotating), each in the key of the week and one other key.
 export function mindForDay(tonic, dayIndex) {
   const n = MIND_PATTERNS.length, other = KEY_ORDER.filter((k) => k !== tonic), k2 = other[((dayIndex % other.length) + other.length) % other.length];

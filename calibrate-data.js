@@ -40,7 +40,7 @@ export const WARM_MS = 60000;
 export const localDate = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 export const kindOf = (s) => s.kind || "calibration";      // v1 sessions were all calibrations
 const modeOf = (t) => t.mode || "calibration";
-const PC = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+const PC = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];      // flats except F#
 const DB_NAME = "pitches-calibration", DB_VER = 1, LS_KEY = "pt.cal.data", SYNC_KEY = "pt.cal.syncedThrough", PULL_KEY = "pt.cal.pulledThrough";
 
 // =============================================================================
